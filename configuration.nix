@@ -26,6 +26,7 @@
 
   nix-homebrew = {
     enable = true;
+    autoMigrate = true;
     inherit user;
   };
 
