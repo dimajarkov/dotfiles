@@ -35,6 +35,7 @@
     onActivation.autoUpdate = true;
     onActivation.extraFlags = [ "--force" ];
     brews = [
+      "autoconf"
       "gh"
       "mosh"
       "rjyo/moshi/moshi-hook"
