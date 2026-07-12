@@ -1,0 +1,38 @@
+onboarding = false
+
+[terminal]
+shell_mode = "auto"
+new_cwd = "follow"
+
+[theme]
+name = "one-dark"
+
+auto_switch = false
+[keys]
+prefix = "tab"
+detach = "prefix+q"
+workspace_picker = "prefix+e"
+new_tab = ["prefix+c", "alt+c"]
+previous_tab = ["prefix+p", "ctrl+shift+tab"]
+next_tab = ["prefix+n", "ctrl+tab"]
+switch_tab = ["prefix+1..9", "alt+1..9"]
+rename_pane = "prefix+shift+p"
+focus_pane_left = ["prefix+j", "alt+j", "prefix+left"]
+focus_pane_down = ["prefix+k", "alt+k", "prefix+down"]
+focus_pane_up = ["prefix+l", "alt+l", "prefix+up"]
+focus_pane_right = ["prefix+;", "alt+;", "prefix+right"]
+navigate_pane_left = "j"
+navigate_pane_down = "k"
+navigate_pane_up = "l"
+navigate_pane_right = ";"
+split_vertical = ["prefix+h", "alt+h"]
+split_horizontal = ["prefix+v", "prefix+minus", "alt+v"]
+zoom = ["prefix+f", "alt+f"]
+
+[ui]
+agent_panel_sort = "priority"
+show_agent_labels_on_pane_borders = true
+
+[ui.toast]
+delivery = "herdr"
+delay_seconds = 2

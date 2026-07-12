@@ -1,0 +1,61 @@
+{
+  "plugins": {
+    "alpha-nvim": {
+      "rev": "a9d8fb72213c8b461e791409e7feabb74eb6ce73",
+      "src": "https://github.com/goolord/alpha-nvim"
+    },
+    "blink.cmp": {
+      "rev": "78336bc89ee5365633bcf754d93df01678b5c08f",
+      "src": "https://github.com/saghen/blink.cmp",
+      "version": "1.0.0 - 2.0.0"
+    },
+    "codediff.nvim": {
+      "rev": "832f1ecc5f8b15a44cf7537e31d3266d657775b1",
+      "src": "https://github.com/esmuellert/codediff.nvim"
+    },
+    "fzf-lua": {
+      "rev": "abacb0693d7a37de9e85e6fcb2d22d848cb75cef",
+      "src": "https://github.com/ibhagwan/fzf-lua"
+    },
+    "guts.nvim": {
+      "rev": "a4fc46c5c5ca545e2e06b48d19c7e216c778fb8b",
+      "src": "https://github.com/vossenwout/guts.nvim"
+    },
+    "kanagawa.nvim": {
+      "rev": "aef7f5cec0a40dbe7f3304214850c472e2264b10",
+      "src": "https://github.com/rebelot/kanagawa.nvim"
+    },
+    "neoscroll.nvim": {
+      "rev": "c8d29979cb0cb3a2437a8e0ae683fd82f340d3b8",
+      "src": "https://github.com/karb94/neoscroll.nvim"
+    },
+    "nvim-dap": {
+      "rev": "45a69eba683a2c448dd9ecfc4de89511f0646b5f",
+      "src": "https://github.com/mfussenegger/nvim-dap"
+    },
+    "nvim-lspconfig": {
+      "rev": "a776085e04f7b15d0b59fae2244df07d98360ab4",
+      "src": "https://github.com/neovim/nvim-lspconfig"
+    },
+    "nvim-treesitter": {
+      "rev": "4916d6592ede8c07973490d9322f187e07dfefac",
+      "src": "https://github.com/nvim-treesitter/nvim-treesitter"
+    },
+    "oil.nvim": {
+      "rev": "0fcc83805ad11cf714a949c98c605ed717e0b83e",
+      "src": "https://github.com/stevearc/oil.nvim"
+    },
+    "render-markdown.nvim": {
+      "rev": "4ae2f2e8e8c66d070f33cfb57cb6f867e3baf5d9",
+      "src": "https://github.com/MeanderingProgrammer/render-markdown.nvim"
+    },
+    "rose-pine": {
+      "rev": "ff483051a47e27d84bdef47703538df1ed9f4a47",
+      "src": "https://github.com/rose-pine/neovim"
+    },
+    "vague.nvim": {
+      "rev": "fd58046b9d64259d9785e4aeb6d6f494c6943cad",
+      "src": "https://github.com/vague-theme/vague.nvim"
+    }
+  }
+}
