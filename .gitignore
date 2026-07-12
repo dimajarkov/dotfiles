@@ -1,12 +1,17 @@
-# herdr runtime artifacts (regenerated at runtime; never commit)
+# Herdr runtime artifacts
 home/.config/herdr/*.log
-home/.config/herdr/session.json
 home/.config/herdr/*.sock
+home/.config/herdr/session.json
+home/.config/herdr/sessions/
 
-# macOS + nix build noise
+# Secrets and local credentials
+home/.config/gh/hosts.yml
+home/.config/gh/*.token
+
+# macOS and Nix build output
 .DS_Store
 result
 result-*
 
-# no-mistakes local validation state - never commit in this public repo
+# Local validation state
 .no-mistakes/
