@@ -1,0 +1,9 @@
+{
+  "name": "pi-ipython-primary-tool-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "zeromq": "6.5.0"
+  }
+}

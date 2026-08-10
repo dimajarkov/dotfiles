@@ -1,6 +1,8 @@
 # Herdr runtime artifacts
 home/.config/herdr/*.log
 home/.config/herdr/*.sock
+home/.config/herdr/.plugins.lock
+home/.config/herdr/release-notes.json
 home/.config/herdr/session.json
 home/.config/herdr/sessions/
 
@@ -8,7 +10,9 @@ home/.config/herdr/sessions/
 home/.config/gh/hosts.yml
 home/.config/gh/*.token
 
-# macOS and Nix build output
+# Python, macOS, and Nix build output
+__pycache__/
+*.py[cod]
 .DS_Store
 result
 result-*

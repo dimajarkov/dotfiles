@@ -10,6 +10,8 @@
   users.users.${user} = { home = "/Users/${user}"; };
   system.stateVersion = 6;
 
+  programs.zsh.enableGlobalCompInit = false;
+
   system.defaults = {
     NSGlobalDomain = {
       AppleInterfaceStyle = "Dark";
@@ -47,6 +49,7 @@
       "claude-code"
       "ghostty"
       "opensuperwhisper"
+      "tailscale-app"
       "wezterm"
     ];
   };

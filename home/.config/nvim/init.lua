@@ -45,6 +45,9 @@ vim.opt.swapfile = false
 -- Snappy escape
 vim.o.ttimeoutlen = 1
 
+-- Match macOS Option-Delete behavior while editing text or commands
+vim.keymap.set({ 'i', 'c' }, '<M-BS>', '<C-W>', { desc = 'Delete previous word' })
+
 -- Vim diagnostics
 vim.diagnostic.config({
 	underline = false,       -- don't underline errors
@@ -89,12 +92,30 @@ vim.pack.add({
 	'https://github.com/esmuellert/codediff.nvim',
 	'https://github.com/goolord/alpha-nvim',
 	'https://github.com/MeanderingProgrammer/render-markdown.nvim',
+	'https://github.com/nvim-mini/mini.nvim',
+	'https://github.com/folke/which-key.nvim',
 	{ src = 'https://github.com/saghen/blink.cmp', version = vim.version.range('1.x') }, -- pinning so rust binary dependency automatically downloads
 	-- Colorschemes
 	'https://github.com/rebelot/kanagawa.nvim',
 	{ src = "https://github.com/rose-pine/neovim", name = "rose-pine" },
 	'https://github.com/vague-theme/vague.nvim',
 	'https://github.com/vossenwout/guts.nvim',
+})
+
+-- Mini.nvim
+require('mini.ai').setup()
+require('mini.icons').setup()
+
+-- Keybinding guide
+require('which-key').setup({
+	preset = 'modern',
+	spec = {
+		{ '<leader>c', group = 'clipboard' },
+		{ '<leader>d', group = 'debug / diagnostics' },
+		{ '<leader>f', group = 'find' },
+		{ '<leader>g', group = 'git' },
+		{ '<leader>r', group = 'review' },
+	},
 })
 
 -- Vague Colorscheme
@@ -317,7 +338,9 @@ require("oil").setup({
 		},
 	},
 	columns = {
-		{ "mtime", highlight = "Comment" } },
+		"icon",
+		{ "mtime", highlight = "Comment" },
+	},
 	view_options = {
 		show_hidden = true,
 		sort = {
@@ -456,10 +479,8 @@ vim.keymap.set('n', '<leader>b', '<cmd>FzfLua buffers<cr>', { desc = 'Buffers' }
 vim.keymap.set('n', '<leader>g', '<cmd>Hunk<cr>', { desc = 'Hunk diff' })
 vim.keymap.set('n', '<leader>d', vim.diagnostic.open_float, { desc = 'Show diagnostics' })
 
--- Home-row movement from the previous local setup.
-vim.keymap.set({ 'n', 'v' }, 'j', 'h', {})
-vim.keymap.set({ 'n', 'v' }, 'k', 'j', {})
-vim.keymap.set({ 'n', 'v' }, 'l', 'k', {})
+-- Home-row horizontal movement from the previous local setup.
+vim.keymap.set({ 'n', 'v' }, 'l', 'h', {})
 vim.keymap.set({ 'n', 'v' }, ';', 'l', {})
 
 -- Start screen

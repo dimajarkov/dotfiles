@@ -5,9 +5,10 @@ shell_mode = "auto"
 new_cwd = "follow"
 
 [theme]
-name = "one-dark"
-
+name = "gruvbox"
 auto_switch = false
+dark_name = "catppuccin"
+light_name = "catppuccin-latte"
 [keys]
 prefix = "tab"
 detach = "prefix+q"
@@ -17,22 +18,25 @@ previous_tab = ["prefix+p", "ctrl+shift+tab"]
 next_tab = ["prefix+n", "ctrl+tab"]
 switch_tab = ["prefix+1..9", "alt+1..9"]
 rename_pane = "prefix+shift+p"
-focus_pane_left = ["prefix+j", "alt+j", "prefix+left"]
-focus_pane_down = ["prefix+k", "alt+k", "prefix+down"]
-focus_pane_up = ["prefix+l", "alt+l", "prefix+up"]
+focus_pane_left = ["prefix+l", "alt+l", "prefix+left"]
+focus_pane_down = ["prefix+j", "alt+j", "prefix+down"]
+focus_pane_up = ["prefix+k", "alt+k", "prefix+up"]
 focus_pane_right = ["prefix+;", "alt+;", "prefix+right"]
-navigate_pane_left = "j"
-navigate_pane_down = "k"
-navigate_pane_up = "l"
+navigate_pane_left = "l"
+navigate_pane_down = "j"
+navigate_pane_up = "k"
 navigate_pane_right = ";"
 split_vertical = ["prefix+h", "alt+h"]
 split_horizontal = ["prefix+v", "prefix+minus", "alt+v"]
 zoom = ["prefix+f", "alt+f"]
 
 [ui]
-agent_panel_sort = "priority"
+agent_panel_sort = "spaces"
 show_agent_labels_on_pane_borders = true
 
 [ui.toast]
-delivery = "herdr"
+delivery = "off"
 delay_seconds = 2
+
+[ui.sound]
+enabled = false

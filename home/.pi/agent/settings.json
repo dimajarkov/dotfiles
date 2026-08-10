@@ -2,15 +2,19 @@
   "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/config/settings.schema.json",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-sol",
-  "defaultThinkingLevel": "high",
-  "theme": "catppuccin-latte",
+  "defaultThinkingLevel": "xhigh",
+  "theme": "prime",
   "externalEditor": "nvim",
   "defaultProjectTrust": "ask",
-  "quietStartup": false,
+  "quietStartup": true,
+  "hideThinkingBlock": false,
   "showCacheMissNotices": false,
   "editorPaddingX": 1,
   "outputPad": 0,
   "autocompleteMaxVisible": 8,
+  "steeringMode": "all",
+  "followUpMode": "all",
+  "collapseChangelog": true,
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
@@ -26,12 +30,19 @@
     }
   },
   "terminal": {
-    "showImages": true,
+    "showImages": false,
     "imageWidthCells": 60,
     "clearOnShrink": false
   },
   "images": {
     "autoResize": true,
     "blockImages": false
-  }
+  },
+  "lastChangelogVersion": "0.84.0",
+  "packages": [
+    "git:github.com/algal/pi-openai-server-compaction@c6d593087709e9481223dc6c6c2269b371b5e055",
+    "npm:@ryan_nookpi/pi-extension-codex-fast-mode@0.2.6",
+    "npm:pi-mcp-adapter@2.11.0",
+    "npm:pi-web-access@0.15.0"
+  ]
 }

@@ -1,0 +1,48 @@
+{
+  "settings": {
+    "autoAuth": false,
+    "sampling": false,
+    "elicitation": false,
+    "outputGuard": true
+  },
+  "mcpServers": {
+    "supabase-staging": {
+      "url": "https://mcp.supabase.com/mcp?project_ref=wtbdxfrbnwzjswexxvgy&read_only=true",
+      "auth": "bearer",
+      "bearerTokenEnv": "SUPABASE_ACCESS_TOKEN",
+      "lifecycle": "lazy",
+      "requestTimeoutMs": 240000,
+      "exposeResources": false,
+      "directTools": false,
+      "excludeTools": [
+        "apply_migration",
+        "deploy_edge_function",
+        "create_branch",
+        "delete_branch",
+        "merge_branch",
+        "reset_branch",
+        "rebase_branch"
+      ],
+      "debug": false
+    },
+    "supabase-production": {
+      "url": "https://mcp.supabase.com/mcp?project_ref=iwzmikjwobxramjvlatj&read_only=true&features=database,docs",
+      "auth": "bearer",
+      "bearerTokenEnv": "SUPABASE_ACCESS_TOKEN",
+      "lifecycle": "lazy",
+      "requestTimeoutMs": 240000,
+      "exposeResources": false,
+      "directTools": false,
+      "excludeTools": [
+        "apply_migration",
+        "deploy_edge_function",
+        "create_branch",
+        "delete_branch",
+        "merge_branch",
+        "reset_branch",
+        "rebase_branch"
+      ],
+      "debug": false
+    }
+  }
+}
