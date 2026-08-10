@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/config/settings.schema.json",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-sol",
-  "defaultThinkingLevel": "xhigh",
+  "defaultThinkingLevel": "medium",
   "theme": "prime",
   "externalEditor": "nvim",
   "defaultProjectTrust": "ask",
