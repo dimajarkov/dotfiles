@@ -128,15 +128,28 @@ def result_at(document: Any, *path: str) -> Any:
 
 
 def pane_is_available(commands: Commands, pane_id: str, expected_cwd: str) -> None:
-    pane = result_at(commands.herdr("pane", "get", pane_id), "result", "pane")
-    pane_cwd = pane.get("foreground_cwd") or pane.get("cwd")
-    if not isinstance(pane_cwd, str) or canonical(pane_cwd) != expected_cwd:
-        raise WorkflowError(f"Pane {pane_id} cwd does not match leased checkout {expected_cwd}.")
-    process = result_at(commands.herdr("pane", "process-info", "--pane", pane_id), "result", "process_info")
-    foreground = process.get("foreground_processes", [])
     shells = {"zsh", "bash", "fish", "sh"}
-    if foreground and any(Path(str(item.get("argv0", ""))).name.lstrip("-") not in shells for item in foreground):
-        raise WorkflowError(f"Pane {pane_id} is occupied by a foreign foreground process.")
+    last_foreground: Any = []
+    for _ in range(20):
+        pane = result_at(commands.herdr("pane", "get", pane_id), "result", "pane")
+        pane_cwd = pane.get("foreground_cwd") or pane.get("cwd")
+        if not isinstance(pane_cwd, str) or canonical(pane_cwd) != expected_cwd:
+            raise WorkflowError(f"Pane {pane_id} cwd does not match leased checkout {expected_cwd}.")
+        process = result_at(
+            commands.herdr("pane", "process-info", "--pane", pane_id),
+            "result",
+            "process_info",
+        )
+        last_foreground = process.get("foreground_processes", [])
+        if not last_foreground or all(
+            Path(str(item.get("argv0", ""))).name.lstrip("-") in shells
+            for item in last_foreground
+        ):
+            return
+        time.sleep(0.25)
+    raise WorkflowError(
+        f"Pane {pane_id} is occupied by a foreign foreground process: {last_foreground}."
+    )
 
 
 def root_pane_for_tab(commands: Commands, workspace_id: str, tab_id: str) -> str:
