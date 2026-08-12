@@ -242,6 +242,8 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/nvim";
   home.file.".config/herdr".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/herdr";
+  home.file.".agents/skills/treehouse-herdr-feature-runtime".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/treehouse-herdr-feature-runtime";
   home.file.".claude/settings.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.claude/settings.json";
   home.file.".claude/CLAUDE.md".source =
