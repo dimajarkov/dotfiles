@@ -50,7 +50,8 @@ python3 scripts/feature_runtime.py \
 
 For an existing exact lease, replace `--create-command-json` with
 `--existing-worktree <path> --metadata-path <path>` and pass the recorded
-`--workspace-id` when reusing Herdr topology.
+`--workspace-id`, `--expected-lease-id`, and `--expected-lease-holder` when
+reusing Herdr topology.
 
 The helper performs the state transitions in order:
 

@@ -83,6 +83,16 @@ def validate_tabs(tabs: Any, workspace_id: str) -> tuple[dict[str, Any], dict[st
     return feature_tabs[0], runtime_tabs[0] if runtime_tabs else None
 
 
+def validate_agent_name(name: str, agents: Any) -> None:
+    import re
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", name):
+        raise WorkflowError("Agent name must match [a-z][a-z0-9_-]{0,31}.")
+    if not isinstance(agents, list):
+        raise WorkflowError("Herdr agent list did not return an array.")
+    if any(agent.get("name") == name for agent in agents):
+        raise WorkflowError(f"Herdr agent name {name} is already in use.")
+
+
 class Commands:
     def __init__(self, session: str) -> None:
         self.session = session
@@ -157,6 +167,7 @@ def create_or_reuse_topology(commands: Commands, workspace_id: str | None, workt
     feature_tab, runtime_tab = validate_tabs(tabs, workspace_id)
     feature_tab_id = feature_tab["tab_id"]
     feature_pane_id = root_pane_for_tab(commands, workspace_id, feature_tab_id)
+    pane_is_available(commands, feature_pane_id, worktree_path)
     if runtime_tab is None:
         created = commands.herdr("tab", "create", "--workspace", workspace_id, "--cwd", worktree_path, "--label", "runtime", "--no-focus")
         runtime_tab_id = result_at(created, "result", "tab", "tab_id")
@@ -234,6 +245,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     allocation.add_argument("--create-command-json")
     allocation.add_argument("--existing-worktree")
     parser.add_argument("--metadata-path")
+    parser.add_argument("--expected-lease-id")
+    parser.add_argument("--expected-lease-holder")
     parser.add_argument("--runtime-command-json", required=True)
     parser.add_argument("--readiness-command-json", required=True)
     parser.add_argument("--handoff", required=True)
@@ -250,6 +263,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     session = os.environ["HERDR_SESSION"]
     commands = Commands(session)
     source = canonical(args.source_checkout)
+    live_agents = result_at(commands.herdr("agent", "list"), "result", "agents")
+    validate_agent_name(args.agent_name, live_agents)
     caller = result_at(commands.herdr("pane", "get", args.caller_pane_id), "result", "pane")
     caller_cwd = caller.get("foreground_cwd") or caller.get("cwd")
     if not isinstance(caller_cwd, str) or canonical(caller_cwd) != source:
@@ -266,14 +281,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         worktree_path = canonical(result_at(created, "plan", "worktreePath"))
         metadata_path = canonical(result_at(created, "metadataPath"))
     else:
-        if not args.metadata_path:
-            raise WorkflowError("--existing-worktree requires --metadata-path.")
+        if not args.metadata_path or not args.workspace_id:
+            raise WorkflowError("--existing-worktree requires --metadata-path and --workspace-id.")
+        if not args.expected_lease_id or not args.expected_lease_holder:
+            raise WorkflowError("Resume requires the recorded --expected-lease-id and --expected-lease-holder.")
         worktree_path = canonical(args.existing_worktree)
         metadata_path = canonical(args.metadata_path)
     lease = select_durable_lease(commands.json(["treehouse", "status", "--json"], cwd=source), worktree_path)
+    if args.existing_worktree and (
+        lease["lease_id"] != args.expected_lease_id
+        or lease["lease_holder"] != args.expected_lease_holder
+    ):
+        raise WorkflowError("Recorded durable lease identity no longer owns the checkout.")
     metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
     if canonical(metadata.get("worktreePath", "")) != worktree_path:
         raise WorkflowError("Project runtime metadata belongs to a foreign checkout.")
+    metadata_lease = metadata.get("treehouseLease")
+    if not isinstance(metadata_lease, dict) or (
+        metadata_lease.get("id") != lease["lease_id"]
+        or metadata_lease.get("holder") != lease["lease_holder"]
+    ):
+        raise WorkflowError("Project runtime metadata has a foreign or missing durable lease identity.")
 
     topology = create_or_reuse_topology(commands, args.workspace_id, worktree_path, args.workspace_label)
     runtime_argv = parse_command_json(args.runtime_command_json, "--runtime-command-json")
@@ -298,6 +326,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands.herdr("pane", "run", topology["feature_pane_id"], shell_command(agent_argv))
     agent = wait_for_agent(commands, topology["feature_pane_id"], worktree_path, args.agent_timeout)
     commands.herdr("agent", "rename", topology["feature_pane_id"], args.agent_name)
+    final_lease = select_durable_lease(
+        commands.json(["treehouse", "status", "--json"], cwd=source), worktree_path
+    )
+    if final_lease["lease_id"] != lease["lease_id"] or final_lease["lease_holder"] != lease["lease_holder"]:
+        raise WorkflowError("Durable Treehouse lease identity changed during orchestration.")
 
     receipt = {
         "schemaVersion": 1,

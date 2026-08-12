@@ -63,6 +63,12 @@ class FeatureRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.WorkflowError, "conflicting runtime tabs"):
             MODULE.validate_tabs([feature, runtime, {**runtime, "tab_id": "w1:t3"}], "w1")
 
+    def test_rejects_invalid_or_colliding_agent_names(self):
+        with self.assertRaisesRegex(MODULE.WorkflowError, "must match"):
+            MODULE.validate_agent_name("Bad Name", [])
+        with self.assertRaisesRegex(MODULE.WorkflowError, "already in use"):
+            MODULE.validate_agent_name("feature-agent", [{"name": "feature-agent"}])
+
     def test_similar_labels_do_not_count_as_runtime(self):
         feature = {"label": "feature-agent", "tab_id": "w1:t1"}
         selected = MODULE.validate_tabs(
