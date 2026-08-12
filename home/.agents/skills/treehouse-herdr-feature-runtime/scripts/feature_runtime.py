@@ -114,6 +114,9 @@ class Commands:
     def herdr(self, *args: str) -> Any:
         return self.json(["herdr", "--session", self.session, *args])
 
+    def herdr_run(self, pane_id: str, command: str) -> None:
+        self.run(["herdr", "--session", self.session, "pane", "run", pane_id, command])
+
 
 def result_at(document: Any, *path: str) -> Any:
     current = document
@@ -307,7 +310,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     runtime_argv = parse_command_json(args.runtime_command_json, "--runtime-command-json")
     readiness_argv = parse_command_json(args.readiness_command_json, "--readiness-command-json")
     commands.herdr("pane", "rename", topology["runtime_pane_id"], f"{args.feature_slug} full runtime")
-    commands.herdr("pane", "run", topology["runtime_pane_id"], shell_command(runtime_argv))
+    commands.herdr_run(topology["runtime_pane_id"], shell_command(runtime_argv))
     readiness = wait_for_readiness(commands, readiness_argv, worktree_path, args.readiness_timeout)
 
     pane_is_available(commands, topology["feature_pane_id"], worktree_path)
@@ -323,7 +326,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "Read the repository instructions and runtime metadata, verify the readiness receipt, then remain ready for the feature work.",
     ]
     commands.herdr("pane", "rename", topology["feature_pane_id"], f"{args.feature_slug} feature agent")
-    commands.herdr("pane", "run", topology["feature_pane_id"], shell_command(agent_argv))
+    commands.herdr_run(topology["feature_pane_id"], shell_command(agent_argv))
     agent = wait_for_agent(commands, topology["feature_pane_id"], worktree_path, args.agent_timeout)
     commands.herdr("agent", "rename", topology["feature_pane_id"], args.agent_name)
     final_lease = select_durable_lease(
