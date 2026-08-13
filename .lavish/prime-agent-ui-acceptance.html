@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prime-style Pi UI - visual acceptance</title>
+<style>
+:root{--bg:#050506;--surface:#0d0d10;--panel:#151518;--fg:#f4f4f5;--muted:#a1a1aa;--dim:#71717a;--grid:#3f3f46;--primary:#8d7fc0;--success:#7da876;--warn:#f59e0b;--error:#d06f82;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color-scheme:dark}*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--fg)}body{background:radial-gradient(circle at 80% 0,rgba(124,111,175,.16),transparent 34rem),var(--bg)}main{width:min(1180px,calc(100% - 28px));margin:auto;padding:42px 0 90px}h1{font-size:clamp(34px,6vw,68px);line-height:1;letter-spacing:-.05em;margin:.2em 0}h2{margin:36px 0 12px}p{color:var(--muted);max-width:850px}.eyebrow{color:var(--primary);font:700 12px ui-monospace;letter-spacing:.13em;text-transform:uppercase}.badges,.stats{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0}.badge{border:1px solid var(--grid);border-radius:999px;padding:6px 10px;color:var(--muted);font:12px ui-monospace}.ok{color:var(--success);border-color:rgba(125,168,118,.5)}.gate{color:var(--warn);border-color:rgba(245,158,11,.5)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.card{min-width:0;background:rgba(13,13,16,.92);border:1px solid #29292f;border-radius:14px;padding:16px}.card h3{margin:0 0 8px}pre{margin:0;overflow:auto;max-height:520px;padding:16px;border-radius:10px;background:#09090b;color:#d4d4d8;font:12px/1.45 "SFMono-Regular",Menlo,monospace;white-space:pre;tab-size:2}table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--grid);font-size:13px}th,td{padding:11px 12px;border-bottom:1px solid #29292f;text-align:left;vertical-align:top}th{color:var(--dim);font:700 11px ui-monospace;text-transform:uppercase;letter-spacing:.08em}td:first-child{font-family:ui-monospace}.pass{color:var(--success);font-weight:700}.pending{color:var(--warn);font-weight:700}.note{border-left:2px solid var(--primary);padding:12px 15px;background:rgba(124,111,175,.08);color:var(--muted)}.gatebox{margin-top:24px;padding:18px;border:1px solid rgba(245,158,11,.45);border-radius:14px;background:rgba(245,158,11,.06)}code{font-family:ui-monospace;color:var(--fg)}@media(max-width:760px){.grid{grid-template-columns:1fr}main{width:min(100% - 18px,1180px)}}
+</style></head><body><main>
+<div class="eyebrow">feature/prime-ui · human visual approval gate</div><h1>Prime density, Pi semantics.</h1>
+<p>The consolidated extension is implemented, tested, and exercised in real Pi 0.84.1. Review the calmer one-row tool grammar, bounded live and failed output, responsive footer, native expansion controls, and ownership proof. Home Manager has not been applied.</p>
+<div class="badges"><span class="badge ok">60 automated tests pass</span><span class="badge ok">Nix flake check passes</span><span class="badge ok">Non-switching Darwin build passes</span><span class="badge ok">WezTerm inline + fullscreen</span><span class="badge gate">Awaiting visual approval</span></div>
+<h2>Before and after</h2><div class="grid"><section class="card"><h3>Before - built-in vertical blocks</h3><p>Tool arguments and results dominate the transcript. The custom footer also drops extension statuses.</p><pre> status-line.ts                                                                 
+ supabase-keychain                                                              
+ terminal-status-title.js                                                       
+                                                                                
+ Took 0.0s                                                                      
+                                                                                
+
+                                                                                
+ $ grep -R &quot;Prime&quot; home/.pi/agent                                               
+                                                                                
+ ... (46 earlier lines, ctrl+o to expand)                                       
+ ExtensionAPI, dependencies: PrimeParityDependencies = {}) {                    
+ home/.pi/agent/extensions/prime-parity.ts:export function                      
+ createPrimeParityExtension(dependencies: PrimeParityDependencies = {}) {       
+ home/.pi/agent/extensions/prime-parity.ts:export default                       
+ createPrimeParityExtension();                                                  
+                                                                                
+ Took 0.0s                                                                      
+                                                                                
+
+Locating TypeScript files                                                       
+
+                                                                                
+ $ find home/.pi/agent/extensions -name &#x27;*.ts&#x27;                                  
+                                                                                
+ ... (3 earlier lines, ctrl+o to expand)                                        
+ home/.pi/agent/extensions/prime-parity.ts                                      
+ home/.pi/agent/extensions/status-line.ts                                       
+ home/.pi/agent/extensions/supabase-keychain/auth.test.ts                       
+ home/.pi/agent/extensions/supabase-keychain/index.ts                           
+ home/.pi/agent/extensions/supabase-keychain/auth.ts                            
+                                                                                
+ Took 0.0s                                                                      
+                                                                                
+                                                                                
+                                                                                
+ $ for i in 1 2 3 4 5 6 7 8; do printf &quot;stream-row-%s:                          
+ abcdefghijklmnopqrstuvwxyz0123456789\n&quot; &quot;$i&quot;; sleep 0.5; done (timeout 10s)    
+                                                                                
+ ... (3 earlier lines, ctrl+o to expand)                                        
+ stream-row-4: abcdefghijklmnopqrstuvwxyz0123456789                             
+ stream-row-5: abcdefghijklmnopqrstuvwxyz0123456789                             
+ stream-row-6: abcdefghijklmnopqrstuvwxyz0123456789                             
+ stream-row-7: abcdefghijklmnopqrstuvwxyz0123456789                             
+ stream-row-8: abcdefghijklmnopqrstuvwxyz0123456789                             
+                                                                                
+ Took 4.1s                                                                      
+                                                                                
+                                                                                
+Writing three-line string with newlines                                         
+                                                                                
+                                                                                
+ write /tmp/prime-ui-before-evidence.txt                                        
+                                                                                
+ alpha                                                                          
+ beta                                                                           
+ gamma                                                                          
+                                                                                
+                                                                                
+                                                                                
+ edit /tmp/prime-ui-before-evidence.txt                                         
+                                                                                
+  1 alpha                                                                       
+ -2 beta                                                                        
+ +2 BETA                                                                        
+  3 gamma                                                                       
+                                                                                
+                                                                                
+                                                                                
+ $ printf &quot;diagnostic one\ndiagnostic two\n&quot;; exit 7                            
+                                                                                
+ diagnostic one                                                                 
+ diagnostic two                                                                 
+                                                                                
+                                                                                
+ Command exited with code 7                                                     
+                                                                                
+ Took 0.0s                                                                      
+                                                                                
+
+Completed all eight evidence steps in order; the final diagnostic exited with   
+code 7 as requested.                                                            
+                                                                                
+                                                                                
+ &gt;   Try &quot;add tests for @&lt;filepath&gt;&quot;                                            
+                                                                                
+/Volumes/OWC Envoy Ultra/20_PROJECTS/Development/Treehouse/dotfiles-prime-ui  ·…
+$0.185 (sub)  gpt-5.6-sol · high                                     272k (3.2%)
+                                                                                
+                                                                                </pre></section><section class="card"><h3>After - stable Prime rows</h3><p>Success collapses to one content row. Failure retains five useful wrapped diagnostics. Supabase status remains visible.</p><pre>  3 gamma                                                                       
+                                                                                
+
+                                                                                
+ $ printf &quot;diagnostic one\ndiagnostic two\ndiagnostic three\ndiagnostic         
+ four\ndiagnostic five\ndiagnostic six\n&quot;; exit 7                               
+                                                                                
+ ... (4 earlier lines, ctrl+o to expand)                                        
+ diagnostic five                                                                
+ diagnostic six                                                                 
+                                                                                
+                                                                                
+ Command exited with code 7                                                     
+                                                                                
+
+Evidence run completed exactly as requested; final diagnostic command exited    
+with code 7.                                                                    
+
+ Reloaded keybindings, extensions, skills, prompts, themes, and context files   
+
+                                                                                
+Use bash to run: printf &quot;success\\n&quot;. Then use bash to run: printf &quot;failure     
+one\\nfailure two\\nfailure three\\nfailure four\\nfailure five\\nfailure       
+six\\n&quot;; exit 9. Then say done.                                                 
+                                                                                
+                                                                                
+✓ bash · printf &quot;success\n&quot; · exit 0 · 3ms                                      
+
+✗ bash · printf &quot;failure one\nfailure two\nfailure three… · exit 9 · 4ms        
+                                                                                
+failure three                                                                   
+failure four                                                                    
+failure five                                                                    
+failure six                                                                     
+Command exited with code 9                                                      
+                                                                                
+Done.                                                                           
+
+                                                                                
+ &gt;   Try &quot;explain how @&lt;filepath&gt; works&quot;                                        
+                                                                                
+/Volumes/OWC Envoy Ultra/20_PROJECTS/Development/Treehouse/dotfiles-prime-ui · …
+gpt-5.6-sol · high · Supabase MCP: PAT ready · $0.179 (sub) · 272k (2.4%)       
+                                                                                
+                                                                                </pre></section></div>
+<h2>Fullscreen behavior</h2><div class="grid"><section class="card"><h3>Running - bounded live tail</h3><pre>                                                                                
+                                                                                
+done.                                                                           
+                                                                                
+ Reloaded keybindings, extensions, skills, prompts, themes, and context files   
+                                                                                
+                                                                                
+Use bash to run: for i in 1 2 3 4 5 6 7 8; do echo live-fixed-$i; sleep 1; done.
+Then say done.                                                                  
+                                                                                
+                                                                                
+◇ bash · echo live-fixed-$i                                                     
+                                                                                
+live-fixed-1                                                                    
+live-fixed-2                                                                    
+live-fixed-3                                                                    
+                                                                                
+ ◇ Executing · 6s                                                               
+                                                                                
+                                                                                
+ &gt;   Try &quot;fix bugs in @&lt;filepath&gt;&quot;                                              
+                                                                                
+/Volumes/OWC Envoy Ultra/20_PROJECTS/Development/Treehouse/dotfiles-prime-ui · …
+gpt-5.6-sol · high · Supabase MCP: PAT ready · $0.085 (sub) · 272k (2.1%)       
+</pre></section><section class="card"><h3>Settled - output collapses</h3><pre> wide-fullscreen-row-7-abcdefghijklmnopqrstuvwxyz                               
+ wide-fullscreen-row-8-abcdefghijklmnopqrstuvwxyz                               
+ wide-fullscreen-row-9-abcdefghijklmnopqrstuvwxyz                               
+ wide-fullscreen-row-10-abcdefghijklmnopqrstuvwxyz                              
+                                                                                
+                                                                                
+done.                                                                           
+                                                                                
+ Reloaded keybindings, extensions, skills, prompts, themes, and context files   
+                                                                                
+                                                                                
+Use bash to run: for i in 1 2 3 4 5 6 7 8; do echo live-fixed-$i; sleep 1; done.
+Then say done.                                                                  
+                                                                                
+                                                                                
+✓ bash · echo live-fixed-$i · exit 0 · 8.0s                                     
+                                                                                
+done.                                                                           
+                                                                                
+                                                                                
+ &gt;   Try &quot;fix bugs in @&lt;filepath&gt;&quot;                                              
+                                                                                
+/Volumes/OWC Envoy Ultra/20_PROJECTS/Development/Treehouse/dotfiles-prime-ui · …
+gpt-5.6-sol · high · Supabase MCP: PAT ready · $0.092 (sub) · 272k (2.1%)       
+</pre></section></div>
+<h2>Acceptance matrix</h2><table><thead><tr><th>Contract</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td>One visual owner</td><td class="pass">PASS</td><td><code>prime-style.ts</code> owns theme selection, editor, built-in presentation, working line, and footer. Home Manager no longer links standalone footer or macOS theme owner.</td></tr>
+<tr><td>Seven built-in success rows</td><td class="pass">PASS</td><td>Real inline capture covers read, write, edit, bash, grep, find, and ls. Automated grammar tests cover all seven.</td></tr>
+<tr><td>Source ownership guard</td><td class="pass">PASS</td><td>Only exact <code>sourceInfo.source === "builtin"</code> winners are decorated. Real custom-read fixture remains executable and keeps its renderer.</td></tr>
+<tr><td>Running and failed tails</td><td class="pass">PASS</td><td>Fullscreen live capture shows running state and bounded output. Inline failure retains five useful wrapped diagnostic rows.</td></tr>
+<tr><td>Ctrl+O / Ctrl+T</td><td class="pass">PASS</td><td>No extension shortcuts registered. Real Ctrl+O exposes retained output; real Ctrl+T switches Pi-native reasoning to hidden.</td></tr>
+<tr><td>Responsive footer statuses</td><td class="pass">PASS</td><td>Two rows at 80 columns; <code>Supabase MCP: PAT ready</code> remains visible. Width tests cover 1, 12, 24, 40, and 80 columns.</td></tr>
+<tr><td>Lifecycle cleanup</td><td class="pass">PASS</td><td>One shared 250 ms timer; tests prove replacement and disposal clear timer, timings, and invalidators. Reload smoke passed.</td></tr>
+<tr><td>Inline / fullscreen / 256-color</td><td class="pass">PASS</td><td>Real WezTerm captures for both modes and a simulated xterm-256color smoke.</td></tr>
+<tr><td>Pi-native exceptional loaders</td><td class="pass">PRESERVED</td><td>The extension only customizes the normal working indicator. Retry and compaction loaders remain Pi-owned by public API design.</td></tr>
+<tr><td>Deployment</td><td class="pending">BLOCKED BY GATE</td><td>No Home Manager switch until explicit visual approval and separate deployment authorization.</td></tr>
+</tbody></table>
+<h2>Ownership proof</h2><div class="card"><pre>                                                                                
+Use read on ownership-proof.txt, then repeat the exact result.                  
+                                                                                
+                                                                                
+                                                                                
+ CUSTOM OWNER read ownership-proof.txt                                          
+ CUSTOM_READ_OWNER:ownership-proof.txt                                          
+                                                                                
+                                                                                
+CUSTOM_READ_OWNER:ownership-proof.txt                                           
+                                                                                
+                                                                                
+ &gt;   Try &quot;add tests for @&lt;filepath&gt;&quot;                                            
+                                                                                
+/Volumes/OWC Envoy Ultra/20_PROJECTS/Development/Treehouse/dotfiles-prime-ui · …
+gpt-5.6-sol · high · $0.025 (sub) · 272k (1.5%)                                 
+                                                                                
+                                                                                
+
+
+
+
+
+</pre></div>
+<h2>Native expansion proof</h2><div class="card"><pre>}, result(&quot;a.ts:1: Prime\nb.ts:2: Prime&quot;)],
+extensions/mac-system-theme.ts:74:     // Prime Agent uses one fixed brand theme
+rather than a light/dark pair.
+extensions/prime-style.ts:56: type PrimeRowState = {
+extensions/prime-style.ts:57:   row?: PrimeToolRow;
+extensions/prime-style.ts:209: class PrimeToolRow implements Component {
+extensions/prime-style.ts:275: class PrimeToolDetail implements Component {
+extensions/prime-style.ts:411: function getRow(state: PrimeRowState, name:
+BuiltinName, context: ToolRenderContext, activity: ActivityController):
+PrimeToolRow {
+extensions/prime-style.ts:412:   state.row ??= new PrimeToolRow(name,
+context.toolCallId, activity);
+ 
+[8 matches limit reached. Use limit=16 for more, or refine pattern]
+
+✓ find · *.ts · home/.pi/agent/extensions · 9 paths · 16ms
+
+mac-system-theme.ts
+prime-parity.test.ts
+prime-parity.ts
+prime-style.test.ts
+prime-style.ts
+status-line.ts
+supabase-keychain/auth.test.ts
+supabase-keychain/auth.ts
+supabase-keychain/index.ts
+
+✓ bash · printf &quot;stream-row-%s: abcdefghijklmnopqrstuvwxyz0123456789\n&quot; … · exi…
+
+stream-row-1: abcdefghijklmnopqrstuvwxyz0123456789
+stream-row-2: abcdefghijklmnopqrstuvwxyz0123456789
+stream-row-3: abcdefghijklmnopqrstuvwxyz0123456789
+stream-row-4: abcdefghijklmnopqrstuvwxyz0123456789
+stream-row-5: abcdefghijklmnopqrstuvwxyz0123456789
+stream-row-6: abcdefghijklmnopqrstuvwxyz0123456789
+stream-row-7: abcdefghijklmnopqrstuvwxyz0123456789
+stream-row-8: abcdefghijklmnopqrstuvwxyz0123456789
+ 
+
+✓ write · /tmp/prime-ui-after-final.txt · 3 lines · 1ms
+
+alpha
+beta
+gamma
+ 
+
+✓ edit · /tmp/prime-ui-after-final.txt · +1 -1 · 3ms
+
+ 1 alpha
+-2 beta
++2 BETA
+ 3 gamma
+
+✗ bash · printf &quot;diagnostic one\ndiagnostic two\ndiagnostic three\ndiagn… · exi…
+
+diagnostic one
+diagnostic two
+diagnostic three
+diagnostic four
+diagnostic five
+diagnostic six
+ 
+ 
+Command exited with code 7
+
+Evidence run completed exactly as requested; final diagnostic command exited    
+with code 7.                                                                    
+
+ Tool output: expanded                                                          
+
+                                                                                
+ &gt;   Try &quot;explain how @&lt;filepath&gt; works&quot;                                        
+                                                                                
+/Volumes/OWC Envoy Ultra/20_PROJECTS/Development/Treehouse/dotfiles-prime-ui · …
+gpt-5.6-sol · high · Supabase MCP: PAT ready · $0.131 (sub) · 272k (2.3%)</pre></div>
+<div class="note"><strong>Accepted extension-only divergences:</strong> Pi keeps global Ctrl+O, native reasoning and exceptional loaders, transcript spacing, and owner-provided custom/MCP renderers. Historical rows omit unavailable durations rather than fabricate them.</div>
+<div class="gatebox"><div class="eyebrow">Decision required</div><h2 style="margin-top:8px">Visual approval</h2><p>Approve only if row density, glyphs, truncation, live/failure disclosure, editor surface, and footer hierarchy look ready for the later Home Manager cutover. Queue any visual correction against the exact section that needs it.</p></div>
+</main></body></html>

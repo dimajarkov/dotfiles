@@ -1,0 +1,26 @@
+{
+  "window_id": 3,
+  "tab_id": 14,
+  "pane_id": 28,
+  "workspace": "prime-ui-after-final",
+  "size": {
+    "rows": 24,
+    "cols": 80,
+    "pixel_width": 640,
+    "pixel_height": 384,
+    "dpi": 0
+  },
+  "title": "π - dotfiles-prime-ui",
+  "cwd": "file:///Volumes/OWC%20Envoy%20Ultra/20_PROJECTS/Development/Treehouse/dotfiles-prime-ui",
+  "cursor_x": 4,
+  "cursor_y": 18,
+  "cursor_shape": "Default",
+  "cursor_visibility": "Hidden",
+  "left_col": 0,
+  "top_row": 0,
+  "tab_title": "",
+  "window_title": "π - dotfiles-prime-ui",
+  "is_active": true,
+  "is_zoomed": false,
+  "tty_name": "/dev/ttys008"
+}

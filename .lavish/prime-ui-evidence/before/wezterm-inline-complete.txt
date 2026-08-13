@@ -1,0 +1,117 @@
+                                                                                
+UI evidence run. Use each Pi built-in tool directly and in this order. Do not   
+skip any tool: (1) read README.md lines 1-8, (2) ls home/.pi/agent/extensions,  
+(3) grep for Prime under home/.pi/agent, (4) find *.ts under                    
+home/.pi/agent/extensions, (5) bash: for i in 1 2 3 4 5 6 7 8; do printf        
+"stream-row-%s: abcdefghijklmnopqrstuvwxyz0123456789\\n" "$i"; sleep 0.5; done, 
+(6) write exactly three lines alpha, beta, gamma to                             
+/tmp/prime-ui-before-evidence.txt, (7) edit that file replacing exact beta with 
+BETA, (8) bash: printf "diagnostic one\\ndiagnostic two\\n"; exit 7 to          
+demonstrate a failure. Make no other changes. Afterward answer with one         
+sentence.                                                                       
+                                                                                
+
+Reading initial code lines                                                      
+
+                                                                                
+ read README.md:1-8                                                             
+                                                                                
+                                                                                
+Listing directory contents                                                      
+
+                                                                                
+ $ ls home/.pi/agent/extensions                                                 
+                                                                                
+ ... (2 earlier lines, ctrl+o to expand)                                        
+ prime-parity.ts                                                                
+ prime-style.ts                                                                 
+ status-line.ts                                                                 
+ supabase-keychain                                                              
+ terminal-status-title.js                                                       
+                                                                                
+ Took 0.0s                                                                      
+                                                                                
+
+                                                                                
+ $ grep -R "Prime" home/.pi/agent                                               
+                                                                                
+ ... (46 earlier lines, ctrl+o to expand)                                       
+ ExtensionAPI, dependencies: PrimeParityDependencies = {}) {                    
+ home/.pi/agent/extensions/prime-parity.ts:export function                      
+ createPrimeParityExtension(dependencies: PrimeParityDependencies = {}) {       
+ home/.pi/agent/extensions/prime-parity.ts:export default                       
+ createPrimeParityExtension();                                                  
+                                                                                
+ Took 0.0s                                                                      
+                                                                                
+
+Locating TypeScript files                                                       
+
+                                                                                
+ $ find home/.pi/agent/extensions -name '*.ts'                                  
+                                                                                
+ ... (3 earlier lines, ctrl+o to expand)                                        
+ home/.pi/agent/extensions/prime-parity.ts                                      
+ home/.pi/agent/extensions/status-line.ts                                       
+ home/.pi/agent/extensions/supabase-keychain/auth.test.ts                       
+ home/.pi/agent/extensions/supabase-keychain/index.ts                           
+ home/.pi/agent/extensions/supabase-keychain/auth.ts                            
+                                                                                
+ Took 0.0s                                                                      
+                                                                                
+                                                                                
+                                                                                
+ $ for i in 1 2 3 4 5 6 7 8; do printf "stream-row-%s:                          
+ abcdefghijklmnopqrstuvwxyz0123456789\n" "$i"; sleep 0.5; done (timeout 10s)    
+                                                                                
+ ... (3 earlier lines, ctrl+o to expand)                                        
+ stream-row-4: abcdefghijklmnopqrstuvwxyz0123456789                             
+ stream-row-5: abcdefghijklmnopqrstuvwxyz0123456789                             
+ stream-row-6: abcdefghijklmnopqrstuvwxyz0123456789                             
+ stream-row-7: abcdefghijklmnopqrstuvwxyz0123456789                             
+ stream-row-8: abcdefghijklmnopqrstuvwxyz0123456789                             
+                                                                                
+ Took 4.1s                                                                      
+                                                                                
+                                                                                
+Writing three-line string with newlines                                         
+                                                                                
+                                                                                
+ write /tmp/prime-ui-before-evidence.txt                                        
+                                                                                
+ alpha                                                                          
+ beta                                                                           
+ gamma                                                                          
+                                                                                
+                                                                                
+                                                                                
+ edit /tmp/prime-ui-before-evidence.txt                                         
+                                                                                
+  1 alpha                                                                       
+ -2 beta                                                                        
+ +2 BETA                                                                        
+  3 gamma                                                                       
+                                                                                
+                                                                                
+                                                                                
+ $ printf "diagnostic one\ndiagnostic two\n"; exit 7                            
+                                                                                
+ diagnostic one                                                                 
+ diagnostic two                                                                 
+                                                                                
+                                                                                
+ Command exited with code 7                                                     
+                                                                                
+ Took 0.0s                                                                      
+                                                                                
+
+Completed all eight evidence steps in order; the final diagnostic exited with   
+code 7 as requested.                                                            
+                                                                                
+                                                                                
+ >   Try "add tests for @<filepath>"                                            
+                                                                                
+/Volumes/OWC Envoy Ultra/20_PROJECTS/Development/Treehouse/dotfiles-prime-ui  ·…
+$0.185 (sub)  gpt-5.6-sol · high                                     272k (3.2%)
+                                                                                
+                                                                                
