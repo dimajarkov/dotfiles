@@ -142,7 +142,7 @@ export function meaningfulCommand(command: unknown): string {
       (/^sleep\b/.test(line) ? 20 : 0),
   }));
   const selected = scored.sort((left, right) => right.score - left.score)[0]?.line ?? sanitizeInline(raw);
-  return truncateToWidth(selected, 64, "…");
+  return truncateToWidth(selected, 48, "…");
 }
 
 function grepMatchCount(output: string): number {
@@ -195,13 +195,14 @@ function rowLine(theme: Theme, marker: string, name: BuiltinName, fields: string
   const separator = theme.fg("dim", " · ");
   const markerColor = marker === "✓" ? "success" : marker === "✗" ? "error" : marker === "◇" ? "muted" : "accent";
   let line = `${theme.fg(markerColor, marker)} ${theme.fg("toolTitle", theme.bold(name))}`;
-  for (const field of fields.filter(Boolean)) {
+  for (const [index, field] of fields.filter(Boolean).entries()) {
+    const clean = sanitizeInline(field);
     const available = width - visibleWidth(line) - visibleWidth(" · ");
-    if (available <= 0) break;
-    const fitted = truncateToWidth(theme.fg("muted", sanitizeInline(field)), available, "…");
+    if (available <= 0 || (index > 0 && visibleWidth(clean) > available)) break;
+    const fitted = truncateToWidth(theme.fg("muted", clean), available, "…");
     if (!fitted) break;
     line += separator + fitted;
-    if (visibleWidth(fitted) < visibleWidth(sanitizeInline(field))) break;
+    if (visibleWidth(fitted) < visibleWidth(clean)) break;
   }
   return truncateToWidth(line, Math.max(1, width), "");
 }

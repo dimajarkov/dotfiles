@@ -73,7 +73,7 @@ test("command previews are meaningful, one-line, bounded, and secret-safe", () =
   assert.match(preview, /git status|bun test/);
   assert.equal(meaningfulCommand('printf "diagnostic one\\n"; exit 7'), 'printf "diagnostic one\\n"');
   assert.match(meaningfulCommand('for i in 1 2; do printf "row-%s\\n" "$i"; sleep 1; done'), /^printf /);
-  assert.ok(visibleWidth(preview) <= 64);
+  assert.ok(visibleWidth(preview) <= 48);
   assert.equal(sanitizeInline("x\n\x1b]0;owned\x07y\t z"), "x y z");
 });
 
@@ -119,6 +119,7 @@ test("all success summaries meet the seven-tool grammar at normal width", () => 
     definition.renderResult!(toolResult, { expanded: false, isPartial: false }, theme, context({ toolCallId: name, state, args, isPartial: false }));
     const line = stripTerminalSequences(row.render(120)[0]!);
     assert.match(line, new RegExp(`^✓ ${name} ·`));
+    if (name === "bash") assert.match(line, / · exit 0 · /);
     assert.ok(visibleWidth(line) <= 120);
   }
 });
