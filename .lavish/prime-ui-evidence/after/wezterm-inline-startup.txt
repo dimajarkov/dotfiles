@@ -1,0 +1,6 @@
+
+
+ >   Try "explain how @<filepath> works"
+
+/Volumes/OWC Envoy Ultra/20_PROJECTS/Development/Treehouse/dotfiles-prime-ui · …
+gpt-5.6-sol · high · Supabase MCP: PAT ready · $0.000 (sub) · 272k (0.0%)

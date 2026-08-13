@@ -195,16 +195,12 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/catppuccin-mocha.json";
   home.file.".pi/agent/themes/prime.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/prime.json";
-  home.file.".pi/agent/extensions/status-line.ts".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/status-line.ts";
   home.file.".pi/agent/extensions/prime-style.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prime-style.ts";
   home.file.".pi/agent/extensions/prime-parity.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prime-parity.ts";
   home.file.".pi/agent/extensions/terminal-status-title.js".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/terminal-status-title.js";
-  home.file.".pi/agent/extensions/mac-system-theme.ts".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/mac-system-theme.ts";
   home.file.".pi/agent/extensions/supabase-keychain".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/supabase-keychain";
   home.file.".pi/agent/extensions/subagent".source = piSubagentExtension;

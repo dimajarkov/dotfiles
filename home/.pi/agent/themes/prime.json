@@ -78,6 +78,10 @@
 		"thinkingMedium": "primarySoft",
 		"thinkingHigh": "primary",
 		"thinkingXhigh": "primary",
+		"thinkingMax": "primary",
+		"scrollbarThumb": "selectedBg",
+		"searchMatchBg": "selectedBg",
+		"searchMatchText": "fg",
 		"bashMode": "success"
 	},
 	"export": {
