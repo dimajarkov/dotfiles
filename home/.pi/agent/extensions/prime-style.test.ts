@@ -124,6 +124,18 @@ test("all success summaries meet the seven-tool grammar at normal width", () => 
   }
 });
 
+test("partial bash output stays running instead of reporting premature success", () => {
+  const activity = new ActivityController();
+  activity.frame = 1;
+  const definition = decorateBuiltin("bash", { ...createReadToolDefinition(process.cwd()), name: "bash" } as any, activity);
+  const state = {};
+  const args = { command: "printf ok; sleep 5" };
+  const row = definition.renderCall!(args as any, theme, context({ state, args }));
+  const detail = definition.renderResult!(result("ok"), { expanded: false, isPartial: true }, theme, context({ state, args, isPartial: true }));
+  assert.match(stripTerminalSequences(row.render(80)[0]!), /^◈ bash · printf ok/);
+  assert.equal(detail.render(80).length, 2);
+});
+
 test("successful bash collapses its live output back to one row", () => {
   const activity = new ActivityController();
   const definition = decorateBuiltin("bash", { ...createReadToolDefinition(process.cwd()), name: "bash" } as any, activity);

@@ -57,6 +57,7 @@ type PrimeRowState = {
   row?: PrimeToolRow;
   result?: ToolResult;
   isError?: boolean;
+  isPartial?: boolean;
 };
 
 export function sanitizeInline(value: unknown): string {
@@ -211,6 +212,7 @@ class PrimeToolRow implements Component {
   private args: Record<string, unknown> = {};
   private result?: ToolResult;
   private isError = false;
+  private isPartial = true;
   private executionStarted = false;
   private theme?: Theme;
 
@@ -224,12 +226,14 @@ class PrimeToolRow implements Component {
     args: Record<string, unknown>,
     result: ToolResult | undefined,
     isError: boolean,
+    isPartial: boolean,
     executionStarted: boolean,
     theme: Theme,
   ): void {
     this.args = args;
     this.result = result;
     this.isError = isError;
+    this.isPartial = isPartial;
     this.executionStarted = executionStarted;
     this.theme = theme;
   }
@@ -239,7 +243,7 @@ class PrimeToolRow implements Component {
     if (!theme || width <= 0) return [];
     let marker = "◇";
     let fields: string[] = [];
-    if (this.result) {
+    if (this.result && !this.isPartial) {
       marker = this.isError ? "✗" : "✓";
       fields = this.isError
         ? failureFields(this.name, this.args, this.result)
@@ -426,15 +430,30 @@ export function decorateBuiltin(
     renderCall(args, theme, context) {
       const state = context.state as PrimeRowState;
       const row = getRow(state, name, context, activity);
-      row.update(args as Record<string, unknown>, state.result, state.isError ?? false, context.executionStarted, theme);
+      row.update(
+        args as Record<string, unknown>,
+        state.result,
+        state.isError ?? false,
+        state.isPartial ?? context.isPartial,
+        context.executionStarted,
+        theme,
+      );
       return row;
     },
     renderResult(result, options, theme, context) {
       const state = context.state as PrimeRowState;
       state.result = result as ToolResult;
       state.isError = context.isError;
+      state.isPartial = options.isPartial;
       const row = getRow(state, name, context, activity);
-      row.update(context.args as Record<string, unknown>, state.result, context.isError, context.executionStarted, theme);
+      row.update(
+        context.args as Record<string, unknown>,
+        state.result,
+        context.isError,
+        options.isPartial,
+        context.executionStarted,
+        theme,
+      );
       return new PrimeToolDetail(
         name,
         context.args as Record<string, unknown>,
