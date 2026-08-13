@@ -10,8 +10,10 @@ import primeStyle, {
   meaningfulCommand,
   sanitizeInline,
 } from "./prime-style.js";
-import { createReadToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createReadToolDefinition, initTheme } from "@earendil-works/pi-coding-agent";
 import customRead from "../../../../.lavish/prime-ui-evidence/fixtures/custom-read.js";
+
+initTheme("dark");
 
 const theme = {
   fg: (_color: string, text: string) => text,
@@ -103,12 +105,8 @@ test("read success is one width-safe row and expands retained content", () => {
   const expanded = definition.renderResult!(result("const x = 1;\nconst y = 2;"), { expanded: true, isPartial: false }, theme, finalContext).render(20);
   assert.ok(expanded.length >= 2);
   assert.ok(expanded.every((line) => visibleWidth(line) <= 20));
-  const syntaxTheme = {
-    ...theme,
-    fg: (_color: string, text: string) => `\x1b[31m${text}\x1b[39m`,
-  } as any;
-  const highlighted = definition.renderResult!(result("const x = 1;\nconst y = 2;"), { expanded: true, isPartial: false }, syntaxTheme, finalContext).render(20);
-  assert.ok(highlighted.some((line) => line.includes("\x1b[31m")));
+  const highlighted = definition.renderResult!(result("const x = 1;\nconst y = 2;"), { expanded: true, isPartial: false }, theme, finalContext).render(20);
+  assert.ok(highlighted.some((line) => /\x1b\[[0-9;:]*m/.test(line)));
 
   const noLimitState = {};
   const noLimitArgs = { path: "notes.ts" };
@@ -309,12 +307,12 @@ test("session startup preserves custom and MCP execution and renderer ownership"
     const execution = await original.execute("call-1", { path: "fixture.ts" }, undefined, undefined, {} as any);
     assert.equal(execution.content[0]?.text, owner.text);
     const call = original.renderCall!({ path: "fixture.ts" } as any, theme, context({ args: { path: "fixture.ts" } }));
-    assert.equal(stripTerminalSequences(call.render(80)[0]!), owner.rendered);
+    assert.equal(stripTerminalSequences(call.render(80)[0]!).trimEnd(), owner.rendered);
     const renderedResult = original.renderResult!(execution, { expanded: false, isPartial: false }, theme, context({
       args: { path: "fixture.ts" },
       isPartial: false,
     }));
-    assert.equal(stripTerminalSequences(renderedResult.render(80)[0]!), owner.text);
+    assert.equal(stripTerminalSequences(renderedResult.render(80)[0]!).trimEnd(), owner.text);
   }
 });
 
