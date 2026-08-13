@@ -11,6 +11,7 @@ import primeStyle, {
   sanitizeInline,
 } from "./prime-style.js";
 import { createReadToolDefinition } from "@earendil-works/pi-coding-agent";
+import customRead from "../../../../.lavish/prime-ui-evidence/fixtures/custom-read.js";
 
 const theme = {
   fg: (_color: string, text: string) => text,
@@ -46,7 +47,7 @@ test("source guard selects only exact winning built-ins", () => {
     ...BUILTIN_TOOL_NAMES.map((name) => ({ name, sourceInfo: { source: "builtin" } })),
     { name: "read", sourceInfo: { source: "mcp" } },
   ] as any;
-  assert.deepEqual(eligibleBuiltins(tools), ["read", "write", "edit", "bash", "grep", "find", "ls"]);
+  assert.deepEqual(eligibleBuiltins(tools), ["write", "edit", "bash", "grep", "find", "ls"]);
   assert.deepEqual(
     eligibleBuiltins([
       { name: "read", sourceInfo: { source: "project" } },
@@ -74,6 +75,13 @@ test("command previews are meaningful, one-line, bounded, and secret-safe", () =
   assert.equal(meaningfulCommand('printf "diagnostic one\\n"; exit 7'), 'printf "diagnostic one\\n"');
   assert.match(meaningfulCommand('for i in 1 2; do printf "row-%s\\n" "$i"; sleep 1; done'), /^printf /);
   assert.ok(visibleWidth(preview) <= 48);
+  for (const command of [
+    "curl -H 'Authorization: Bearer bearer-secret' https://example.test",
+    "deploy --password password-secret --token=token-secret --api-key 'key-secret'",
+    "login -p short-secret",
+  ]) {
+    assert.doesNotMatch(meaningfulCommand(command), /bearer-secret|password-secret|token-secret|key-secret|short-secret/);
+  }
   assert.equal(sanitizeInline("x\n\x1b]0;owned\x07y\t z"), "x y z");
 });
 
@@ -95,6 +103,27 @@ test("read success is one width-safe row and expands retained content", () => {
   const expanded = definition.renderResult!(result("const x = 1;\nconst y = 2;"), { expanded: true, isPartial: false }, theme, finalContext).render(20);
   assert.ok(expanded.length >= 2);
   assert.ok(expanded.every((line) => visibleWidth(line) <= 20));
+  const syntaxTheme = {
+    ...theme,
+    fg: (_color: string, text: string) => `\x1b[31m${text}\x1b[39m`,
+  } as any;
+  const highlighted = definition.renderResult!(result("const x = 1;\nconst y = 2;"), { expanded: true, isPartial: false }, syntaxTheme, finalContext).render(20);
+  assert.ok(highlighted.some((line) => line.includes("\x1b[31m")));
+
+  const noLimitState = {};
+  const noLimitArgs = { path: "notes.ts" };
+  const noLimitRow = definition.renderCall!(noLimitArgs as any, theme, context({
+    state: noLimitState,
+    toolCallId: "call-2",
+    args: noLimitArgs,
+  }));
+  definition.renderResult!(result("first\n\nthird"), { expanded: false, isPartial: false }, theme, context({
+    state: noLimitState,
+    toolCallId: "call-2",
+    args: noLimitArgs,
+    isPartial: false,
+  }));
+  assert.match(stripTerminalSequences(noLimitRow.render(80)[0]!), /lines 1-3/);
 });
 
 test("all success summaries meet the seven-tool grammar at normal width", () => {
@@ -134,6 +163,25 @@ test("partial bash output stays running instead of reporting premature success",
   const detail = definition.renderResult!(result("ok"), { expanded: false, isPartial: true }, theme, context({ state, args, isPartial: true }));
   assert.match(stripTerminalSequences(row.render(80)[0]!), /^◈ bash · printf ok/);
   assert.equal(detail.render(80).length, 2);
+});
+
+test("live edit previews render from call state and retain only five rows", () => {
+  const activity = new ActivityController();
+  const definition = decorateBuiltin("edit", { ...createReadToolDefinition(process.cwd()), name: "edit" } as any, activity);
+  const state = {};
+  const args = {
+    path: "src/file.ts",
+    edits: [{
+      oldText: Array.from({ length: 8 }, (_, index) => `old-${index}`).join("\n"),
+      newText: Array.from({ length: 8 }, (_, index) => `new-${index}`).join("\n"),
+    }],
+  };
+  const row = definition.renderCall!(args as any, theme, context({ state, args, executionStarted: true }));
+  const lines = row.render(20);
+  assert.equal(lines.length, 7);
+  assert.match(stripTerminalSequences(lines[0]!), /^◇ edit · src\/file\.ts/);
+  assert.match(stripTerminalSequences(lines.at(-1)!), /^\+new-7/);
+  assert.ok(lines.slice(2).every((line) => visibleWidth(line) <= 20));
 });
 
 test("successful bash collapses its live output back to one row", () => {
@@ -181,6 +229,93 @@ test("activity owns one timer and disposes timings and invalidators", () => {
   assert.equal((activity as any).timings.size, 0);
   assert.equal((activity as any).invalidators.size, 0);
   assert.equal(calls.at(-1), "reset");
+});
+
+test("session startup preserves custom and MCP execution and renderer ownership", async () => {
+  const owners = [
+    {
+      source: "project",
+      install(pi: any) {
+        customRead(pi);
+      },
+      text: "CUSTOM_READ_OWNER:fixture.ts",
+      rendered: "CUSTOM OWNER read fixture.ts",
+    },
+    {
+      source: "mcp",
+      install(pi: any) {
+        pi.registerTool({
+          name: "read",
+          label: "mcp read",
+          description: "MCP ownership fixture",
+          parameters: {},
+          async execute(_id: string, args: { path: string }) {
+            return result(`MCP_READ_OWNER:${args.path}`);
+          },
+          renderCall(args: { path: string }, currentTheme: any) {
+            return { render: () => [currentTheme.fg("warning", `MCP OWNER read ${args.path}`)], invalidate() {} };
+          },
+          renderResult(toolResult: any, _options: any, currentTheme: any) {
+            return { render: () => [currentTheme.fg("warning", toolResult.content[0].text)], invalidate() {} };
+          },
+        });
+      },
+      text: "MCP_READ_OWNER:fixture.ts",
+      rendered: "MCP OWNER read fixture.ts",
+    },
+  ];
+
+  for (const owner of owners) {
+    const handlers = new Map<string, Array<(...args: any[]) => any>>();
+    const registered: any[] = [];
+    const activeTools = ["read", "bash"];
+    let restoredActiveTools: string[] | undefined;
+    const pi = {
+      on(name: string, handler: (...args: any[]) => any) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+      registerTool(tool: any) { registered.push(tool); },
+      getAllTools() {
+        return [
+          { name: "read", sourceInfo: { source: owner.source } },
+          { name: "bash", sourceInfo: { source: "builtin" } },
+        ];
+      },
+      getActiveTools: () => [...activeTools],
+      setActiveTools(tools: string[]) { restoredActiveTools = tools; },
+      getThinkingLevel: () => "high",
+    } as any;
+    owner.install(pi);
+    const original = registered[0]!;
+    primeStyle(pi);
+    const ctx = {
+      cwd: process.cwd(),
+      model: { id: "model", provider: "openai-codex", contextWindow: 1000 },
+      ui: {
+        theme,
+        getTheme: () => theme,
+        setTheme() {},
+        setWorkingIndicator() {},
+        setEditorComponent() {},
+        setFooter() {},
+      },
+      sessionManager: { getCwd: () => process.cwd(), getEntries: () => [] },
+      getContextUsage: () => ({ contextWindow: 1000, percent: 12.3 }),
+    } as any;
+    handlers.get("session_start")![0]!({}, ctx);
+    assert.deepEqual(registered.map((tool) => tool.name), ["read", "bash"]);
+    assert.deepEqual(restoredActiveTools, activeTools);
+
+    const execution = await original.execute("call-1", { path: "fixture.ts" }, undefined, undefined, {} as any);
+    assert.equal(execution.content[0]?.text, owner.text);
+    const call = original.renderCall!({ path: "fixture.ts" } as any, theme, context({ args: { path: "fixture.ts" } }));
+    assert.equal(stripTerminalSequences(call.render(80)[0]!), owner.rendered);
+    const renderedResult = original.renderResult!(execution, { expanded: false, isPartial: false }, theme, context({
+      args: { path: "fixture.ts" },
+      isPartial: false,
+    }));
+    assert.equal(stripTerminalSequences(renderedResult.render(80)[0]!), owner.text);
+  }
 });
 
 test("extension installs one footer, shows extension statuses, and never binds Ctrl+O or Ctrl+T", () => {

@@ -88,9 +88,13 @@ function textOutput(result: ToolResult | undefined): string {
 }
 
 function contentLines(text: string): string[] {
-  return safeMultiline(text)
-    .split("\n")
-    .filter((line) => line.trim() && !/^\[.*\]$/.test(line.trim()));
+  return retainedLines(text).filter((line) => line.trim());
+}
+
+function retainedLines(text: string): string[] {
+  const lines = safeMultiline(text).split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines.filter((line) => !/^\[.*\]$/.test(line.trim()));
 }
 
 function logicalLineCount(text: string): number {
@@ -127,6 +131,18 @@ function diffCounts(diff: string): { added: number; removed: number } {
 export function meaningfulCommand(command: unknown): string {
   const raw = safeMultiline(command)
     .replace(/[A-Za-z0-9+/]{80,}={0,2}/g, "<blob>")
+    .replace(
+      /((?:^|[\s"'`])(?:authorization|proxy-authorization|x-api-key|x-auth-token|api-key)\s*:\s*(?:(?:bearer|basic)\s+)?)(?:"[^"]*"|'[^']*'|\S+)/gi,
+      "$1<redacted>",
+    )
+    .replace(
+      /((?:^|\s)--?(?:password|passwd|pass|token|secret|key|api[-_]?key|auth[-_]?token|access[-_]?token|private[-_]?key)(?:=|\s+))(?:"[^"]*"|'[^']*'|\S+)/gi,
+      "$1<redacted>",
+    )
+    .replace(
+      /((?:^|\s)-[ptk](?:=|\s+))(?:"[^"]*"|'[^']*'|\S+)/gi,
+      "$1<redacted>",
+    )
     .replace(/\b([A-Za-z_]\w*(?:token|key|secret|password)\w*)\s*=\s*(?:["'][^"']*["']|\S+)/gi, "$1=<redacted>")
     .replace(/\bsk-[A-Za-z0-9_-]+\b/g, "<redacted>");
   const candidates = raw
@@ -161,7 +177,7 @@ function successFields(name: BuiltinName, args: Record<string, unknown>, result:
   switch (name) {
     case "read": {
       const offset = typeof args.offset === "number" ? args.offset : 1;
-      const limit = typeof args.limit === "number" ? args.limit : contentLines(output).length;
+      const limit = typeof args.limit === "number" ? args.limit : retainedLines(output).length;
       const end = Math.max(offset, offset + Math.max(0, limit) - 1);
       return [pathValue(args), `lines ${offset}-${end}`];
     }
@@ -206,6 +222,17 @@ function rowLine(theme: Theme, marker: string, name: BuiltinName, fields: string
     if (visibleWidth(fitted) < visibleWidth(clean)) break;
   }
   return truncateToWidth(line, Math.max(1, width), "");
+}
+
+function editPreview(args: Record<string, unknown>): string {
+  const edits = Array.isArray(args.edits) ? args.edits : [];
+  return edits.flatMap((edit) => {
+    const record = edit as { oldText?: unknown; newText?: unknown };
+    return [
+      ...safeMultiline(record.oldText).split("\n").map((line) => `-${line}`),
+      ...safeMultiline(record.newText).split("\n").map((line) => `+${line}`),
+    ];
+  }).join("\n");
 }
 
 class PrimeToolRow implements Component {
@@ -260,17 +287,31 @@ class PrimeToolRow implements Component {
         ? [meaningfulCommand(this.args.command) || "queued"]
         : [pathValue(this.args)];
     }
-    return [rowLine(theme, marker, this.name, fields, width)];
+    const row = rowLine(theme, marker, this.name, fields, width);
+    const preview = !this.result && this.name === "edit" ? editPreview(this.args) : "";
+    return preview
+      ? [row, "", ...wrappedRows(preview, width, theme, "toolOutput", LIVE_TAIL_ROWS)]
+      : [row];
   }
 
   invalidate(): void {}
 }
 
-function wrappedRows(text: string, width: number, theme: Theme, color: "toolOutput" | "error", tail?: number): string[] {
+function wrappedRows(
+  text: string,
+  width: number,
+  theme: Theme,
+  color: "toolOutput" | "error",
+  tail?: number,
+  preserveAnsi = false,
+): string[] {
   const safeWidth = Math.max(1, width);
-  const styled = safeMultiline(text)
+  const normalized = (preserveAnsi ? text : safeMultiline(text))
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001a\u001c-\u001f\u007f]/g, "");
+  const styled = normalized
     .split("\n")
-    .map((line) => theme.fg(color, line || " "))
+    .map((line) => (preserveAnsi ? line || " " : theme.fg(color, line || " ")))
     .join("\n");
   const rows = wrapTextWithAnsi(styled, safeWidth).map((line) => truncateToWidth(line, safeWidth, ""));
   if (tail === undefined) return rows;
@@ -300,7 +341,7 @@ class PrimeToolDetail implements Component {
         const language = getLanguageFromPath(path);
         if (language && detail) {
           const highlighted = highlightCode(safeMultiline(detail), language, this.theme);
-          return highlighted.flatMap((line) => wrappedRows(line, width, this.theme, "toolOutput"));
+          return highlighted.flatMap((line) => wrappedRows(line, width, this.theme, "toolOutput", undefined, true));
         }
       }
       return detail ? ["", ...wrappedRows(detail, width, this.theme, this.isError ? "error" : "toolOutput")] : [];
@@ -310,17 +351,6 @@ class PrimeToolDetail implements Component {
     }
     if (this.name === "bash" && this.executionStarted && this.options.isPartial && output) {
       return ["", ...wrappedRows(output, width, this.theme, "toolOutput", LIVE_TAIL_ROWS)];
-    }
-    if (this.name === "edit" && this.executionStarted && !this.result) {
-      const edits = Array.isArray(this.args.edits) ? this.args.edits : [];
-      const preview = edits.flatMap((edit) => {
-        const record = edit as { oldText?: unknown; newText?: unknown };
-        return [
-          ...safeMultiline(record.oldText).split("\n").map((line) => `-${line}`),
-          ...safeMultiline(record.newText).split("\n").map((line) => `+${line}`),
-        ];
-      }).join("\n");
-      return preview ? ["", ...wrappedRows(preview, width, this.theme, "toolOutput", 8)] : [];
     }
     return [];
   }
@@ -480,9 +510,10 @@ function builtinFactories(cwd: string): Record<BuiltinName, ToolDefinition> {
 }
 
 export function eligibleBuiltins(tools: ReturnType<ExtensionAPI["getAllTools"]>): BuiltinName[] {
-  return BUILTIN_TOOL_NAMES.filter((name) =>
-    tools.some((tool) => tool.name === name && tool.sourceInfo.source === "builtin"),
-  );
+  return BUILTIN_TOOL_NAMES.filter((name) => {
+    const matches = tools.filter((tool) => tool.name === name);
+    return matches.length === 1 && matches[0]?.sourceInfo.source === "builtin";
+  });
 }
 
 function fitLine(line: string, width: number): string {
