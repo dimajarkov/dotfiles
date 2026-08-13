@@ -200,7 +200,7 @@ gpt-5.6-sol · high · Supabase MCP: PAT ready · $0.092 (sub) · 272k (2.1%)
 <tr><td>Lifecycle cleanup</td><td class="pass">PASS</td><td>One shared 250 ms timer; tests prove replacement and disposal clear timer, timings, and invalidators. Reload smoke passed.</td></tr>
 <tr><td>Inline / fullscreen / 256-color</td><td class="pass">PASS</td><td>Real WezTerm captures for both modes and a simulated xterm-256color smoke.</td></tr>
 <tr><td>Pi-native exceptional loaders</td><td class="pass">PRESERVED</td><td>The extension only customizes the normal working indicator. Retry and compaction loaders remain Pi-owned by public API design.</td></tr>
-<tr><td>Deployment</td><td class="pending">BLOCKED BY GATE</td><td>No Home Manager switch until explicit visual approval and separate deployment authorization.</td></tr>
+<tr><td>Deployment</td><td class="pending">PENDING AUTHORIZATION</td><td>Visual review is approved. Home Manager remains unchanged until separate deployment authorization.</td></tr>
 </tbody></table>
 <h2>Ownership proof</h2><div class="card"><pre>
 Use read on ownership-proof.txt, then repeat the exact result.
@@ -302,5 +302,5 @@ with code 7.
 /Volumes/OWC Envoy Ultra/20_PROJECTS/Development/Treehouse/dotfiles-prime-ui · …
 gpt-5.6-sol · high · Supabase MCP: PAT ready · $0.131 (sub) · 272k (2.3%)</pre></div>
 <div class="note"><strong>Accepted extension-only divergences:</strong> Pi keeps global Ctrl+O, native reasoning and exceptional loaders, transcript spacing, and owner-provided custom/MCP renderers. Historical rows omit unavailable durations rather than fabricate them.</div>
-<div class="gatebox"><div class="eyebrow">Decision required</div><h2 style="margin-top:8px">Visual approval</h2><p>Approve only if row density, glyphs, truncation, live/failure disclosure, editor surface, and footer hierarchy look ready for the later Home Manager cutover. Queue any visual correction against the exact section that needs it.</p></div>
+<div class="gatebox"><div class="eyebrow">Approval recorded</div><h2 style="margin-top:8px">Visual review passed</h2><p>The reviewer explicitly approved the row density, glyphs, truncation, disclosure behavior, editor surface, and footer hierarchy. Machine-wide Home Manager deployment remains a separate authorization.</p></div>
 </main></body></html>
