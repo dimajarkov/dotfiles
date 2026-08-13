@@ -43,6 +43,26 @@
         "rebase_branch"
       ],
       "debug": false
+    },
+    "signalhouse": {
+      "command": "infisical",
+      "args": [
+        "--silent",
+        "run",
+        "--env=dev",
+        "--path=/common/signal-house",
+        "--project-config-dir",
+        "/Users/dmitrijarkov/dev/arena/arena-crm",
+        "--",
+        "sh",
+        "-c",
+        "exec npx -y mcp-remote@0.1.38 https://mcp-signalhouse-staging.mycustomai.io/mcp --header \"Authorization: Bearer $SIGNALHOUSE_V2_API_KEY\" --transport http-only --silent"
+      ],
+      "lifecycle": "lazy",
+      "requestTimeoutMs": 240000,
+      "exposeResources": false,
+      "directTools": false,
+      "debug": false
     }
   }
 }

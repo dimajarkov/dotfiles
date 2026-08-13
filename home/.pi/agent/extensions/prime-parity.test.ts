@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
 import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
@@ -85,14 +85,56 @@ function entry(overrides: Partial<HarnessEntry> = {}): HarnessEntry {
     kind: "memory",
     title: "Focused regression",
     content: "Run the focused regression before changing the parser.",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    sourceSessionId: "session-1",
+    path: "general",
+    scope: "local",
+    reference: {},
+    arguments: {},
+    metadata: {},
+    source: "agent",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    version: 1,
     ...overrides,
   };
 }
 
+function harnessFile(entries: HarnessEntry[] = [], refinements: unknown[] = []) {
+  const records = { prompt: {}, memory: {}, skill: {}, subagent: {} } as Record<string, Record<string, HarnessEntry>>;
+  for (const item of entries) records[item.kind]![item.id] = item;
+  return { schema: 1, entries: records, refinements };
+}
+
+function flatEntries(path: string, scope: "local" | "global" = "local") {
+  const records = loadHarness(path, scope).entries;
+  return Object.values(records).flatMap((kind) => Object.values(kind));
+}
+
 function localHarnessPath(directory: string, sessionId = "session-1") {
+  return join(directory, "session-artifacts", sessionId, "harness", "harness_state.json");
+}
+
+function globalHarnessPath(directory: string) {
+  return join(directory, "harness", "harness_state.json");
+}
+
+function legacyLocalHarnessPath(directory: string, sessionId = "session-1") {
   return join(directory, "session-artifacts", sessionId, "continual-harness.json");
+}
+
+function legacyGlobalHarnessPath(directory: string) {
+  return join(directory, "continual-harness.json");
+}
+
+function legacyEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "entry-1",
+    kind: "memory",
+    title: "Focused regression",
+    content: "Run the focused regression before changing the parser.",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    sourceSessionId: "session-1",
+    ...overrides,
+  };
 }
 
 function requestPath(directory: string, sessionId = "session-1") {
@@ -136,18 +178,27 @@ test("3. atomic JSON writes create parent directories, newline, and private file
   assert.equal(statSync(path).mode & 0o777, 0o600);
 });
 
-test("4. missing and malformed harness files load as empty versioned state", () => {
+test("4. missing and malformed harness files load as empty canonical state", () => {
   const directory = temporaryDirectory();
-  assert.deepEqual(loadHarness(join(directory, "missing.json")), { version: 1, entries: [] });
+  assert.deepEqual(loadHarness(join(directory, "missing.json")), harnessFile());
   const malformed = join(directory, "malformed.json");
   writeFileSync(malformed, "not json");
-  assert.deepEqual(loadHarness(malformed), { version: 1, entries: [] });
+  assert.deepEqual(loadHarness(malformed), harnessFile());
 });
 
-test("5. harness loading keeps only fully valid entries", () => {
+test("5. canonical loading keeps valid map entries and all Prime fields", () => {
   const path = join(temporaryDirectory(), "harness.json");
-  writeJsonAtomic(path, { version: 99, entries: [entry(), { ...entry({ id: "bad" }), createdAt: 7 }, null] });
-  assert.deepEqual(loadHarness(path), { version: 1, entries: [entry()] });
+  const rich = entry({
+    reference: { type: "python", import: "demo", callable: "run" },
+    arguments: { query: { type: "string" } },
+    metadata: { owner: "test" },
+    source: "python-agent",
+    version: 7,
+  });
+  const state = harnessFile([rich]);
+  (state.entries.memory as Record<string, unknown>).bad = { id: "ignored", kind: "memory", title: 7, content: "invalid" };
+  writeJsonAtomic(path, state);
+  assert.deepEqual(loadHarness(path).entries.memory, { "entry-1": rich });
 });
 
 test("6. trajectory serialization is chronological across supported entry kinds", () => {
@@ -241,9 +292,9 @@ test("12. extension factory registers the canonical lifecycle events and command
   assert.deepEqual([...commands.keys()], ["refine", "refine-status"]);
 });
 
-test("13. before_agent_start appends persisted harness content without replacing the base prompt", () => {
+test("13. before_agent_start migrates and appends persisted legacy harness content without replacing the base prompt", () => {
   const directory = temporaryDirectory();
-  writeJsonAtomic(join(directory, "continual-harness.json"), { version: 1, entries: [entry()] });
+  writeJsonAtomic(legacyGlobalHarnessPath(directory), { version: 1, entries: [legacyEntry()] });
   const { pi, events } = fakePi();
   createPrimeParityExtension({ agentDirectory: () => directory })(pi);
   const { context } = fakeContext();
@@ -270,8 +321,8 @@ test("14. /refine parses standalone --global and durably queues instructions", a
 test("15. /refine-status reports queue, counts, and eligible turns", async () => {
   const directory = temporaryDirectory();
   writeJsonAtomic(requestPath(directory), { pending: true });
-  writeJsonAtomic(join(directory, "continual-harness.json"), { version: 1, entries: [entry()] });
-  writeJsonAtomic(localHarnessPath(directory), { version: 1, entries: [entry({ id: "local" })] });
+  writeJsonAtomic(legacyGlobalHarnessPath(directory), { version: 1, entries: [legacyEntry()] });
+  writeJsonAtomic(legacyLocalHarnessPath(directory), { version: 1, entries: [legacyEntry({ id: "local" })] });
   const { pi, commands } = fakePi();
   createPrimeParityExtension({ agentDirectory: () => directory })(pi);
   const { context, notifications } = fakeContext();
@@ -287,8 +338,9 @@ test("16. manual refinement creates session-local state and appends bounded hist
   const { context, notifications, completions } = fakeContext({ responses: [textResponse(proposal)] });
   await queueManual(controller, directory, context, { pending: true, instructions: "capture workflow", global: false });
   const harness = loadHarness(localHarnessPath(directory));
-  assert.equal(harness.entries.length, 1);
-  assert.equal(harness.entries[0].kind, "skill");
+  assert.equal(flatEntries(localHarnessPath(directory)).length, 1);
+  assert.equal(Object.values(harness.entries.skill)[0]!.kind, "skill");
+  assert.equal(harness.refinements.length, 1);
   assert.equal(appended.length, 1);
   assert.equal(appended[0].type, "prime-parity.refinement");
   assert.match(notifications.at(-1)!.message, /applied 1 edit/);
@@ -302,8 +354,9 @@ test("17. manual global refinement writes only the global harness", async () => 
   const controller = new ContinualRefinementController(pi, { agentDirectory: () => directory });
   const { context } = fakeContext({ responses: [textResponse({ edits: [{ action: "create", kind: "memory", title: "Global fact", content: "Stable fact." }] })] });
   await queueManual(controller, directory, context, { pending: true, global: true });
-  assert.equal(loadHarness(join(directory, "continual-harness.json")).entries.length, 1);
-  assert.equal(loadHarness(localHarnessPath(directory)).entries.length, 0);
+  assert.equal(flatEntries(globalHarnessPath(directory), "global").length, 1);
+  assert.equal(flatEntries(localHarnessPath(directory)).length, 0);
+  assert.equal(existsSync(legacyGlobalHarnessPath(directory)), false);
 });
 
 test("18. empty evidence-backed proposal succeeds without writing history", async () => {
@@ -312,7 +365,7 @@ test("18. empty evidence-backed proposal succeeds without writing history", asyn
   const controller = new ContinualRefinementController(pi, { agentDirectory: () => directory });
   const { context, notifications } = fakeContext({ responses: [textResponse({ rationale: "insufficient", edits: [] })] });
   await queueManual(controller, directory, context, { pending: true });
-  assert.equal(loadHarness(localHarnessPath(directory)).entries.length, 0);
+  assert.equal(flatEntries(localHarnessPath(directory)).length, 0);
   assert.equal(appended.length, 0);
   assert.equal(notifications.at(-1)!.message, "No evidence-backed refinement was found");
 });
@@ -323,13 +376,13 @@ test("19. malformed or truncated curator output does not mutate the harness", as
   const controller = new ContinualRefinementController(pi, { agentDirectory: () => directory });
   const { context } = fakeContext({ responses: [textResponse('{"edits":[', "length")] });
   await queueManual(controller, directory, context, { pending: true });
-  assert.equal(loadHarness(localHarnessPath(directory)).entries.length, 0);
+  assert.equal(flatEntries(localHarnessPath(directory)).length, 0);
   assert.equal(appended.length, 0);
 });
 
 test("20. proposals can update and delete existing entries by id", async () => {
   const directory = temporaryDirectory();
-  writeJsonAtomic(localHarnessPath(directory), { version: 1, entries: [entry(), entry({ id: "remove", title: "Old" })] });
+  writeJsonAtomic(localHarnessPath(directory), harnessFile([entry(), entry({ id: "remove", title: "Old" })]));
   const { pi } = fakePi();
   const controller = new ContinualRefinementController(pi, { agentDirectory: () => directory });
   const { context } = fakeContext({ responses: [textResponse({ edits: [
@@ -337,9 +390,9 @@ test("20. proposals can update and delete existing entries by id", async () => {
     { action: "delete", id: "remove" },
   ] })] });
   await queueManual(controller, directory, context, { pending: true });
-  const entries = loadHarness(localHarnessPath(directory)).entries;
+  const entries = flatEntries(localHarnessPath(directory));
   assert.equal(entries.length, 1);
-  assert.equal(entries[0].title, "Updated title");
+  assert.equal(entries[0]!.title, "Updated title");
 });
 
 test("21. automatic interval review that declines refinement resets eligible turns after one model call", async () => {
@@ -368,7 +421,7 @@ test("22. approved automatic review runs a second, session-local refinement pass
   assert.match(completions[0].context.systemPrompt, /review gate/);
   assert.match(completions[1].context.systemPrompt, /harness curator/);
   assert.match(completions[1].context.messages[0].content[0].text, /Target scope: session-local/);
-  assert.equal(loadHarness(localHarnessPath(directory)).entries.length, 1);
+  assert.equal(flatEntries(localHarnessPath(directory)).length, 1);
   assert.equal((appended[0].data as any).source, "turn_interval");
 });
 
@@ -551,7 +604,7 @@ test("31. malformed review JSON mutates no harness and does not launch refinemen
   controller.assistantMessageEnded({ role: "assistant", stopReason: "stop" });
   await controller.settled(context);
   assert.equal(completions.length, 1);
-  assert.equal(loadHarness(localHarnessPath(directory)).entries.length, 0);
+  assert.equal(flatEntries(localHarnessPath(directory)).length, 0);
 });
 
 test("32. a failed explicit curator call cannot save the instructions directly", async () => {
@@ -562,7 +615,7 @@ test("32. a failed explicit curator call cannot save the instructions directly",
   await queueManual(controller, directory, context, {
     pending: true, instructions: "Persist this verbatim", global: false,
   });
-  assert.equal(loadHarness(localHarnessPath(directory)).entries.length, 0);
+  assert.equal(flatEntries(localHarnessPath(directory)).length, 0);
 });
 
 test("33. direct curator completion does not recursively increment assistant turns", async () => {
@@ -592,7 +645,7 @@ test("34. session replacement invalidates a pending review before it can apply",
   resolveReview(textResponse({ shouldRefine: true, rationale: "stale" }));
   await settling;
   assert.equal(completions.length, 1);
-  assert.equal(loadHarness(localHarnessPath(directory)).entries.length, 0);
+  assert.equal(flatEntries(localHarnessPath(directory)).length, 0);
 });
 
 
@@ -656,7 +709,7 @@ test("37. failed review model call does not fall back to a direct refinement or 
   await controller.settled(context);
   assert.equal(completions.length, 1);
   assert.equal(appended.length, 0);
-  assert.equal(loadHarness(localHarnessPath(directory)).entries.length, 0);
+  assert.equal(flatEntries(localHarnessPath(directory)).length, 0);
   assert.equal(controller.status().pendingIntervalReview, true);
   assert.match(notifications[0].message, /provider unavailable/);
 });
@@ -760,7 +813,7 @@ test("43. /refine command flows through turn_end into an applied local edit", as
   createPrimeParityExtension({ agentDirectory: () => directory })(pi);
   await commands.get("refine")!.handler("focus on the validated lesson", context);
   await events.get("turn_end")?.({}, context);
-  assert.equal(loadHarness(localHarnessPath(directory)).entries[0].title, "Explicit lesson");
+  assert.equal(flatEntries(localHarnessPath(directory))[0]!.title, "Explicit lesson");
 });
 
 test("44. concurrent global manual refinements serialize without losing either edit", async () => {
@@ -778,6 +831,50 @@ test("44. concurrent global manual refinements serialize without losing either e
   writeJsonAtomic(requestPath(directory, "session-a"), { pending: true, global: true });
   writeJsonAtomic(requestPath(directory, "session-b"), { pending: true, global: true });
   await Promise.all([firstController.turnEnded(first.context), secondController.turnEnded(second.context)]);
-  const titles = loadHarness(join(directory, "continual-harness.json")).entries.map((item) => item.title).sort();
+  const titles = flatEntries(globalHarnessPath(directory), "global").map((item) => item.title).sort();
   assert.deepEqual(titles, ["First", "Second"]);
+});
+
+
+test("45. legacy migration is tolerant, atomic, one-time, and never resurrects deleted entries", () => {
+  const directory = temporaryDirectory();
+  writeJsonAtomic(legacyGlobalHarnessPath(directory), {
+    version: 1,
+    entries: [legacyEntry(), { ...legacyEntry({ id: "invalid" }), createdAt: 7 }, null],
+  });
+  const first = fakePi();
+  const second = fakePi();
+  createPrimeParityExtension({ agentDirectory: () => directory })(first.pi);
+  createPrimeParityExtension({ agentDirectory: () => directory })(second.pi);
+  const { context } = fakeContext();
+  first.events.get("before_agent_start")!({ systemPrompt: "BASE" }, context);
+  second.events.get("before_agent_start")!({ systemPrompt: "BASE" }, context);
+
+  const migrated = JSON.parse(readFileSync(globalHarnessPath(directory), "utf8"));
+  assert.deepEqual(Object.keys(migrated), ["schema", "entries", "refinements"]);
+  assert.equal(migrated.schema, 1);
+  assert.deepEqual(Object.keys(migrated.entries), ["prompt", "memory", "skill", "subagent"]);
+  assert.deepEqual(Object.keys(migrated.entries.memory), ["entry-1"]);
+  assert.equal(migrated.entries.memory["entry-1"].metadata.sourceSessionId, "session-1");
+  assert.deepEqual(migrated.refinements, []);
+  assert.deepEqual(readdirSync(dirname(globalHarnessPath(directory))).sort(), ["harness_state.json"]);
+
+  writeJsonAtomic(globalHarnessPath(directory), harnessFile());
+  const result = first.events.get("before_agent_start")!({ systemPrompt: "BASE" }, context);
+  assert.equal(result, undefined);
+  assert.equal(flatEntries(globalHarnessPath(directory), "global").length, 0);
+});
+
+test("46. malformed legacy input creates an empty canonical migration marker", async () => {
+  const directory = temporaryDirectory();
+  mkdirSync(dirname(legacyLocalHarnessPath(directory)), { recursive: true });
+  writeFileSync(legacyLocalHarnessPath(directory), "{not-json");
+  const { pi, commands } = fakePi();
+  createPrimeParityExtension({ agentDirectory: () => directory })(pi);
+  const { context } = fakeContext();
+  await commands.get("refine-status")!.handler("", context);
+  assert.deepEqual(loadHarness(localHarnessPath(directory)), harnessFile());
+  assert.equal(existsSync(localHarnessPath(directory)), true);
+  writeJsonAtomic(legacyLocalHarnessPath(directory), { entries: [legacyEntry({ id: "late" })] });
+  assert.equal(flatEntries(localHarnessPath(directory)).length, 0);
 });

@@ -18,28 +18,47 @@ import type {
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 
-const HARNESS_VERSION = 1;
+const HARNESS_SCHEMA = 1 as const;
+const HARNESS_FILE_NAME = "harness_state.json";
+const HARNESS_DIRECTORY_NAME = "harness";
 const MAX_ENTRIES_IN_PROMPT = 24;
 const MAX_PROMPT_CHARS = 16_000;
 const REVIEW_CONVERSATION_CHARS = 40_000;
 const REFINEMENT_CONVERSATION_CHARS = 80_000;
 const DEFAULT_TURN_INTERVAL = 25;
 const DEFAULT_COOLDOWN_MS = 20 * 60 * 1_000;
-const MAX_HARNESS_ENTRIES = 200;
 const REFINEMENT_CUSTOM_ENTRY = "prime-parity.refinement";
+const HARNESS_KINDS = ["prompt", "memory", "skill", "subagent"] as const;
 
-export type HarnessKind = "prompt" | "memory" | "skill" | "subagent";
+export type HarnessKind = typeof HARNESS_KINDS[number];
+export type HarnessScope = "local" | "global";
 export interface HarnessEntry {
   id: string;
   kind: HarnessKind;
   title: string;
   content: string;
-  createdAt: string;
-  sourceSessionId: string;
+  path: string;
+  scope: HarnessScope;
+  reference: Record<string, unknown>;
+  arguments: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  source: string;
+  created_at: string;
+  updated_at: string;
+  version: number;
+}
+export interface RefinementEvent {
+  id: string;
+  trigger: string;
+  changes: string[];
+  evidence: string;
+  outcome: string;
+  created_at: string;
 }
 export interface HarnessFile {
-  version: number;
-  entries: HarnessEntry[];
+  schema: typeof HARNESS_SCHEMA;
+  entries: Record<HarnessKind, Record<string, HarnessEntry>>;
+  refinements: RefinementEvent[];
 }
 interface RefinementRequest {
   pending?: boolean;
@@ -125,10 +144,24 @@ function requestPath(ctx: ExtensionContext, directory: string): string {
 }
 
 function localHarnessPath(ctx: ExtensionContext, directory: string): string {
-  return join(directory, "session-artifacts", ctx.sessionManager.getSessionId(), "continual-harness.json");
+  return join(
+    directory,
+    "session-artifacts",
+    ctx.sessionManager.getSessionId(),
+    HARNESS_DIRECTORY_NAME,
+    HARNESS_FILE_NAME,
+  );
 }
 
 function globalHarnessPath(directory: string): string {
+  return join(directory, HARNESS_DIRECTORY_NAME, HARNESS_FILE_NAME);
+}
+
+function legacyLocalHarnessPath(ctx: ExtensionContext, directory: string): string {
+  return join(directory, "session-artifacts", ctx.sessionManager.getSessionId(), "continual-harness.json");
+}
+
+function legacyGlobalHarnessPath(directory: string): string {
   return join(directory, "continual-harness.json");
 }
 
@@ -156,23 +189,177 @@ export function writeJsonAtomic(path: string, value: unknown): void {
   }
 }
 
-export function loadHarness(path: string): HarnessFile {
-  const value = readJson<Partial<HarnessFile>>(path);
-  if (!value || !Array.isArray(value.entries)) return { version: HARNESS_VERSION, entries: [] };
-  const entries = value.entries.filter((entry): entry is HarnessEntry =>
-    Boolean(
-      entry &&
-        typeof entry === "object" &&
-        typeof entry.id === "string" &&
-        typeof entry.kind === "string" &&
-        ["prompt", "memory", "skill", "subagent"].includes(entry.kind) &&
-        typeof entry.title === "string" &&
-        typeof entry.content === "string" &&
-        typeof entry.createdAt === "string" &&
-        typeof entry.sourceSessionId === "string",
-    ),
-  );
-  return { version: HARNESS_VERSION, entries };
+function emptyHarness(): HarnessFile {
+  return {
+    schema: HARNESS_SCHEMA,
+    entries: { prompt: {}, memory: {}, skill: {}, subagent: {} },
+    refinements: [],
+  };
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function normalizeEntry(value: unknown, id: string, kind: HarnessKind, scope: HarnessScope): HarnessEntry | undefined {
+  const entry = objectRecord(value);
+  if (!entry || typeof entry.title !== "string" || typeof entry.content !== "string") return undefined;
+  const now = new Date().toISOString();
+  let version = entry.version;
+  if (typeof version === "string" && /^-?\d+$/.test(version)) version = Number(version);
+  return {
+    id,
+    kind,
+    title: entry.title,
+    content: entry.content,
+    path: typeof entry.path === "string" ? entry.path : "general",
+    scope: entry.scope === "local" || entry.scope === "global" ? entry.scope : scope,
+    reference: objectRecord(entry.reference) ?? {},
+    arguments: objectRecord(entry.arguments) ?? {},
+    metadata: objectRecord(entry.metadata) ?? {},
+    source: typeof entry.source === "string" ? entry.source : "agent",
+    created_at: typeof entry.created_at === "string" ? entry.created_at : now,
+    updated_at: typeof entry.updated_at === "string" ? entry.updated_at : now,
+    version: typeof version === "number" && Number.isInteger(version) ? version : 1,
+  };
+}
+
+function normalizeRefinement(value: unknown): RefinementEvent | undefined {
+  const event = objectRecord(value);
+  if (!event || typeof event.id !== "string" || typeof event.trigger !== "string") return undefined;
+  const changes = typeof event.changes === "string"
+    ? [event.changes]
+    : Array.isArray(event.changes) ? event.changes.map(String) : undefined;
+  if (!changes) return undefined;
+  return {
+    id: event.id,
+    trigger: event.trigger,
+    changes,
+    evidence: typeof event.evidence === "string" ? event.evidence : "",
+    outcome: typeof event.outcome === "string" ? event.outcome : "",
+    created_at: typeof event.created_at === "string" ? event.created_at : new Date().toISOString(),
+  };
+}
+
+export function loadHarness(path: string, scope: HarnessScope = "local"): HarnessFile {
+  const value = objectRecord(readJson<unknown>(path));
+  const harness = emptyHarness();
+  const rawEntries = objectRecord(value?.entries);
+  if (rawEntries) {
+    for (const kind of HARNESS_KINDS) {
+      const records = objectRecord(rawEntries[kind]);
+      if (!records) continue;
+      for (const [id, rawEntry] of Object.entries(records)) {
+        const entry = normalizeEntry(rawEntry, id, kind, scope);
+        if (entry) harness.entries[kind][id] = entry;
+      }
+    }
+  }
+  if (Array.isArray(value?.refinements)) {
+    harness.refinements = value.refinements.flatMap((rawEvent) => {
+      const event = normalizeRefinement(rawEvent);
+      return event ? [event] : [];
+    });
+  }
+  return harness;
+}
+
+function migrateLegacyEntry(value: unknown, scope: HarnessScope): HarnessEntry | undefined {
+  const entry = objectRecord(value);
+  if (!entry ||
+    typeof entry.id !== "string" ||
+    !HARNESS_KINDS.includes(entry.kind as HarnessKind) ||
+    typeof entry.title !== "string" ||
+    typeof entry.content !== "string" ||
+    typeof entry.createdAt !== "string" ||
+    typeof entry.sourceSessionId !== "string") return undefined;
+  return {
+    id: entry.id,
+    kind: entry.kind as HarnessKind,
+    title: entry.title,
+    content: entry.content,
+    path: "general",
+    scope,
+    reference: {},
+    arguments: {},
+    metadata: { sourceSessionId: entry.sourceSessionId },
+    source: "pi-host-legacy",
+    created_at: entry.createdAt,
+    updated_at: entry.createdAt,
+    version: 1,
+  };
+}
+function sleepSynchronously(milliseconds: number): void {
+  const signal = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  Atomics.wait(signal, 0, 0, milliseconds);
+}
+
+function recoverStaleLock(lock: string, attempt: number): void {
+  try {
+    const owner = Number(readFileSync(lock, "utf8").trim());
+    if (Number.isInteger(owner) && owner > 0) process.kill(owner, 0);
+    else if (attempt >= 10) unlinkSync(lock);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH" || attempt >= 10) {
+      try { unlinkSync(lock); } catch { /* another process recovered it */ }
+    }
+  }
+}
+
+function acquireFileLockSync(path: string): () => void {
+  const lock = `${path}.lock`;
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      const descriptor = openSync(lock, "wx", 0o600);
+      writeFileSync(descriptor, `${process.pid}\n`);
+      return () => {
+        closeSync(descriptor);
+        try { unlinkSync(lock); } catch { /* another cleanup already removed it */ }
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      recoverStaleLock(lock, attempt);
+      sleepSynchronously(10);
+    }
+  }
+  throw new Error(`Timed out waiting for harness lock: ${lock}`);
+}
+
+function migrateLegacyHarness(path: string, legacyPath: string, scope: HarnessScope): void {
+  // The canonical file is authoritative even when it is empty or malformed. Never
+  // merge the legacy store into it, because that would resurrect entries deleted by
+  // either the host or Python runtime.
+  if (existsSync(path) || !existsSync(legacyPath)) return;
+  const release = acquireFileLockSync(path);
+  try {
+    if (existsSync(path)) return;
+    const migrated = emptyHarness();
+    const legacy = objectRecord(readJson<unknown>(legacyPath));
+    if (Array.isArray(legacy?.entries)) {
+      for (const rawEntry of legacy.entries) {
+        const entry = migrateLegacyEntry(rawEntry, scope);
+        if (entry) migrated.entries[entry.kind][entry.id] = entry;
+      }
+    }
+    // Writing an empty canonical file for malformed legacy input is intentional: it
+    // is the durable one-time migration marker and prevents repeated compatibility reads.
+    writeJsonAtomic(path, migrated);
+  } finally {
+    release();
+  }
+}
+
+function loadScopedHarness(ctx: ExtensionContext, directory: string, global: boolean): HarnessFile {
+  const path = global ? globalHarnessPath(directory) : localHarnessPath(ctx, directory);
+  const legacyPath = global ? legacyGlobalHarnessPath(directory) : legacyLocalHarnessPath(ctx, directory);
+  const scope: HarnessScope = global ? "global" : "local";
+  migrateLegacyHarness(path, legacyPath, scope);
+  return loadHarness(path, scope);
+}
+
+function harnessEntries(harness: HarnessFile): HarnessEntry[] {
+  return HARNESS_KINDS.flatMap((kind) => Object.values(harness.entries[kind]));
 }
 
 function finiteNumber(value: unknown, fallback: number, minimum: number): number {
@@ -364,26 +551,25 @@ function harnessOverview(global: HarnessFile, local: HarnessFile): string {
   const describe = (scope: string, entries: HarnessEntry[]) => entries.length === 0
     ? `${scope}: 0 entries`
     : `${scope}: ${entries.length} entries\n${entries.slice(-24).map((entry) => `- ${entry.kind} ${entry.id}: ${entry.title}`).join("\n")}`;
-  return `${describe("global", global.entries)}\n${describe("session-local", local.entries)}`;
+  return `${describe("global", harnessEntries(global))}\n${describe("session-local", harnessEntries(local))}`;
 }
 
 function harnessState(global: HarnessFile, local: HarnessFile): string {
-  return JSON.stringify({ global: global.entries, local: local.entries }, null, 2);
+  return JSON.stringify({ global, local }, null, 2);
 }
 
-function refinementHistory(ctx: ExtensionContext): string {
-  const entries = ctx.sessionManager.getBranch()
-    .filter((entry) => entry.type === "custom" && entry.customType === REFINEMENT_CUSTOM_ENTRY)
-    .slice(-20)
-    .map((entry) => JSON.stringify((entry as { data?: unknown }).data));
-  return entries.length > 0 ? entries.join("\n") : "No prior refinement history.";
+function refinementHistory(global: HarnessFile, local: HarnessFile): string {
+  const events = [...global.refinements, ...local.refinements].slice(-20);
+  return events.length > 0 ? events.map((event) => JSON.stringify(event)).join("\n") : "No prior refinement history.";
 }
 
 function harnessPrompt(ctx: ExtensionContext, directory: string): string {
   const entries = [
-    ...loadHarness(globalHarnessPath(directory)).entries,
-    ...loadHarness(localHarnessPath(ctx, directory)).entries,
-  ].slice(-MAX_ENTRIES_IN_PROMPT);
+    ...harnessEntries(loadScopedHarness(ctx, directory, true)),
+    ...harnessEntries(loadScopedHarness(ctx, directory, false)),
+  ]
+    .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
+    .slice(-MAX_ENTRIES_IN_PROMPT);
   if (entries.length === 0) return "";
   const lines = [
     "## Continual harness",
@@ -412,47 +598,85 @@ async function applyProposal(
   ctx: ExtensionContext,
   directory: string,
   global: boolean,
+  source: TriggerReason | "manual",
+  review: { rationale: string },
 ): Promise<HarnessEntry[] | undefined> {
   const path = global ? globalHarnessPath(directory) : localHarnessPath(ctx, directory);
+  const scope: HarnessScope = global ? "global" : "local";
+  migrateLegacyHarness(
+    path,
+    global ? legacyGlobalHarnessPath(directory) : legacyLocalHarnessPath(ctx, directory),
+    scope,
+  );
   const release = await acquireFileLock(path);
   try {
-  const harness = loadHarness(path);
-  const next = [...harness.entries];
-  const changed: HarnessEntry[] = [];
-  for (const edit of proposal.edits) {
-    if (edit.action === "create") {
-      const entry: HarnessEntry = {
-        id: randomUUID(),
-        kind: edit.kind!,
-        title: edit.title!,
-        content: edit.content!,
-        createdAt: new Date().toISOString(),
-        sourceSessionId: ctx.sessionManager.getSessionId(),
+    const harness = loadHarness(path, scope);
+    const changed: HarnessEntry[] = [];
+    const changes: string[] = [];
+    for (const proposalEdit of proposal.edits) {
+      if (proposalEdit.action === "create") {
+        const id = randomUUID();
+        const timestamp = new Date().toISOString();
+        const created: HarnessEntry = {
+          id,
+          kind: proposalEdit.kind!,
+          title: proposalEdit.title!,
+          content: proposalEdit.content!,
+          path: "general",
+          scope,
+          reference: {},
+          arguments: {},
+          metadata: { sourceSessionId: ctx.sessionManager.getSessionId() },
+          source: "pi-host",
+          created_at: timestamp,
+          updated_at: timestamp,
+          version: 1,
+        };
+        harness.entries[created.kind][id] = created;
+        changed.push(created);
+        changes.push(`create ${created.kind}:${id}`);
+        continue;
+      }
+
+      const matches = HARNESS_KINDS.flatMap((kind) => {
+        const entry = harness.entries[kind][proposalEdit.id!];
+        return entry ? [{ kind, entry }] : [];
+      });
+      if (matches.length !== 1) return undefined;
+      const current = matches[0]!;
+      if (proposalEdit.action === "delete") {
+        delete harness.entries[current.kind][current.entry.id];
+        changed.push(current.entry);
+        changes.push(`delete ${current.kind}:${current.entry.id}`);
+        continue;
+      }
+
+      const targetKind = proposalEdit.kind ?? current.kind;
+      if (targetKind !== current.kind && harness.entries[targetKind][current.entry.id]) return undefined;
+      const updated: HarnessEntry = {
+        ...current.entry,
+        kind: targetKind,
+        ...(proposalEdit.title ? { title: proposalEdit.title } : {}),
+        ...(proposalEdit.content ? { content: proposalEdit.content } : {}),
+        updated_at: new Date().toISOString(),
+        version: current.entry.version + 1,
       };
-      next.push(entry);
-      changed.push(entry);
-      continue;
+      if (targetKind !== current.kind) delete harness.entries[current.kind][current.entry.id];
+      harness.entries[targetKind][updated.id] = updated;
+      changed.push(updated);
+      changes.push(`update ${current.kind}:${updated.id}${targetKind === current.kind ? "" : ` -> ${targetKind}:${updated.id}`}`);
     }
-    const index = next.findIndex((entry) => entry.id === edit.id);
-    if (index < 0) return undefined;
-    if (edit.action === "delete") {
-      changed.push(next[index]);
-      next.splice(index, 1);
-      continue;
-    }
-    const updated = {
-      ...next[index],
-      ...(edit.kind ? { kind: edit.kind } : {}),
-      ...(edit.title ? { title: edit.title } : {}),
-      ...(edit.content ? { content: edit.content } : {}),
-    };
-    next[index] = updated;
-    changed.push(updated);
-  }
-  if (proposal.edits.length === 0) return [];
-  harness.entries = next.slice(-MAX_HARNESS_ENTRIES);
-  writeJsonAtomic(path, harness);
-  return changed;
+    if (proposal.edits.length === 0) return [];
+    harness.refinements.push({
+      id: `refine_${randomUUID()}`,
+      trigger: source,
+      changes,
+      evidence: review.rationale,
+      outcome: proposal.rationale || review.rationale,
+      created_at: new Date().toISOString(),
+    });
+    writeJsonAtomic(path, harness);
+    return changed;
   } finally {
     release();
   }
@@ -471,15 +695,7 @@ async function acquireFileLock(path: string): Promise<() => void> {
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        const owner = Number(readFileSync(lock, "utf8").trim());
-        if (Number.isInteger(owner) && owner > 0) process.kill(owner, 0);
-        else if (attempt >= 10) unlinkSync(lock);
-      } catch (ownerError) {
-        if ((ownerError as NodeJS.ErrnoException).code === "ESRCH" || attempt >= 10) {
-          try { unlinkSync(lock); } catch { /* another process recovered it */ }
-        }
-      }
+      recoverStaleLock(lock, attempt);
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
@@ -697,10 +913,10 @@ export class ContinualRefinementController {
     let review: ReviewResult | undefined;
     try {
       const directory = this.getAgentDir();
-      const global = loadHarness(globalHarnessPath(directory));
-      const local = loadHarness(localHarnessPath(ctx, directory));
+      const global = loadScopedHarness(ctx, directory, true);
+      const local = loadScopedHarness(ctx, directory, false);
       const conversation = serializeTrajectory(ctx.sessionManager.buildContextEntries()).slice(-REVIEW_CONVERSATION_CHARS);
-      const prompt = `Trigger reason: ${reason}\nEligible assistant turns since the previous completed review: ${turns}\n\nCurrent harness overview:\n${harnessOverview(global, local)}\n\nAvailable refinement history:\n${refinementHistory(ctx)}\n\nFinal ${REVIEW_CONVERSATION_CHARS} characters of the serialized conversation:\n<conversation>\n${conversation}\n</conversation>\n\nPrefer no refinement over speculative memory. Automatic refinement is session-local by default.`;
+      const prompt = `Trigger reason: ${reason}\nEligible assistant turns since the previous completed review: ${turns}\n\nCurrent harness overview:\n${harnessOverview(global, local)}\n\nAvailable refinement history:\n${refinementHistory(global, local)}\n\nFinal ${REVIEW_CONVERSATION_CHARS} characters of the serialized conversation:\n<conversation>\n${conversation}\n</conversation>\n\nPrefer no refinement over speculative memory. Automatic refinement is session-local by default.`;
       const response = await this.complete(ctx, REVIEW_SYSTEM_PROMPT, prompt, 4_096);
       if (this.isCurrent(ctx, evidence)) review = parseReview(response);
     } catch (error) {
@@ -747,15 +963,15 @@ export class ContinualRefinementController {
     this.state.refinementInFlight = true;
     try {
       const directory = this.getAgentDir();
-      const globalHarness = loadHarness(globalHarnessPath(directory));
-      const localHarness = loadHarness(localHarnessPath(ctx, directory));
+      const globalHarness = loadScopedHarness(ctx, directory, true);
+      const localHarness = loadScopedHarness(ctx, directory, false);
       const conversation = serializeTrajectory(ctx.sessionManager.buildContextEntries()).slice(-REFINEMENT_CONVERSATION_CHARS);
-      const prompt = `Current harness state:\n${harnessState(globalHarness, localHarness)}\n\nRefinement history:\n${refinementHistory(ctx)}\n\nFinal ${REFINEMENT_CONVERSATION_CHARS} characters of the serialized conversation:\n<conversation>\n${conversation}\n</conversation>\n\nReview rationale:\n${review.rationale}\n\nReviewer or explicit instructions:\n${review.instructions || "None."}\n\nTarget scope: ${global ? "global, explicitly requested" : "session-local"}.\nReturn no edits when the evidence is insufficient.`;
+      const prompt = `Current harness state:\n${harnessState(globalHarness, localHarness)}\n\nRefinement history:\n${refinementHistory(globalHarness, localHarness)}\n\nFinal ${REFINEMENT_CONVERSATION_CHARS} characters of the serialized conversation:\n<conversation>\n${conversation}\n</conversation>\n\nReview rationale:\n${review.rationale}\n\nReviewer or explicit instructions:\n${review.instructions || "None."}\n\nTarget scope: ${global ? "global, explicitly requested" : "session-local"}.\nReturn no edits when the evidence is insufficient.`;
       const response = await this.complete(ctx, REFINEMENT_SYSTEM_PROMPT, prompt, 32_000);
       if (!this.isCurrent(ctx, evidence)) return false;
       const proposal = parseProposal(response);
       if (!proposal) return false;
-      const changed = await applyProposal(proposal, ctx, directory, global);
+      const changed = await applyProposal(proposal, ctx, directory, global, source, review);
       if (!changed) return false;
       if (changed.length === 0) {
         ctx.ui.notify("No evidence-backed refinement was found", "info");
@@ -848,8 +1064,8 @@ export function createPrimeParityExtension(dependencies: PrimeParityDependencies
       handler: async (_args, ctx) => {
         const directory = dependencies.agentDirectory?.() ?? defaultAgentDir();
         const request = readRequest(ctx, directory);
-        const globalCount = loadHarness(globalHarnessPath(directory)).entries.length;
-        const localCount = loadHarness(localHarnessPath(ctx, directory)).entries.length;
+        const globalCount = harnessEntries(loadScopedHarness(ctx, directory, true)).length;
+        const localCount = harnessEntries(loadScopedHarness(ctx, directory, false)).length;
         const state = controller.status();
         ctx.ui.notify(
           `Refinement ${request?.pending ? "pending" : state.reviewInFlight || state.refinementInFlight ? "in flight" : "idle"}\nGlobal entries: ${globalCount}\nSession entries: ${localCount}\nEligible turns: ${state.assistantTurnsSinceReview}`,

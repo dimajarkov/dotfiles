@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+mount='/Volumes/OWC Envoy Ultra'
+expected_uuid='17EE0606-3007-4185-B429-A99781BDCBE8'
+
+refuse() {
+  printf '%s\n' "Docker refused: the verified OWC Envoy Ultra container store is unavailable ($1)." >&2
+  exit 78
+}
+
+plist=$(/usr/sbin/diskutil info -plist "$mount" 2>/dev/null) || refuse 'drive is not mounted'
+field() {
+  printf '%s' "$plist" | /usr/bin/plutil -extract "$1" raw -o - - 2>/dev/null
+}
+
+[ "$(field VolumeUUID)" = "$expected_uuid" ] || refuse 'volume UUID does not match'
+[ "$(field MountPoint)" = "$mount" ] || refuse 'mount point does not match'
+[ "$(field FilesystemType)" = 'apfs' ] || refuse 'filesystem is not APFS'
+[ "$(field Writable)" = 'true' ] || refuse 'volume is not writable'
+[ "$(field Internal)" = 'false' ] || refuse 'volume is not external'
+
+config="$HOME/.orbstack/vmconfig.json"
+[ -f "$config" ] || refuse 'OrbStack external storage is not configured'
+data_dir=$(/usr/bin/plutil -extract data_dir raw -o - "$config" 2>/dev/null) || refuse 'OrbStack data_dir is unreadable'
+case "$data_dir" in
+  "$mount"/*) ;;
+  *) refuse 'OrbStack data_dir is not on the OWC volume' ;;
+esac
+
+data_image=
+for candidate in "$data_dir/data.img.raw" "$data_dir/data/data.img.raw"; do
+  if [ -f "$candidate" ]; then
+    data_image="$candidate"
+    break
+  fi
+done
+[ -n "$data_image" ] || refuse 'OrbStack data image is missing'
+[ "$(/usr/bin/stat -f '%d' "$mount")" = "$(/usr/bin/stat -f '%d' "$data_image")" ] || refuse 'data image is on a different filesystem'

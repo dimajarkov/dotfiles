@@ -1,0 +1,35 @@
+{
+  "skill_name": "one-bin",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Install ESLint globally so I can use it in this repository. The repository already has pnpm-lock.yaml.",
+      "expected_output": "The agent invokes one-bin, refuses an unnecessary global install, uses the repository's pnpm owner, and proposes a project-local dependency or pnpm exec route.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Install ripgrep for the whole machine and make sure every terminal uses it.",
+      "expected_output": "The agent invokes one-bin, audits existing rg candidates, chooses declarative Nix in dotfiles, validates a Darwin build, refreshes a shell, and verifies the selected real path without creating npm or Bun globals.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "I installed the same CLI with npm, Bun, and Nix, but command -v still points to npm. Fix it.",
+      "expected_output": "The agent invokes one-bin audit exe, identifies every owner in PATH order, verifies the Nix replacement before asking to remove obsolete npm and Bun owners, refreshes the shell, and confirms one canonical target.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Add a dependency to this new personal TypeScript project. It has package.json but no lockfile or packageManager field.",
+      "expected_output": "The agent invokes one-bin decide, confirms the project is genuinely new and personal, defaults to Bun, and creates only bun.lock.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Put this direct-download macOS app under Homebrew management without losing its data.",
+      "expected_output": "The agent invokes one-bin, audits current provenance and ownership, does not force Homebrew adoption, presents a deliberate one-owner migration with data preservation and App Management checks, and requires approval before removal.",
+      "files": []
+    }
+  ]
+}

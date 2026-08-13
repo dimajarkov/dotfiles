@@ -2,51 +2,8 @@
 
 let
   dotfiles = "${config.home.homeDirectory}/.dotfiles";
-  piComposioExtension = pkgs.buildNpmPackage {
-    pname = "pi-composio-extension";
-    version = "1.0.0";
-    src = ./home/.pi/agent/extensions/composio/runtime;
-    npmDepsHash = "sha256-wtcBCX3Prxlxh8xkNiMgn1yZdVv7lyX1rgbLQhGNLuU=";
-    npmFlags = [ "--legacy-peer-deps" ];
-    dontNpmBuild = true;
-    installPhase = ''
-      mkdir -p "$out"
-      cp ${./home/.pi/agent/extensions/composio/index.ts} "$out/index.ts"
-      cp ${./home/.pi/agent/extensions/composio/auth.ts} "$out/auth.ts"
-      cp ${./home/.pi/agent/extensions/composio/config.ts} "$out/config.ts"
-      cp ${./home/.pi/agent/extensions/composio/output.ts} "$out/output.ts"
-      cp ${./home/.pi/agent/extensions/composio/README.md} "$out/README.md"
-      cp package.json package-lock.json "$out/"
-      cp -R node_modules "$out/"
-    '';
-  };
-  piIpythonExtension = pkgs.buildNpmPackage {
-    pname = "pi-ipython-primary-tool";
-    version = "1.0.0";
-    src = ./home/.pi/agent/extensions/ipython/runtime;
-    npmDepsHash = "sha256-/ASGFC5XEozMZBJonypYuH0WxfeZnnzyp7qaCc0nsY0=";
-    dontNpmBuild = true;
-    installPhase = ''
-      mkdir -p "$out"
-      cp ${./home/.pi/agent/extensions/ipython/index.ts} "$out/index.ts"
-      cp ${./home/.pi/agent/extensions/ipython/bootstrap.ts} "$out/bootstrap.ts"
-      cp ${./home/.pi/agent/extensions/ipython/kernel.ts} "$out/kernel.ts"
-      cp ${./home/.pi/agent/extensions/ipython/fork-server.ts} "$out/fork-server.ts"
-      cp ${./home/.pi/agent/extensions/ipython/runtime.ts} "$out/runtime.ts"
-      cp ${./home/.pi/agent/extensions/ipython/python-skills.ts} "$out/python-skills.ts"
-      cp -R ${./home/.pi/agent/extensions/ipython/python-skills} "$out/python-skills"
-      cp ${./home/.pi/agent/extensions/ipython/state-snapshot.ts} "$out/state-snapshot.ts"
-      cp ${./home/.pi/agent/extensions/ipython/code-preview.ts} "$out/code-preview.ts"
-      cp ${./home/.pi/agent/extensions/ipython/ipython-cell-code.ts} "$out/ipython-cell-code.ts"
-      cp ${./home/.pi/agent/extensions/ipython/renderer.ts} "$out/renderer.ts"
-      cp ${./home/.pi/agent/extensions/ipython/README.md} "$out/README.md"
-      cp ${./home/.pi/agent/extensions/ipython/UPSTREAM_LICENSE} "$out/UPSTREAM_LICENSE"
-      cp ${./home/.pi/agent/extensions/ipython/requirements.in} "$out/requirements.in"
-      cp ${./home/.pi/agent/extensions/ipython/requirements.lock} "$out/requirements.lock"
-      cp package.json package-lock.json "$out/"
-      cp -R node_modules "$out/"
-    '';
-  };
+  piUpstream = pkgs.callPackage ./nix/packages/pi-coding-agent.nix {};
+  piSubagentExtension = "${piUpstream}/lib/pi-coding-agent/packages/coding-agent/examples/extensions/subagent";
 in {
   home.username = user;
   home.homeDirectory = "/Users/${user}";
@@ -65,7 +22,7 @@ in {
     lua-language-server
     neovim
     nerd-fonts.hack
-    nodejs_24
+    nodejs_22
     ripgrep
     ruff
     starship
@@ -198,6 +155,32 @@ in {
     };
   };
 
+  home.activation.migrateLegacyPiFiles = config.lib.dag.entryBefore [ "checkFilesChanged" "checkLinkTargets" ] ''
+    mcp_path="${config.home.homeDirectory}/.pi/agent/mcp.json"
+    mcp_source="${dotfiles}/home/.pi/agent/mcp.json"
+    if [ -f "$mcp_path" ] && [ ! -L "$mcp_path" ] && /usr/bin/cmp -s "$mcp_path" "$mcp_source"; then
+      /bin/rm -- "$mcp_path"
+    fi
+
+    agents_path="${config.home.homeDirectory}/AGENTS.md"
+    agents_source="${dotfiles}/home/AGENTS.md"
+    if [ -f "$agents_path" ] && [ ! -L "$agents_path" ] && /usr/bin/cmp -s "$agents_path" "$agents_source"; then
+      /bin/rm -- "$agents_path"
+    fi
+  '';
+
+  home.file.".local/bin/pi".source = piUpstream + "/bin/pi";
+  home.file.".local/bin/owc-container-ready".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/owc-container-ready";
+  home.file.".local/bin/docker".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/docker";
+  home.file.".local/bin/docker-compose".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/docker-compose";
+  home.file.".local/bin/docker-start".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/docker-start";
+  home.file.".local/bin/docker-stop".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/docker-stop";
+
   home.file.".pi/agent/settings.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/settings.json";
   home.file.".pi/agent/models.json".source =
@@ -222,18 +205,23 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/terminal-status-title.js";
   home.file.".pi/agent/extensions/mac-system-theme.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/mac-system-theme.ts";
-  home.file.".pi/agent/extensions/goal".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/goal";
   home.file.".pi/agent/extensions/supabase-keychain".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/supabase-keychain";
-  home.file.".pi/agent/extensions/composio".source = piComposioExtension;
-  home.file.".pi/agent/extensions/ipython".source = piIpythonExtension;
-  home.file.".pi/agent/skills/attach-image".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/skills/attach-image";
-  home.file.".pi/agent/skills/edit".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/skills/edit";
-  home.file.".pi/agent/skills/refine".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/skills/refine";
+  home.file.".pi/agent/extensions/subagent".source = piSubagentExtension;
+  home.file.".pi/agent/agents/planner.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/planner.md";
+  home.file.".pi/agent/agents/reviewer.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/reviewer.md";
+  home.file.".pi/agent/agents/scout.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/scout.md";
+  home.file.".pi/agent/agents/worker.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/worker.md";
+  home.file.".pi/agent/prompts/implement-and-review.md".source =
+    "${piSubagentExtension}/prompts/implement-and-review.md";
+  home.file.".pi/agent/prompts/implement.md".source =
+    "${piSubagentExtension}/prompts/implement.md";
+  home.file.".pi/agent/prompts/scout-and-plan.md".source =
+    "${piSubagentExtension}/prompts/scout-and-plan.md";
   home.file.".config/gh/config.yml".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/gh/config.yml";
   home.file.".config/wezterm".source =
@@ -242,12 +230,22 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/nvim";
   home.file.".config/herdr".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/herdr";
-  home.file.".agents/skills/treehouse-herdr-feature-runtime".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/treehouse-herdr-feature-runtime";
+  home.file."AGENTS.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/AGENTS.md";
+  home.file.".agents/AGENTS.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/AGENTS.md";
+  home.file.".agents/skills/one-bin".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/one-bin";
+  home.file.".pi/agent/skills/one-bin".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/one-bin";
+  home.file.".local/bin/one-bin".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/one-bin/scripts/one-bin.mjs";
   home.file.".claude/settings.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.claude/settings.json";
   home.file.".claude/CLAUDE.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/AGENTS.md";
   home.file.".codex/AGENTS.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.codex/AGENTS.md";
+  home.file."OPINIONS.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/OPINIONS.md";
 }

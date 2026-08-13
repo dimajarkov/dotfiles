@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prime-style Pi harness - scope grill</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #050506;
+      --surface: #0d0d10;
+      --panel: #151518;
+      --panel-strong: #1a1a1f;
+      --selected: #222226;
+      --fg: #f4f4f5;
+      --muted: #a1a1aa;
+      --dim: #71717a;
+      --grid: #3f3f46;
+      --primary: #7c6faf;
+      --primary-soft: #8d7fc0;
+      --success: #7da876;
+      --warning: #f59e0b;
+      --error: #d06f82;
+      --info: #38bdf8;
+      --max: 1180px;
+      --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 78% 3%, rgba(124,111,175,.16), transparent 31rem),
+        var(--bg);
+      color: var(--fg);
+      font-family: var(--sans);
+      line-height: 1.55;
+    }
+    button, input, textarea { font: inherit; }
+    a { color: var(--info); }
+    code, pre, .mono { font-family: var(--mono); }
+    main { width: min(calc(100% - 32px), var(--max)); margin: 0 auto; padding: 44px 0 100px; }
+    .eyebrow { color: var(--primary-soft); font: 700 12px/1.2 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+    h1 { max-width: 900px; margin: 12px 0 12px; font-size: clamp(34px, 6vw, 72px); line-height: .98; letter-spacing: -.055em; }
+    .lede { max-width: 790px; margin: 0; color: var(--muted); font-size: 18px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 40px; }
+    .badge { border: 1px solid var(--grid); border-radius: 999px; padding: 5px 9px; color: var(--muted); background: rgba(13,13,16,.72); font: 12px/1.2 var(--mono); }
+    .badge.good { border-color: rgba(125,168,118,.45); color: var(--success); }
+    .badge.warn { border-color: rgba(245,158,11,.45); color: var(--warning); }
+    .section { margin-top: 38px; }
+    .section-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: end; margin-bottom: 14px; }
+    .section h2 { margin: 0; font-size: 25px; letter-spacing: -.025em; }
+    .section-head p { margin: 0; max-width: 680px; color: var(--muted); }
+    .terminal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .terminal { min-width: 0; overflow: hidden; border: 1px solid var(--grid); border-radius: 14px; background: rgba(5,5,6,.9); box-shadow: 0 25px 80px rgba(0,0,0,.24); }
+    .terminal-title { display: flex; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #242429; color: var(--muted); font: 12px/1.2 var(--mono); }
+    .terminal-body { padding: 16px; min-height: 270px; font: 13px/1.62 var(--mono); overflow: hidden; }
+    .tool-old { margin: 12px 0; padding: 10px 12px; border-radius: 5px; background: #101015; }
+    .tool-row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+    .tool-row + .tool-row { margin-top: 5px; }
+    .glyph { display: inline-block; width: 18px; color: var(--success); }
+    .glyph.pending { color: var(--primary-soft); }
+    .tool-detail { color: var(--dim); }
+    .thinking { color: #8b8b94; margin: 8px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .assistant { color: var(--fg); margin: 12px 0; }
+    .editor { margin-top: 22px; padding: 15px 16px; background: #1a1a1f; color: var(--dim); }
+    .prompt { color: var(--fg); }
+    .callout { margin: 16px 0 0; padding: 14px 16px; border-left: 2px solid var(--primary); background: rgba(124,111,175,.08); color: var(--muted); }
+    .findings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .finding { min-width: 0; border: 1px solid #29292f; border-radius: 12px; padding: 15px; background: rgba(13,13,16,.8); }
+    .finding b { display: block; margin-bottom: 6px; font-size: 14px; }
+    .finding p { margin: 0; color: var(--muted); font-size: 13px; }
+    .finding .number { color: var(--primary-soft); font: 700 23px/1 var(--mono); margin-bottom: 10px; }
+    .grill-intro { border: 1px solid rgba(245,158,11,.4); border-radius: 14px; padding: 18px; background: rgba(245,158,11,.055); }
+    .grill-intro strong { color: var(--warning); }
+    .grill-intro p { margin: 6px 0 0; color: var(--muted); }
+    .questions { display: grid; gap: 14px; margin-top: 16px; }
+    .question { min-width: 0; border: 1px solid #303037; border-radius: 14px; background: var(--surface); overflow: hidden; }
+    .question-head { padding: 18px 20px 14px; border-bottom: 1px solid #25252b; }
+    .qnum { color: var(--warning); font: 700 12px/1.2 var(--mono); letter-spacing: .09em; }
+    .question h3 { margin: 7px 0 5px; font-size: 19px; letter-spacing: -.015em; }
+    .question-head p { margin: 0; color: var(--muted); }
+    .recommendation { margin-top: 12px; color: var(--success); font-size: 14px; }
+    .options { display: grid; gap: 8px; padding: 14px 20px 4px; }
+    .option { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 10px; align-items: start; padding: 11px 12px; border: 1px solid #2c2c32; border-radius: 10px; background: #101013; cursor: pointer; }
+    .option:hover { border-color: var(--primary); background: rgba(124,111,175,.08); }
+    .option:has(input:checked) { border-color: var(--primary-soft); background: rgba(124,111,175,.13); }
+    input[type="radio"] { accent-color: var(--primary-soft); margin-top: 4px; }
+    .option b { display: block; margin-bottom: 2px; font-size: 14px; }
+    .option span { display: block; color: var(--muted); font-size: 13px; }
+    .form-footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 12px 20px 18px; align-items: end; }
+    .form-footer label { color: var(--dim); font-size: 12px; }
+    textarea { width: 100%; min-height: 52px; margin-top: 5px; resize: vertical; border: 1px solid #303037; border-radius: 8px; padding: 9px 10px; background: #09090b; color: var(--fg); }
+    textarea:focus { outline: 2px solid rgba(124,111,175,.6); outline-offset: 1px; }
+    .queue { align-self: end; min-width: 142px; border: 1px solid var(--primary-soft); border-radius: 8px; padding: 10px 13px; background: var(--primary); color: white; font-weight: 700; cursor: pointer; }
+    .queue:hover { filter: brightness(1.12); }
+    .queue.queued { border-color: var(--success); background: rgba(125,168,118,.16); color: var(--success); }
+    .next { margin-top: 18px; padding: 16px 18px; border: 1px dashed #3a3a42; border-radius: 12px; color: var(--muted); }
+    .matrix-wrap { overflow-x: auto; margin: 14px 20px 4px; border: 1px solid #2c2c32; border-radius: 10px; }
+    .matrix { width: 100%; border-collapse: collapse; min-width: 700px; font-size: 13px; }
+    .matrix th, .matrix td { padding: 10px 12px; border-bottom: 1px solid #25252b; text-align: left; vertical-align: top; }
+    .matrix th { color: var(--dim); background: #101013; font: 700 11px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+    .matrix tr:last-child td { border-bottom: 0; }
+    .matrix td:first-child { color: var(--fg); font-family: var(--mono); }
+    .matrix td:nth-child(2) { color: var(--muted); font-family: var(--mono); white-space: nowrap; }
+    .matrix td:last-child { color: var(--dim); }
+    details.research { margin-top: 18px; border: 1px solid #2c2c32; border-radius: 12px; background: var(--surface); }
+    details.research summary { cursor: pointer; padding: 14px 16px; color: var(--primary-soft); font-weight: 700; }
+    .research-body { padding: 0 16px 16px; color: var(--muted); }
+    .research-body li + li { margin-top: 8px; }
+    .research-body code { color: var(--fg); overflow-wrap: anywhere; }
+    .send-note { position: sticky; bottom: 12px; z-index: 5; margin-top: 24px; display: flex; gap: 12px; align-items: center; justify-content: space-between; border: 1px solid rgba(124,111,175,.55); border-radius: 12px; padding: 13px 15px; background: rgba(13,13,16,.96); box-shadow: 0 10px 40px rgba(0,0,0,.4); color: var(--muted); }
+    .send-note strong { color: var(--fg); }
+    @media (max-width: 900px) {
+      .terminal-grid, .findings { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 680px) {
+      main { width: min(calc(100% - 20px), var(--max)); padding-top: 28px; }
+      .terminal-grid, .findings { grid-template-columns: 1fr; }
+      .section-head, .form-footer { grid-template-columns: 1fr; }
+      .queue { width: 100%; }
+      .send-note { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">Research complete · Final shared-understanding check</div>
+    <h1>Make Pi feel as calm as Prime while it works.</h1>
+    <p class="lede">Four exploration agents traced Prime Agent's streaming renderer, Pi's extension seams, and the current harness. The visual target is achievable, but exact interaction parity crosses a real boundary between a global extension and Pi core.</p>
+    <div class="meta">
+      <span class="badge good">Prime source pinned at 7787f07</span>
+      <span class="badge good">Pi 0.84.1 source inspected</span>
+      <span class="badge">No Prime Python proposed</span>
+      <span class="badge warn">One confirmation required before implementation</span>
+    </div>
+  </header>
+
+  <section class="section">
+    <div class="section-head">
+      <div><div class="eyebrow">Source-derived visual reconstruction</div><h2>Density is the biggest visible difference</h2></div>
+      <p>This is a faithful reconstruction from renderer source, not a screenshot. Prime keeps completed activity compact, preserves one stable row, and appends detail only when expanded.</p>
+    </div>
+    <div class="terminal-grid">
+      <figure class="terminal">
+        <figcaption class="terminal-title"><span>Current Pi tendency</span><span>more vertical structure</span></figcaption>
+        <div class="terminal-body">
+          <div class="thinking">Thinking: Inspecting the configuration and renderer...</div>
+          <div class="tool-old"><b>read</b><br><span class="tool-detail">/Users/dmitrijarkov/.pi/agent/extensions/prime-style.ts</span><br><br><span class="tool-detail">import type { ExtensionAPI ...</span></div>
+          <div class="tool-old"><b>bash</b><br><span class="tool-detail">git status --short --branch</span><br><br><span class="tool-detail">## master...origin/master [ahead 4]<br>M home.nix<br>M settings.json</span></div>
+          <div class="assistant">I found the current visual extension and its theme ownership...</div>
+          <div class="editor"><span class="prompt">&gt;</span> Try "refactor @&lt;filepath&gt;"</div>
+        </div>
+      </figure>
+      <figure class="terminal">
+        <figcaption class="terminal-title"><span>Prime visual grammar applied to Pi</span><span>one stable row per tool</span></figcaption>
+        <div class="terminal-body">
+          <div class="thinking"><span class="glyph pending">◇</span>Inspecting renderer ownership <span class="tool-detail">· Ctrl+T to expand</span></div>
+          <div class="tool-row"><span class="glyph">✓</span><b>read</b> <span class="tool-detail">· ~/.pi/agent/extensions/prime-style.ts · 143 lines</span></div>
+          <div class="tool-row"><span class="glyph">✓</span><b>bash</b> <span class="tool-detail">· git status --short --branch · 54ms</span></div>
+          <div class="tool-row"><span class="glyph">✓</span><b>read</b> <span class="tool-detail">· ~/.pi/agent/themes/prime.json · 88 lines · Ctrl+O to expand</span></div>
+          <div class="assistant">I found the current visual extension and its theme ownership. The next change should consolidate the renderers rather than layer another extension over them.</div>
+          <div class="tool-row" style="margin-top:18px"><span class="glyph pending">◈</span><b>Working</b> <span class="tool-detail">· 12s · executing tools</span></div>
+          <div class="editor"><span class="prompt">&gt;</span> Try "refactor @&lt;filepath&gt;"</div>
+        </div>
+      </figure>
+    </div>
+    <div class="callout"><strong>Key point:</strong> the target is not merely smaller boxes. Prime updates assistant text and tool state in place, caches stable content, coalesces frames, writes only changed rows, and separates collapsed summaries from full detail.</div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <div><div class="eyebrow">What the agents found</div><h2>The implementation boundary is now clear</h2></div>
+    </div>
+    <div class="findings">
+      <article class="finding"><div class="number">01</div><b>Tools are highly feasible</b><p>Pi exposes expansion state, partial updates, renderer state, and built-in renderer inheritance. Dense Prime-style tool rows are realistic in a global extension.</p></article>
+      <article class="finding"><div class="number">02</div><b>Assistant streaming is core-owned</b><p>Pi constructs its assistant component directly. An extension can transform Markdown, but cannot replace its streaming reconciliation or reasoning recap.</p></article>
+      <article class="finding"><div class="number">03</div><b>Expansion is one global domain</b><p>Pi's Ctrl+O expands all expandable transcript content together. Prime separates tools, thinking, and agent messages.</p></article>
+      <article class="finding"><div class="number">04</div><b>Current ownership is fragmented</b><p>Theme selection, editor, footer, system-theme behavior, and terminal title are separate. The footer currently hides extension statuses.</p></article>
+    </div>
+    <details class="research">
+      <summary>Open source evidence and local audit summary</summary>
+      <div class="research-body">
+        <ul>
+          <li>Prime streaming state machine: <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/modes/interactive/interactive-mode.ts#L5312-L5718">interactive-mode.ts lines 5312-5718</a>.</li>
+          <li>Prime assistant reconciliation: <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/modes/interactive/components/assistant-message.ts#L27-L367">assistant-message.ts lines 27-367</a>.</li>
+          <li>Prime tool lifecycle and panels: <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/modes/interactive/components/tool-execution.ts#L70-L520">tool-execution.ts lines 70-520</a>.</li>
+          <li>Prime one-line IPython summary: <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/modes/interactive/components/ipython-cell.ts#L345-L742">ipython-cell.ts lines 345-742</a>.</li>
+          <li>Prime differential renderer: <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/tui/src/tui.ts#L1477-L1945">tui.ts lines 1477-1945</a>.</li>
+          <li>Full synthesis: <code>/Users/dmitrijarkov/dotfiles/.lavish/prime-agent-ui-research.md</code>.</li>
+        </ul>
+      </div>
+    </details>
+  </section>
+
+  <section class="section" id="grill">
+    <div class="grill-intro">
+      <strong>Round 1 works only the current decision frontier.</strong>
+      <p>Queue one answer for every question, then use Lavish's Send to Agent control. Your answers will unlock a second round about exact expansion controls, summary contents, and truncation rules. Implementation will not begin until the design tree is exhausted and you confirm shared understanding.</p>
+    </div>
+
+    <div class="questions">
+      <form class="question" data-lavish-question="q1" onsubmit="return queueAnswer(event, 'Q1', 'engineering-boundary')">
+        <div class="question-head">
+          <div class="qnum">❓ Q1</div>
+          <h3>How hard is the parity boundary?</h3>
+          <p>Do you want us constrained to public Pi extension APIs, or may we patch Pi where extension-only work cannot reproduce Prime's interaction model?</p>
+          <div class="recommendation">➡ Recommendation: Hybrid. Keep the skin and tool renderers in a global extension, then make small tested Pi core changes only for assistant streaming and independent expansion domains.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Extension only"><span><b>Extension only</b><span>Lowest coupling, but knowingly accept approximate assistant streaming, one global expansion toggle, and no transcript controller.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Hybrid extension plus small Pi core changes" checked><span><b>Hybrid extension plus small Pi core changes</b><span>Put visuals in the harness and add narrow reusable core APIs where fidelity otherwise breaks.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Deep Pi fork for maximum Prime parity"><span><b>Deep Pi fork for maximum parity</b><span>Copy the full interaction architecture, accepting a larger long-lived divergence from upstream Pi.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Optional constraint or rationale<textarea name="note" placeholder="For example: core patches are fine only if they are upstreamable."></textarea></label><button class="queue" type="submit">Queue Q1 answer</button></div>
+      </form>
+
+      <form class="question" data-lavish-question="q2" onsubmit="return queueAnswer(event, 'Q2', 'visual-fidelity')">
+        <div class="question-head">
+          <div class="qnum">❓ Q2</div>
+          <h3>Clone Prime, or translate Prime into Pi?</h3>
+          <p>Prime has one IPython tool and semantics built around Python cells. Pi has distinct read, grep, edit, write, bash, web, MCP, and custom tools. How literal should the appearance be?</p>
+          <div class="recommendation">➡ Recommendation: Faithful visual translation. Copy Prime's spacing, surfaces, glyphs, colors, streaming rhythm, and collapse grammar while retaining clear Pi-native tool names and metadata.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Literal visual clone"><span><b>Literal visual clone</b><span>Make Pi rows resemble Prime as closely as possible even when Pi tool semantics fit awkwardly.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Faithful visual translation to Pi semantics" checked><span><b>Faithful visual translation</b><span>Match Prime's visual system precisely, but let each Pi tool expose the most useful native summary.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Only borrow density and expansion"><span><b>Only borrow density and expansion</b><span>Keep most current Pi styling and change primarily the one-line defaults and disclosure behavior.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Optional visual non-negotiable<textarea name="note" placeholder="Name any Prime detail that must be copied exactly."></textarea></label><button class="queue" type="submit">Queue Q2 answer</button></div>
+      </form>
+
+      <form class="question" data-lavish-question="q3" onsubmit="return queueAnswer(event, 'Q3', 'surface-scope')">
+        <div class="question-head">
+          <div class="qnum">❓ Q3</div>
+          <h3>Which visible surfaces are in scope?</h3>
+          <p>The request started with streaming and tool rows. A coherent result may also require reasoning, assistant Markdown, working status, editor, footer, custom messages, retries, and compaction.</p>
+          <div class="recommendation">➡ Recommendation: The complete conversation surface. Include transcript, reasoning, tools, working and retry states, editor, and footer, but leave selectors and settings dialogs Pi-native unless they clash badly.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Tool calls and results only"><span><b>Tool calls and results only</b><span>Smallest scope. Existing editor, assistant text, reasoning, status, and footer remain as they are.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Complete conversation surface" checked><span><b>Complete conversation surface</b><span>Unify everything seen during a normal agent turn, including exceptional streaming states.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Entire Pi interactive interface"><span><b>Entire Pi interactive interface</b><span>Also restyle model pickers, session tree, settings, overlays, autocomplete, startup, and all ancillary screens.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Explicit inclusion or exclusion<textarea name="note" placeholder="For example: include subagent activity, exclude session tree."></textarea></label><button class="queue" type="submit">Queue Q3 answer</button></div>
+      </form>
+
+      <form class="question" data-lavish-question="q4" onsubmit="return queueAnswer(event, 'Q4', 'default-density')">
+        <div class="question-head">
+          <div class="qnum">❓ Q4</div>
+          <h3>What should stay collapsed by default?</h3>
+          <p>The dense look depends on hiding detail aggressively. That can improve scanning while making live diagnosis less immediate.</p>
+          <div class="recommendation">➡ Recommendation: Collapse completed tools and reasoning to one line, but show a bounded live tail for running commands and failures. Expansion must always reveal the full retained detail.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Everything collapsed to one line"><span><b>Everything collapsed to one line</b><span>Maximum density, including running tools, failures, and reasoning.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Completed compact, live and failed context visible" checked><span><b>Completed compact, live and failed context visible</b><span>One line after success, bounded live output while running, and enough error context to act without expanding.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Tools compact but reasoning remains expanded"><span><b>Tools compact, reasoning expanded</b><span>Reduce tool noise while preserving Pi's current visible reasoning behavior.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Optional density rule<textarea name="note" placeholder="For example: never auto-collapse diffs until the turn ends."></textarea></label><button class="queue" type="submit">Queue Q4 answer</button></div>
+      </form>
+
+      <form class="question" data-lavish-question="q5" onsubmit="return queueAnswer(event, 'Q5', 'existing-affordances')">
+        <div class="question-head">
+          <div class="qnum">❓ Q5</div>
+          <h3>What happens to the existing editor and footer?</h3>
+          <p>The current editor already resembles Prime. The current footer shows useful model, thinking, cost, context, path, and branch data, but it hides other extension statuses and has overlapping ownership.</p>
+          <div class="recommendation">➡ Recommendation: Preserve the information, not the current implementation. Consolidate visual ownership, keep the editor's editing behavior, and redesign the footer so extension statuses remain visible.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Preserve current editor and footer exactly"><span><b>Preserve both exactly</b><span>Limit changes to transcript and streaming surfaces, including current quirks.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Preserve information but redesign and consolidate" checked><span><b>Preserve information, redesign ownership</b><span>One visual extension owns editor, footer, working status, and tool surfaces without dropping telemetry.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Match Prime and discard extra Pi telemetry"><span><b>Match Prime, discard extra telemetry</b><span>Prefer visual purity over current cost, context, branch, and extension-status visibility.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Telemetry that must survive<textarea name="note" placeholder="List any footer or status information you consider essential."></textarea></label><button class="queue" type="submit">Queue Q5 answer</button></div>
+      </form>
+
+      <form class="question" data-lavish-question="q6" onsubmit="return queueAnswer(event, 'Q6', 'runtime-coverage')">
+        <div class="question-head">
+          <div class="qnum">❓ Q6</div>
+          <h3>Where must the result be excellent?</h3>
+          <p>The current environment is WezTerm with truecolor. Pi also has inline and fullscreen transcript modes, and can run in terminals with weaker color or synchronized-output support.</p>
+          <div class="recommendation">➡ Recommendation: Pixel-perfect in WezTerm for both inline and fullscreen modes, with tested graceful behavior in Ghostty and iTerm2 and a readable 256-color fallback.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="WezTerm inline mode only"><span><b>WezTerm inline mode only</b><span>Optimize only the current common path.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="WezTerm inline and fullscreen, graceful elsewhere" checked><span><b>WezTerm inline and fullscreen, graceful elsewhere</b><span>Demand excellence in the actual environment while avoiding terminal-specific breakage.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Cross-terminal parity as a first-class requirement"><span><b>Cross-terminal parity</b><span>Hold WezTerm, Ghostty, iTerm2, Kitty, and 256-color terminals to the same acceptance bar where technically possible.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Other runtime requirement<textarea name="note" placeholder="For example: SSH sessions must remain fully usable."></textarea></label><button class="queue" type="submit">Queue Q6 answer</button></div>
+      </form>
+    </div>
+
+    <div class="next"><strong>Round 1 settled:</strong> extension-only implementation, faithful translation to Pi semantics, complete conversation surface, compact completed tools with visible live and failed context, consolidated editor and footer ownership, and WezTerm excellence in inline and fullscreen modes with graceful fallback elsewhere.</div>
+
+    <div class="grill-intro" style="margin-top:28px">
+      <strong>Round 2: the extension-only consequences.</strong>
+      <p>Your first answer rules out the Pi core APIs needed for exact Prime interaction parity. This round forces explicit choices about the compromises rather than quietly pretending an extension can do everything.</p>
+    </div>
+
+    <div class="questions">
+      <form class="question" data-round="2" data-lavish-question="q7" onsubmit="return queueAnswer(event, 'Q7', 'expansion-control')">
+        <div class="question-head">
+          <div class="qnum">❓ Q7</div>
+          <h3>Accept Pi's global Ctrl+O expansion model?</h3>
+          <p>Under public extension APIs, tool rows cannot be individually focused or expanded. Pi exposes one native boolean that expands or collapses every expandable transcript block together.</p>
+          <div class="recommendation">➡ Recommendation: Keep native global Ctrl+O. It is reliable, discoverable, and preserves built-in behavior. Do not fake per-row selection through private internals.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Keep native global Ctrl+O" checked><span><b>Keep native global Ctrl+O</b><span>One shortcut expands or collapses all tool detail. The latest applicable row carries the hint where feasible.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Add slash commands for tool-category expansion"><span><b>Add slash commands by category</b><span>Commands could change extension-owned presentation state, but native transcript blocks would still not become individually selectable.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Use private Pi internals for per-row expansion"><span><b>Reach into private Pi internals</b><span>Closer interaction today, but fragile across Pi upgrades and inconsistent with the extension-only safety boundary.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Optional expansion requirement<textarea name="note" placeholder="For example: a separate expand-all-errors command would be useful."></textarea></label><button class="queue" type="submit">Queue Q7 answer</button></div>
+      </form>
+
+      <form class="question" data-round="2" data-lavish-question="q8" onsubmit="return queueAnswer(event, 'Q8', 'reasoning-compromise')">
+        <div class="question-head">
+          <div class="qnum">❓ Q8</div>
+          <h3>How should reasoning behave without a replaceable assistant component?</h3>
+          <p>Pi owns assistant and reasoning rendering. The extension can apply Prime colors and Markdown-safe transforms, and Pi has its own thinking visibility control, but Prime's evolving one-line reasoning recap cannot be reproduced robustly.</p>
+          <div class="recommendation">➡ Recommendation: Keep Pi's native reasoning behavior and Ctrl+T, restyled with Prime's quiet typography. Do not synthesize a misleading recap or duplicate streamed content.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Keep native reasoning behavior, Prime styling" checked><span><b>Native behavior, Prime styling</b><span>Reliable streaming and controls, but not Prime's exact one-line recap.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Hide reasoning by default"><span><b>Hide reasoning by default</b><span>Cleaner transcript, with native Ctrl+T available when reasoning is needed.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Attempt a synthetic one-line recap"><span><b>Attempt a synthetic recap</b><span>Closer appearance, but it may lag, jump, or misrepresent the actual streamed reasoning.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Optional reasoning rule<textarea name="note" placeholder="For example: show reasoning automatically only while it is streaming."></textarea></label><button class="queue" type="submit">Queue Q8 answer</button></div>
+      </form>
+
+      <form class="question" data-round="2" data-lavish-question="q9" onsubmit="return queueAnswer(event, 'Q9', 'tool-summary-grammar')">
+        <div class="question-head">
+          <div class="qnum">❓ Q9</div>
+          <h3>What belongs on a completed one-line tool row?</h3>
+          <p>Every extra field competes with the actual action at normal terminal widths. Prime prioritizes state, meaningful action, counts, duration, and a sparse expansion hint.</p>
+          <div class="recommendation">➡ Recommendation: status glyph + tool name + high-signal target or action + compact outcome/count + duration. Omit timestamps and IDs. Preserve errors as an additional bounded line when needed.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Minimal action only"><span><b>Minimal action only</b><span>Glyph, tool, and target. Maximum calm, less operational evidence.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Balanced action, outcome, counts, and duration" checked><span><b>Balanced action and outcome</b><span>Glyph, tool, target/action, compact count or outcome, and duration where meaningful.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Telemetry-rich rows"><span><b>Telemetry-rich rows</b><span>Add argument details, exact byte counts, timestamps, and identifiers even if rows truncate more often.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Field that must be present or absent<textarea name="note" placeholder="For example: always show file line counts, never show milliseconds."></textarea></label><button class="queue" type="submit">Queue Q9 answer</button></div>
+      </form>
+
+      <form class="question" data-round="2" data-lavish-question="q10" onsubmit="return queueAnswer(event, 'Q10', 'live-output')">
+        <div class="question-head">
+          <div class="qnum">❓ Q10</div>
+          <h3>How much live output should remain visible?</h3>
+          <p>You chose visible live context. The remaining decision is whether running commands show a stable tail beneath the summary row or stay strictly one-line until completion.</p>
+          <div class="recommendation">➡ Recommendation: Show the latest five wrapped visual rows for output-producing tools, refresh at most every 100 ms, then collapse successful completion back to one line.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="One line even while running"><span><b>One line while running</b><span>Most stable layout, but hides progress and early diagnostics.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Five wrapped visual rows, then collapse on success" checked><span><b>Five-row live tail</b><span>Prime-like bounded progress with restrained repainting and automatic cleanup after success.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Twenty-line live tail"><span><b>Twenty-line live tail</b><span>Better for logs, but substantially noisier and more likely to move the viewport.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Tool-specific exception<textarea name="note" placeholder="For example: tests may show 10 rows, reads should never show content live."></textarea></label><button class="queue" type="submit">Queue Q10 answer</button></div>
+      </form>
+
+      <form class="question" data-round="2" data-lavish-question="q11" onsubmit="return queueAnswer(event, 'Q11', 'failure-detail')">
+        <div class="question-head">
+          <div class="qnum">❓ Q11</div>
+          <h3>What does a failed tool leave behind?</h3>
+          <p>A failure can either remain compact with a short diagnosis, or retain a larger tail so the cause is immediately visible. Global Ctrl+O is always available for the full retained result.</p>
+          <div class="recommendation">➡ Recommendation: Keep the summary plus up to five wrapped error-tail rows. Do not globally auto-expand, because one failure would expand every prior tool.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Summary plus five error-tail rows" checked><span><b>Summary plus five error rows</b><span>Immediate diagnosis without detonating transcript density.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Single-line error summary"><span><b>Single-line error only</b><span>Maximum compactness, requiring Ctrl+O for almost every diagnosis.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Retain twenty error-tail rows"><span><b>Retain twenty error rows</b><span>More diagnosis in place, but failures dominate the transcript.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Optional failure exception<textarea name="note" placeholder="For example: diffs and validation failures should retain more context."></textarea></label><button class="queue" type="submit">Queue Q11 answer</button></div>
+      </form>
+
+      <form class="question" data-round="2" data-lavish-question="q12" onsubmit="return queueAnswer(event, 'Q12', 'working-status')">
+        <div class="question-head">
+          <div class="qnum">❓ Q12</div>
+          <h3>How ambitious should the working status be?</h3>
+          <p>Pi can provide the diamond animation and lifecycle events. Exact Prime live token direction/count and activity classification are not exposed as one reliable public status feed.</p>
+          <div class="recommendation">➡ Recommendation: Show the synchronized diamond, best-evidence phase label, and elapsed time. Keep footer context and cost telemetry separate. Never fabricate a token count.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Diamond only"><span><b>Diamond only</b><span>Visually clean and fully reliable, but gives little sense of current phase or elapsed time.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Diamond, evidence-based phase, and elapsed time" checked><span><b>Diamond, phase, and elapsed</b><span>Useful and honest. Phase falls back to Working when events are ambiguous.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Approximate Prime phase and token telemetry"><span><b>Approximate full Prime telemetry</b><span>Visually richer, but estimates can be stale or wrong and conflict with the no-fabrication standard.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Status wording preference<textarea name="note" placeholder="For example: use Thinking, Writing, Running, and Waiting."></textarea></label><button class="queue" type="submit">Queue Q12 answer</button></div>
+      </form>
+
+      <form class="question" data-round="2" data-lavish-question="q13" onsubmit="return queueAnswer(event, 'Q13', 'custom-tool-ownership')">
+        <div class="question-head">
+          <div class="qnum">❓ Q13</div>
+          <h3>May the skin replace custom or MCP tool definitions to force visual uniformity?</h3>
+          <p>Pi has no rendering-only wildcard override. Re-registering non-built-in tools could steal execution ownership from sandboxing, SSH, auditing, MCP, or project extensions.</p>
+          <div class="recommendation">➡ Recommendation: Never replace non-built-in execution. Apply exact dense renderers to Pi built-ins, Prime palette to generic shells, and honor every custom tool's own renderer even when visual density varies.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Preserve all custom tool ownership" checked><span><b>Preserve custom ownership</b><span>Strong safety boundary. Built-ins look exact; custom and MCP tools inherit the palette but may not all collapse identically.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Wrap known allowlisted custom tools"><span><b>Wrap an explicit allowlist</b><span>More uniformity for tested tools, with ongoing maintenance and ownership checks.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Force-wrap every available tool"><span><b>Force-wrap every tool</b><span>Maximum visual uniformity with unacceptable risk of changing execution or breaking project-specific behavior.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Allowlisted tool or package<textarea name="note" placeholder="Name any custom tool family that must receive a dedicated renderer."></textarea></label><button class="queue" type="submit">Queue Q13 answer</button></div>
+      </form>
+    </div>
+
+    <div class="next"><strong>Round 2 settled:</strong> native global Ctrl+O, native reasoning behavior with Prime styling, balanced tool summaries, a five-row live tail, five retained error-tail rows, diamond plus evidence-based phase and elapsed time, and strict preservation of custom and MCP tool execution ownership.</div>
+
+    <div class="grill-intro" style="margin-top:28px">
+      <strong>Round 3: final product contract and rollout.</strong>
+      <p>This is the last expected decision frontier. It resolves exceptional loaders, exact built-in summaries, edit presentation, fixed versus adaptive theming, footer structure, deployment, and proof. After these answers I will synthesize the complete specification for one final shared-understanding confirmation.</p>
+    </div>
+
+    <div class="questions">
+      <form class="question" data-round="3" data-lavish-question="q14" onsubmit="return queueAnswer(event, 'Q14', 'exceptional-loaders')">
+        <div class="question-head">
+          <div class="qnum">❓ Q14</div>
+          <h3>Accept Pi-native retry and compaction loaders?</h3>
+          <p>The public API customizes the normal working indicator, but not Pi's retry, compaction, or branch-summary loaders. They can inherit the Prime palette, but their layout and animation remain Pi-native.</p>
+          <div class="recommendation">➡ Recommendation: Accept Pi-native exceptional loaders with Prime colors. Duplicating them as extension messages would create competing state and weaker lifecycle correctness.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Accept native exceptional loaders with Prime colors" checked><span><b>Accept native loaders</b><span>Correct lifecycle, coherent palette, slight visual divergence during uncommon states.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Hide extension working UI during exceptional loaders"><span><b>Explicitly yield during exceptional states</b><span>Keep Pi's loaders as the only visible state and ensure the custom working line disappears promptly.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Attempt parallel Prime-style exceptional status"><span><b>Attempt parallel custom status</b><span>Closer styling, but risks duplicate, stale, or contradictory loaders.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Optional exceptional-state rule<textarea name="note" placeholder="For example: compaction should always use the warning color."></textarea></label><button class="queue" type="submit">Queue Q14 answer</button></div>
+      </form>
+
+      <form class="question" data-round="3" data-lavish-question="q15" onsubmit="return queueAnswer(event, 'Q15', 'builtin-summary-contract')">
+        <div class="question-head">
+          <div class="qnum">❓ Q15</div>
+          <h3>Approve this built-in tool summary contract?</h3>
+          <p>The middle column is the collapsed one-line grammar. The final column is shown only while running, on failure, or after Ctrl+O expansion.</p>
+          <div class="recommendation">➡ Recommendation: Approve this matrix. It preserves the most useful target and outcome for each Pi-native tool without exposing raw argument JSON.</div>
+        </div>
+        <div class="matrix-wrap">
+          <table class="matrix">
+            <thead><tr><th>Tool</th><th>Collapsed success row</th><th>Live, failed, or expanded detail</th></tr></thead>
+            <tbody>
+              <tr><td>read</td><td>✓ read · path · lines 40-120 · 18ms</td><td>No content preview when collapsed. Expanded view keeps syntax-highlighted retained content and truncation notice.</td></tr>
+              <tr><td>write</td><td>✓ write · path · 84 lines · 21ms</td><td>Expanded view shows written content. Failure keeps a five-row diagnostic tail.</td></tr>
+              <tr><td>edit</td><td>✓ edit · path · +12 -4 · 27ms</td><td>Running or expanded view shows the bounded diff. Failure keeps diff context plus diagnostic tail where available.</td></tr>
+              <tr><td>bash</td><td>✓ bash · meaningful command · exit 0 · 1.2s</td><td>Latest five wrapped output rows while running; collapse on success; five rows remain on failure.</td></tr>
+              <tr><td>grep</td><td>✓ grep · pattern · scope · 23 matches · 32ms</td><td>Expanded view shows retained matches with paths and line numbers.</td></tr>
+              <tr><td>find</td><td>✓ find · glob · scope · 14 paths · 19ms</td><td>Expanded view shows retained paths and truncation notice.</td></tr>
+              <tr><td>ls</td><td>✓ ls · path · 18 entries · 12ms</td><td>Expanded view shows retained directory entries.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Approve the proposed built-in summary matrix" checked><span><b>Approve the matrix</b><span>Implement this as the default contract, with width-aware omission from the right.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Approve but omit durations below one second"><span><b>Omit sub-second durations</b><span>Keep duration only for operations lasting at least one second.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Revise the matrix using my note"><span><b>Revise using my note</b><span>Queue explicit row-level changes below.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Matrix revision<textarea name="note" placeholder="For example: grep should show only pattern and match count."></textarea></label><button class="queue" type="submit">Queue Q15 answer</button></div>
+      </form>
+
+      <form class="question" data-round="3" data-lavish-question="q16" onsubmit="return queueAnswer(event, 'Q16', 'edit-diff-lifecycle')">
+        <div class="question-head">
+          <div class="qnum">❓ Q16</div>
+          <h3>When should an edit diff be visible?</h3>
+          <p>Completed tools should be compact, but edits are unusually important evidence. Prime can compute a preflight diff before execution settles and reuse the same component.</p>
+          <div class="recommendation">➡ Recommendation: Show a bounded diff while the edit is pending or running, then collapse to the +N -N summary on success. Keep context visible on failure.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Show bounded live diff, collapse on success" checked><span><b>Live diff, compact success</b><span>Reviewable while action is happening, calm after it succeeds.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Keep all edit diffs collapsed unless Ctrl+O"><span><b>Always collapsed by default</b><span>Maximum density, but the important mutation is invisible unless expanded.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Keep successful edit diffs visible until turn end"><span><b>Visible until turn end</b><span>Preserve immediate review context, then compact when the assistant continues or settles.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Optional diff limit<textarea name="note" placeholder="For example: show at most 12 wrapped diff rows live."></textarea></label><button class="queue" type="submit">Queue Q16 answer</button></div>
+      </form>
+
+      <form class="question" data-round="3" data-lavish-question="q17" onsubmit="return queueAnswer(event, 'Q17', 'theme-ownership')">
+        <div class="question-head">
+          <div class="qnum">❓ Q17</div>
+          <h3>Fixed Prime theme or operating-system adaptation?</h3>
+          <p>The current system-theme extension is effectively dormant because it selects Prime whenever Prime exists. Retaining both owners creates confusion and unnecessary polling.</p>
+          <div class="recommendation">➡ Recommendation: Make Prime the fixed authoritative theme and remove the redundant system-theme owner from the active configuration. Keep other theme files available for manual selection.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Fixed Prime theme with one owner" checked><span><b>Fixed Prime, one owner</b><span>Deterministic appearance and simplest lifecycle.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Prime dark with adaptive light counterpart"><span><b>Adaptive Prime dark and light</b><span>Requires designing a new Prime-compatible light palette and a deliberate watcher.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Keep current overlapping theme owners"><span><b>Keep current overlap</b><span>No migration, but ownership remains ambiguous and the Catppuccin watcher remains dead.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Theme constraint<textarea name="note" placeholder="For example: retain manual Catppuccin selection through settings."></textarea></label><button class="queue" type="submit">Queue Q17 answer</button></div>
+      </form>
+
+      <form class="question" data-round="3" data-lavish-question="q18" onsubmit="return queueAnswer(event, 'Q18', 'footer-layout')">
+        <div class="question-head">
+          <div class="qnum">❓ Q18</div>
+          <h3>How should preserved telemetry fit in the footer?</h3>
+          <p>The required information includes path, branch, model, thinking level, cost, context usage, and extension statuses. A single row is elegant at wide widths but degrades quickly.</p>
+          <div class="recommendation">➡ Recommendation: Responsive two-row footer. Row one is path and branch. Row two is model, thinking, cost, context, and visible extension statuses, with priority-based omission on narrow terminals.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Responsive two-row footer with extension statuses" checked><span><b>Responsive two-row footer</b><span>Preserves information and scanability, and fixes the current hidden-status defect.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Prime-like one-row footer with aggressive truncation"><span><b>One-row footer</b><span>Visually calmer, but drops or truncates useful telemetry at ordinary widths.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Use Pi built-in footer and add a separate status widget"><span><b>Built-in footer plus widget</b><span>Best compatibility, but less visually unified and consumes another transcript-adjacent row.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Footer priority override<textarea name="note" placeholder="List telemetry from highest to lowest priority if different from the recommendation."></textarea></label><button class="queue" type="submit">Queue Q18 answer</button></div>
+      </form>
+
+      <form class="question" data-round="3" data-lavish-question="q19" onsubmit="return queueAnswer(event, 'Q19', 'rollout')">
+        <div class="question-head">
+          <div class="qnum">❓ Q19</div>
+          <h3>How should the replacement roll out?</h3>
+          <p>The authoritative sources are in the dotfiles repository and active files are Home Manager links into the Nix store. The current main checkout also contains substantial unrelated work.</p>
+          <div class="recommendation">➡ Recommendation: Build in a dedicated leased feature worktree, replace the fragmented visual extensions atomically in dotfiles, retain a documented rollback generation, then deploy through Home Manager only after E2E approval.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Atomic replacement after E2E approval" checked><span><b>Atomic replacement after approval</b><span>One owner and one cutover. Roll back through the prior Home Manager generation.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Temporary feature flag alongside current UI"><span><b>Temporary feature flag</b><span>Easy comparison, but overlapping extensions can fight over editor, footer, and theme ownership.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Incremental live replacement surface by surface"><span><b>Incremental live replacement</b><span>Smaller individual changes, but an incoherent intermediate UI and harder ownership debugging.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Rollout constraint<textarea name="note" placeholder="For example: keep a /prime-style-off emergency command for one release."></textarea></label><button class="queue" type="submit">Queue Q19 answer</button></div>
+      </form>
+
+      <form class="question" data-round="3" data-lavish-question="q20" onsubmit="return queueAnswer(event, 'Q20', 'acceptance-proof')">
+        <div class="question-head">
+          <div class="qnum">❓ Q20</div>
+          <h3>What proof is required before cutover?</h3>
+          <p>This change is visual, streaming-sensitive, terminal-sensitive, and global. Unit tests alone cannot establish that it feels right or avoids viewport regressions.</p>
+          <div class="recommendation">➡ Recommendation: Require renderer snapshots for widths and states, real Pi E2E transcripts in WezTerm inline and fullscreen modes, interactive Ctrl+O and Ctrl+T checks, failure and retry scenarios, long-output flicker inspection, and graceful smoke tests elsewhere.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Full visual and behavioral acceptance matrix" checked><span><b>Full acceptance matrix</b><span>Snapshots plus real terminal E2E evidence and human visual review before deployment.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Automated snapshots and tests only"><span><b>Automated evidence only</b><span>Repeatable but cannot establish perceived calmness, flicker, or pixel quality.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Manual smoke test only"><span><b>Manual smoke only</b><span>Fast but weak against regressions across width, state, and future Pi upgrades.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Acceptance scenario to add<textarea name="note" placeholder="Name a real workflow that must be captured before cutover."></textarea></label><button class="queue" type="submit">Queue Q20 answer</button></div>
+      </form>
+    </div>
+
+    <div class="next"><strong>Round 3 settled:</strong> Pi-native exceptional loaders with Prime colors, the proposed seven-tool summary matrix, bounded live edit diffs that collapse on success, one fixed Prime theme owner, a responsive two-row footer with extension statuses, atomic cutover after E2E approval, and the full acceptance matrix.</div>
+
+    <section class="section" id="contract">
+      <div class="section-head">
+        <div><div class="eyebrow">Design-tree frontier: empty</div><h2>The complete implementation contract</h2></div>
+        <p>No unresolved scope branch remains. Review this synthesis for contradiction or missing intent, then explicitly confirm shared understanding.</p>
+      </div>
+
+      <div class="findings">
+        <article class="finding"><div class="number">A</div><b>Boundary</b><p>Public Pi 0.84.1 extension APIs only. No Pi core patch, private transcript internals, Prime Python, or IPython tool-model migration.</p></article>
+        <article class="finding"><div class="number">B</div><b>Visual goal</b><p>A faithful translation of Prime's spacing, palette, glyphs, dense rows, disclosure grammar, and streaming rhythm into Pi-native semantics.</p></article>
+        <article class="finding"><div class="number">C</div><b>Primary runtime</b><p>Pixel-perfect in WezTerm truecolor for inline and fullscreen Pi modes, with readable graceful fallback in other modern and 256-color terminals.</p></article>
+        <article class="finding"><div class="number">D</div><b>Ownership</b><p>One tested Prime visual extension owns editor, built-in tool presentation, working line, and footer. One fixed Prime theme owns color.</p></article>
+      </div>
+
+      <div class="terminal-grid" style="margin-top:14px">
+        <article class="finding">
+          <b>Transcript behavior</b>
+          <p>Successful built-in tools collapse to one physical row. Running output-producing tools show the latest five wrapped visual rows. Failed tools retain a summary plus five diagnostic rows. Native global Ctrl+O reveals the full retained detail.</p>
+        </article>
+        <article class="finding">
+          <b>Reasoning and assistant text</b>
+          <p>Keep Pi's native streaming and Ctrl+T reasoning behavior, styled with Prime's quiet typography. Do not duplicate assistant messages or synthesize an unreliable Prime recap.</p>
+        </article>
+        <article class="finding">
+          <b>Working and exceptional states</b>
+          <p>Use the synchronized ◇ ◈ ◆ ◈ pulse, evidence-based phase wording, and elapsed time. Fall back to Working when uncertain. Do not fabricate live token telemetry. Retry and compaction remain Pi-native with Prime colors.</p>
+        </article>
+        <article class="finding">
+          <b>Custom and MCP tools</b>
+          <p>Never replace non-built-in execution definitions. Honor owner-provided renderers. Generic shells inherit the Prime palette, but exact one-line parity is guaranteed only for Pi built-ins.</p>
+        </article>
+      </div>
+
+      <div class="matrix-wrap" style="margin-left:0;margin-right:0;margin-top:14px">
+        <table class="matrix">
+          <thead><tr><th>Built-in</th><th>Success row contract</th><th>Disclosure contract</th></tr></thead>
+          <tbody>
+            <tr><td>read</td><td>✓ read · path · line range · duration</td><td>Content only when expanded.</td></tr>
+            <tr><td>write</td><td>✓ write · path · line count · duration</td><td>Written content when expanded.</td></tr>
+            <tr><td>edit</td><td>✓ edit · path · +N -N · duration</td><td>Bounded live diff, compact success, context retained on failure.</td></tr>
+            <tr><td>bash</td><td>✓ bash · meaningful command · exit code · duration</td><td>Five-row live tail, compact success, five-row failure tail.</td></tr>
+            <tr><td>grep</td><td>✓ grep · pattern · scope · match count · duration</td><td>Matches with paths and line numbers when expanded.</td></tr>
+            <tr><td>find</td><td>✓ find · glob · scope · path count · duration</td><td>Retained paths when expanded.</td></tr>
+            <tr><td>ls</td><td>✓ ls · path · entry count · duration</td><td>Retained entries when expanded.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="terminal-grid" style="margin-top:14px">
+        <article class="finding">
+          <b>Editor, footer, and theme migration</b>
+          <p>Keep the editor's real Pi editing and autocomplete behavior while making its Prime surface robust and tested. Replace the footer implementation with a responsive two-row layout that preserves path, branch, model, thinking, cost, context, and extension statuses. Remove redundant active system-theme ownership. Leave manually selectable theme files available.</p>
+        </article>
+        <article class="finding">
+          <b>Out of scope and accepted divergence</b>
+          <p>No restyle of model pickers, session tree, settings, or unrelated overlays unless an obvious defect blocks the conversation surface. No individually selectable transcript rows, separate tool expansion domains, exact Prime reasoning recap, exact Prime retry loader, or guaranteed compact custom-tool rows.</p>
+        </article>
+        <article class="finding">
+          <b>Rollout</b>
+          <p>Work in a dedicated leased feature worktree because the dotfiles main checkout contains unrelated changes. Modify authoritative dotfiles sources, not Nix store links. Cut over atomically through Home Manager only after approval. The previous Home Manager generation is the rollback path.</p>
+        </article>
+        <article class="finding">
+          <b>Acceptance proof</b>
+          <p>Require renderer snapshots across widths and lifecycle states, real Pi E2E transcripts in WezTerm inline and fullscreen modes, Ctrl+O and Ctrl+T checks, failures, retries, compaction, long output, flicker and viewport inspection, extension-status visibility, and graceful terminal fallback smoke tests.</p>
+        </article>
+      </div>
+
+      <form class="question" style="margin-top:16px" data-round="4" data-lavish-question="q21" onsubmit="return queueAnswer(event, 'Q21', 'shared-understanding')">
+        <div class="question-head">
+          <div class="qnum">❓ Q21 · REQUIRED CONFIRMATION</div>
+          <h3>Do we now share the same understanding?</h3>
+          <p>Confirming authorizes implementation of this exact contract. If anything is wrong or missing, choose corrections and identify it now. I will not implement against an unconfirmed interpretation.</p>
+          <div class="recommendation">➡ Recommendation: Confirm only if the boundaries and accepted divergences above match your intent.</div>
+        </div>
+        <div class="options">
+          <label class="option"><input type="radio" name="choice" value="Confirmed, shared understanding reached, implementation may begin" checked><span><b>Confirmed. Implementation may begin.</b><span>The design tree is complete and this contract is authoritative for the feature.</span></span></label>
+          <label class="option"><input type="radio" name="choice" value="Not confirmed, apply the corrections in my note"><span><b>Not confirmed</b><span>Use the note below to reopen only the affected decision branches.</span></span></label>
+        </div>
+        <div class="form-footer"><label>Required correction, if any<textarea name="note" placeholder="Leave blank when confirming. Be specific if reopening scope."></textarea></label><button class="queue" type="submit">Queue confirmation</button></div>
+      </form>
+    </section>
+
+    <div class="send-note"><span><strong>Authorize or correct:</strong> queue Q21, then press <span class="mono">Send to Agent</span> in Lavish.</span><span class="badge good">Frontier empty</span></div>
+  </section>
+</main>
+<script>
+  function queueAnswer(event, question, key) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const choice = data.get('choice');
+    const note = String(data.get('note') || '').trim();
+    if (!choice) return false;
+    const text = question + ': ' + choice + (note ? '. Constraint or rationale: ' + note : '.');
+    window.lavish.queuePrompt(text, {
+      tag: 'scope-round-' + String(form.dataset.round || 1),
+      text,
+      queueKey: 'prime-pi-' + key,
+      element: form,
+      data: { round: Number(form.dataset.round || 1), question, key, answer: choice, note }
+    });
+    const button = form.querySelector('.queue');
+    button.textContent = 'Queued';
+    button.classList.add('queued');
+    return false;
+  }
+</script>
+</body>
+</html>

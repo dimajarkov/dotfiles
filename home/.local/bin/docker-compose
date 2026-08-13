@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+bin_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+"$bin_dir/owc-container-ready"
+exec /Applications/OrbStack.app/Contents/MacOS/xbin/docker-compose "$@"
