@@ -12,7 +12,6 @@ import {
   CustomEditor,
   getLanguageFromPath,
   highlightCode,
-  renderDiff,
   type ExtensionAPI,
   type ExtensionContext,
   type ReadonlyFooterDataProvider,
@@ -340,7 +339,7 @@ class PrimeToolDetail implements Component {
         const path = pathValue(this.args);
         const language = getLanguageFromPath(path);
         if (language && detail) {
-          const highlighted = highlightCode(safeMultiline(detail), language, this.theme);
+          const highlighted = highlightCode(safeMultiline(detail), language);
           return highlighted.flatMap((line) => wrappedRows(line, width, this.theme, "toolOutput", undefined, true));
         }
       }
