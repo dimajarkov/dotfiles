@@ -1,27 +1,27 @@
-                                                                                
-Evidence run. Use named Pi tools, not substitutes: read README.md lines 1-8; ls 
+
+Evidence run. Use named Pi tools, not substitutes: read README.md lines 1-8; ls
 home/.pi/agent/extensions; grep literal Prime under home/.pi/agent limit 8; find
-*.ts under home/.pi/agent/extensions limit 12; bash: for i in 1 2 3 4 5 6 7 8;  
-do printf "stream-row-%s: abcdefghijklmnopqrstuvwxyz0123456789\\n" "$i"; sleep  
-0.5; done; write exactly alpha newline beta newline gamma newline to            
-/tmp/prime-ui-after-final.txt; edit it replacing exact beta with BETA; bash:    
-printf "diagnostic one\\ndiagnostic two\\ndiagnostic three\\ndiagnostic         
-four\\ndiagnostic five\\ndiagnostic six\\n"; exit 7. Then one sentence.         
-                                                                                
-                                                                                
-Thinking...                                                                     
-                                                                                
+*.ts under home/.pi/agent/extensions limit 12; bash: for i in 1 2 3 4 5 6 7 8;
+do printf "stream-row-%s: abcdefghijklmnopqrstuvwxyz0123456789\\n" "$i"; sleep
+0.5; done; write exactly alpha newline beta newline gamma newline to
+/tmp/prime-ui-after-final.txt; edit it replacing exact beta with BETA; bash:
+printf "diagnostic one\\ndiagnostic two\\ndiagnostic three\\ndiagnostic
+four\\ndiagnostic five\\ndiagnostic six\\n"; exit 7. Then one sentence.
+
+
+Thinking...
+
 ✓ read · README.md · lines 1-8 · 3ms
-# dotfiles                                                                      
-                                                                                
+# dotfiles
+
 Watch the walkthrough: https://youtu.be/5N-okeDdIuI
-                                                                                
+
 My personal Mac setup, managed with nix-darwin and home-manager.
-One repo, one command, and a fresh Mac ends up configured the same way every    
-time.                                                                           
-                                                                                
-## Contributing / Using This Repo                                               
-                                                                                
+One repo, one command, and a fresh Mac ends up configured the same way every
+time.
+
+## Contributing / Using This Repo
+
 [142 more lines in file. Use offset=9 to continue.]
 
 ✓ ls · home/.pi/agent/extensions · 8 entries · 3ms
@@ -50,7 +50,7 @@ BuiltinName, context: ToolRenderContext, activity: ActivityController):
 PrimeToolRow {
 extensions/prime-style.ts:412:   state.row ??= new PrimeToolRow(name,
 context.toolCallId, activity);
- 
+
 [8 matches limit reached. Use limit=16 for more, or refine pattern]
 
 ✓ find · *.ts · home/.pi/agent/extensions · 9 paths · 16ms
@@ -75,14 +75,14 @@ stream-row-5: abcdefghijklmnopqrstuvwxyz0123456789
 stream-row-6: abcdefghijklmnopqrstuvwxyz0123456789
 stream-row-7: abcdefghijklmnopqrstuvwxyz0123456789
 stream-row-8: abcdefghijklmnopqrstuvwxyz0123456789
- 
+
 
 ✓ write · /tmp/prime-ui-after-final.txt · 3 lines · 1ms
 
 alpha
 beta
 gamma
- 
+
 
 ✓ edit · /tmp/prime-ui-after-final.txt · +1 -1 · 3ms
 
@@ -99,17 +99,17 @@ diagnostic three
 diagnostic four
 diagnostic five
 diagnostic six
- 
- 
+
+
 Command exited with code 7
 
-Evidence run completed exactly as requested; final diagnostic command exited    
-with code 7.                                                                    
+Evidence run completed exactly as requested; final diagnostic command exited
+with code 7.
 
- Thinking blocks: hidden                                                        
+ Thinking blocks: hidden
 
-                                                                                
- >   Try "explain how @<filepath> works"                                        
-                                                                                
+
+ >   Try "explain how @<filepath> works"
+
 /Volumes/OWC Envoy Ultra/20_PROJECTS/Development/Treehouse/dotfiles-prime-ui · …
 gpt-5.6-sol · high · Supabase MCP: PAT ready · $0.131 (sub) · 272k (2.3%)
