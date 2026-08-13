@@ -161,6 +161,8 @@ test("activity owns one timer and disposes timings and invalidators", () => {
 test("extension installs one footer, shows extension statuses, and never binds Ctrl+O or Ctrl+T", () => {
   const handlers = new Map<string, Array<(...args: any[]) => any>>();
   const registered: any[] = [];
+  const activeTools = ["read", "bash"];
+  let restoredActiveTools: string[] | undefined;
   const pi = {
     on(name: string, handler: (...args: any[]) => any) {
       handlers.set(name, [...(handlers.get(name) ?? []), handler]);
@@ -172,6 +174,8 @@ test("extension installs one footer, shows extension statuses, and never binds C
         { name: "bash", sourceInfo: { source: "builtin" } },
       ];
     },
+    getActiveTools: () => [...activeTools],
+    setActiveTools(tools: string[]) { restoredActiveTools = tools; },
     getThinkingLevel: () => "high",
   } as any;
   primeStyle(pi);
@@ -195,6 +199,7 @@ test("extension installs one footer, shows extension statuses, and never binds C
   handlers.get("session_start")![0]!({}, ctx);
   assert.equal(footerInstalls, 1);
   assert.deepEqual(registered.map((tool) => tool.name), ["bash"]);
+  assert.deepEqual(restoredActiveTools, activeTools);
   const footer = footerFactory({ requestRender() {} }, theme, {
     getGitBranch: () => "feature/prime-ui",
     getExtensionStatuses: () => new Map([["supabase", "Supabase MCP: PAT ready"]]),

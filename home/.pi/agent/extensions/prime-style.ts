@@ -626,9 +626,11 @@ export default function primeStyle(pi: ExtensionAPI): void {
       return new PrimeFooter(pi, ctx, theme, footerData, requestRender);
     });
 
+    const activeTools = pi.getActiveTools();
     const eligible = eligibleBuiltins(pi.getAllTools());
     const definitions = builtinFactories(ctx.cwd);
     for (const name of eligible) pi.registerTool(decorateBuiltin(name, definitions[name], activity));
+    pi.setActiveTools(activeTools);
   });
 
   pi.on("agent_start", (_event, ctx) => activity.startAgent(ctx));
