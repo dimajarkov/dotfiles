@@ -71,6 +71,8 @@ test("command previews are meaningful, one-line, bounded, and secret-safe", () =
   const preview = meaningfulCommand("export API_TOKEN=super-secret\nset -e\ncd app && bun test; git status --short");
   assert.doesNotMatch(preview, /super-secret|API_TOKEN=/);
   assert.match(preview, /git status|bun test/);
+  assert.equal(meaningfulCommand('printf "diagnostic one\\n"; exit 7'), 'printf "diagnostic one\\n"');
+  assert.match(meaningfulCommand('for i in 1 2; do printf "row-%s\\n" "$i"; sleep 1; done'), /^printf /);
   assert.ok(visibleWidth(preview) <= 64);
   assert.equal(sanitizeInline("x\n\x1b]0;owned\x07y\t z"), "x y z");
 });
@@ -119,6 +121,16 @@ test("all success summaries meet the seven-tool grammar at normal width", () => 
     assert.match(line, new RegExp(`^✓ ${name} ·`));
     assert.ok(visibleWidth(line) <= 120);
   }
+});
+
+test("successful bash collapses its live output back to one row", () => {
+  const activity = new ActivityController();
+  const definition = decorateBuiltin("bash", { ...createReadToolDefinition(process.cwd()), name: "bash" } as any, activity);
+  const state = {};
+  const args = { command: "printf ok" };
+  definition.renderCall!(args as any, theme, context({ state, args }));
+  const detail = definition.renderResult!(result("ok"), { expanded: false, isPartial: false }, theme, context({ state, args, isPartial: false }));
+  assert.deepEqual(detail.render(40), []);
 });
 
 test("failed output retains no more than five wrapped diagnostic rows", () => {

@@ -131,10 +131,15 @@ export function meaningfulCommand(command: unknown): string {
   const candidates = raw
     .split(/\n|\s*(?:&&|;)\s*/)
     .map((line) => line.replace(/^\s*(?:cd\s+[^&;|]+\s*)?/, "").trim())
-    .filter((line) => line && !/^(?:#|set\s|export\s|source\s|\.\s)/.test(line));
+    .map((line) => line.match(/\bdo\s+(.+)$/)?.[1] ?? line)
+    .filter((line) => line && !/^(?:#|set\s|export\s|source\s|\.\s|do$|done$|then$|fi$|exit\b)/.test(line));
   const scored = candidates.map((line, index) => ({
     line,
-    score: index + (/\b(?:rm|mv|cp|git|npm|pnpm|bun|pytest|vitest|write|edit)\b/.test(line) ? 50 : 0),
+    score:
+      -index +
+      (/\b(?:rm|mv|cp|git|npm|pnpm|bun|pytest|vitest|write|edit)\b/.test(line) ? 50 : 0) +
+      (/^(?:printf|echo)\b/.test(line) ? 20 : 0) -
+      (/^sleep\b/.test(line) ? 20 : 0),
   }));
   const selected = scored.sort((left, right) => right.score - left.score)[0]?.line ?? sanitizeInline(raw);
   return truncateToWidth(selected, 64, "…");
@@ -263,7 +268,8 @@ function wrappedRows(text: string, width: number, theme: Theme, color: "toolOutp
     .map((line) => theme.fg(color, line || " "))
     .join("\n");
   const rows = wrapTextWithAnsi(styled, safeWidth).map((line) => truncateToWidth(line, safeWidth, ""));
-  return tail === undefined ? rows : rows.slice(-tail);
+  if (tail === undefined) return rows;
+  return rows.filter((line) => stripTerminalSequences(line).trim()).slice(-tail);
 }
 
 class PrimeToolDetail implements Component {
@@ -297,7 +303,7 @@ class PrimeToolDetail implements Component {
     if (this.isError && output) {
       return ["", ...wrappedRows(output, width, this.theme, "error", LIVE_TAIL_ROWS)];
     }
-    if (this.name === "bash" && this.executionStarted && output) {
+    if (this.name === "bash" && this.executionStarted && this.options.isPartial && output) {
       return ["", ...wrappedRows(output, width, this.theme, "toolOutput", LIVE_TAIL_ROWS)];
     }
     if (this.name === "edit" && this.executionStarted && !this.result) {
