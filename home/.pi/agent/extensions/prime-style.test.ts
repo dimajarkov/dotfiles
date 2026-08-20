@@ -7,6 +7,7 @@ import primeStyle, {
   decorateBuiltin,
   eligibleBuiltins,
   fitFooterFields,
+  formatCwd,
   meaningfulCommand,
   sanitizeInline,
 } from "./prime-style.js";
@@ -212,6 +213,13 @@ test("responsive footer fields never overflow wide Unicode widths", () => {
   }
 });
 
+test("footer shortens paths on the external projects volume", () => {
+  assert.equal(
+    formatCwd("/Volumes/OWC Envoy Ultra/20_PROJECTS/Development/example"),
+    "*/Development/example",
+  );
+});
+
 test("activity owns one timer and disposes timings and invalidators", () => {
   const activity = new ActivityController();
   const calls: string[] = [];
@@ -351,7 +359,22 @@ test("extension installs one footer, shows extension statuses, and never binds C
       setEditorComponent() {},
       setFooter(factory: any) { footerFactory = factory; footerInstalls += 1; },
     },
-    sessionManager: { getCwd: () => process.cwd(), getEntries: () => [] },
+    sessionManager: {
+      getCwd: () => process.cwd(),
+      getEntries: () => [
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            usage: { input: 1500, output: 2000, cost: { total: 0.123 } },
+          },
+        },
+        {
+          type: "compaction",
+          usage: { input: 500, output: 1000, cost: { total: 0.002 } },
+        },
+      ],
+    },
     getContextUsage: () => ({ contextWindow: 1000, percent: 12.3 }),
   } as any;
   handlers.get("session_start")![0]!({}, ctx);
@@ -365,5 +388,7 @@ test("extension installs one footer, shows extension statuses, and never binds C
   });
   const rendered = footer.render(120).map(stripTerminalSequences);
   assert.equal(rendered.length, 2);
+  assert.match(rendered[1]!, /↑2.0k ↓3.0k/);
+  assert.match(rendered[1]!, /\$0.125 \(sub\)/);
   assert.match(rendered[1]!, /Supabase MCP: PAT ready/);
 });

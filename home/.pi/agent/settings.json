@@ -2,16 +2,17 @@
   "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/config/settings.schema.json",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-sol",
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "xhigh",
   "theme": "prime",
   "externalEditor": "nvim",
   "defaultProjectTrust": "ask",
   "quietStartup": true,
-  "hideThinkingBlock": false,
+  "hideThinkingBlock": true,
   "showCacheMissNotices": false,
   "editorPaddingX": 1,
   "outputPad": 0,
   "autocompleteMaxVisible": 8,
+  "tuiMode": "fullscreen",
   "steeringMode": "all",
   "followUpMode": "all",
   "collapseChangelog": true,
@@ -50,5 +51,6 @@
   ],
   "recentModels": [
     "openai-codex/gpt-5.6-luna"
-  ]
+  ],
+  "fullscreenScrollbar": "auto"
 }

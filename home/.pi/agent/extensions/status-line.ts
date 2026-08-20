@@ -4,10 +4,18 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 
 type Usage = {
+  input: number;
+  output: number;
   cost: { total: number };
+};
+
+type UsageTotals = {
+  input: number;
+  output: number;
+  cost: number;
 };
 
 function formatTokens(count: number): string {
@@ -18,7 +26,13 @@ function formatTokens(count: number): string {
   return `${Math.round(count / 1000000)}M`;
 }
 
+const PROJECTS_PREFIX = "/Volumes/OWC Envoy Ultra/20_PROJECTS/";
+
 function formatCwd(cwd: string): string {
+  if (cwd.startsWith(PROJECTS_PREFIX)) {
+    return `*/${cwd.slice(PROJECTS_PREFIX.length)}`;
+  }
+
   const home = resolve(homedir());
   const resolvedCwd = resolve(cwd);
   const relativeToHome = relative(home, resolvedCwd);
@@ -32,10 +46,12 @@ function formatCwd(cwd: string): string {
   return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
 }
 
-function getCost(ctx: ExtensionContext): number {
-  let cost = 0;
+function getUsageTotals(ctx: ExtensionContext): UsageTotals {
+  const totals: UsageTotals = { input: 0, output: 0, cost: 0 };
   const addUsage = (usage: Usage) => {
-    cost += usage.cost.total;
+    totals.input += usage.input;
+    totals.output += usage.output;
+    totals.cost += usage.cost.total;
   };
 
   for (const entry of ctx.sessionManager.getEntries()) {
@@ -55,31 +71,7 @@ function getCost(ctx: ExtensionContext): number {
     }
   }
 
-  return cost;
-}
-
-function layoutRow(left: string, right: string, width: number): string {
-  const gap = 3;
-  const leftWidth = visibleWidth(left);
-  const rightWidth = visibleWidth(right);
-
-  if (leftWidth + gap + rightWidth <= width) {
-    return left + " ".repeat(width - leftWidth - rightWidth) + right;
-  }
-
-  const rightBudget = Math.max(0, Math.min(rightWidth, width - gap));
-  const leftBudget = width - gap - rightBudget;
-  if (leftBudget > 0 && rightBudget > 0) {
-    const fittedLeft = truncateToWidth(left, leftBudget, "…");
-    const fittedRight = truncateToWidth(right, rightBudget, "");
-    return (
-      fittedLeft +
-      " ".repeat(Math.max(0, width - visibleWidth(fittedLeft) - visibleWidth(fittedRight))) +
-      fittedRight
-    );
-  }
-
-  return truncateToWidth(leftWidth > rightWidth ? left : right, width, "…");
+  return totals;
 }
 
 function usesSubscription(provider: string | undefined): boolean {
@@ -118,8 +110,10 @@ export default function (pi: ExtensionAPI) {
               ? `${theme.fg("text", theme.bold(cwd))}${theme.fg("muted", `  ·  ⎇ ${branch}`)}`
               : theme.fg("text", theme.bold(cwd));
 
+            const usage = getUsageTotals(ctx);
             const subscription = usesSubscription(currentModel?.provider);
-            const cost = `$${getCost(ctx).toFixed(3)}${subscription ? " (sub)" : ""}`;
+            const tokens = `↑${formatTokens(usage.input)} ↓${formatTokens(usage.output)}`;
+            const cost = `$${usage.cost.toFixed(3)}${subscription ? " (sub)" : ""}`;
             const contextUsage = ctx.getContextUsage();
             const contextWindow =
               contextUsage?.contextWindow ?? currentModel?.contextWindow ?? 0;
@@ -138,10 +132,10 @@ export default function (pi: ExtensionAPI) {
 
             return [
               truncateToWidth(location, width, "…"),
-              layoutRow(
-                `${theme.fg("muted", cost)}  ${modelStatus}`,
-                theme.fg("muted", context),
+              truncateToWidth(
+                `${theme.fg("muted", `${tokens}  ${cost}`)}  ${modelStatus}  ${theme.fg("muted", context)}`,
                 width,
+                "…",
               ),
             ];
           },

@@ -26,7 +26,7 @@
       "debug": false
     },
     "supabase-production": {
-      "url": "https://mcp.supabase.com/mcp?project_ref=iwzmikjwobxramjvlatj&read_only=true&features=database,docs",
+      "url": "https://mcp.supabase.com/mcp?project_ref=iwzmikjwobxramjvlatj&features=database,docs",
       "auth": "bearer",
       "bearerTokenEnv": "SUPABASE_ACCESS_TOKEN",
       "lifecycle": "lazy",

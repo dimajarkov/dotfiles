@@ -36,6 +36,7 @@ export const BUILTIN_TOOL_NAMES = ["read", "write", "edit", "bash", "grep", "fin
 export const WORKING_FRAMES = ["◇", "◈", "◆", "◈"] as const;
 const WORKING_INTERVAL_MS = 250;
 const LIVE_TAIL_ROWS = 5;
+const PROJECTS_PREFIX = "/Volumes/OWC Envoy Ultra/20_PROJECTS/";
 const EDITOR_BASE_PADDING = 3;
 const EDITOR_SURFACE_PADDING = 2;
 const PROMPT_PREFIX_WIDTH = 2;
@@ -51,6 +52,11 @@ type BuiltinName = (typeof BUILTIN_TOOL_NAMES)[number];
 type AppTheme = ExtensionContext["ui"]["theme"];
 type Keybindings = ConstructorParameters<typeof CustomEditor>[2];
 type ToolResult = AgentToolResult<unknown>;
+type UsageTotals = {
+  input: number;
+  output: number;
+  cost: number;
+};
 
 type PrimeRowState = {
   row?: PrimeToolRow;
@@ -574,7 +580,11 @@ class PrimeEditor extends CustomEditor {
   }
 }
 
-function formatCwd(cwd: string): string {
+export function formatCwd(cwd: string): string {
+  if (cwd.startsWith(PROJECTS_PREFIX)) {
+    return `*/${cwd.slice(PROJECTS_PREFIX.length)}`;
+  }
+
   const home = resolve(homedir());
   const resolved = resolve(cwd);
   const relativeToHome = relative(home, resolved);
@@ -589,16 +599,23 @@ function formatTokens(count: number): string {
   return count < 10_000_000 ? `${(count / 1_000_000).toFixed(1)}M` : `${Math.round(count / 1_000_000)}M`;
 }
 
-function sessionCost(ctx: ExtensionContext): number {
-  let total = 0;
+function sessionUsage(ctx: ExtensionContext): UsageTotals {
+  const totals: UsageTotals = { input: 0, output: 0, cost: 0 };
+  const addUsage = (usage: { input: number; output: number; cost: { total: number } } | undefined) => {
+    if (!usage) return;
+    totals.input += usage.input;
+    totals.output += usage.output;
+    totals.cost += usage.cost.total;
+  };
+
   for (const entry of ctx.sessionManager.getEntries()) {
     if (entry.type === "message" && (entry.message.role === "assistant" || entry.message.role === "toolResult")) {
-      total += entry.message.usage?.cost.total ?? 0;
-    } else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
-      total += entry.usage.cost.total;
+      addUsage(entry.message.usage);
+    } else if (entry.type === "branch_summary" || entry.type === "compaction") {
+      addUsage(entry.usage);
     }
   }
-  return total;
+  return totals;
 }
 
 function subscription(provider: string | undefined): boolean {
@@ -645,9 +662,11 @@ class PrimeFooter implements Component {
     const statuses = [...this.data.getExtensionStatuses().entries()]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([, value]) => sanitizeInline(value));
-    const cost = `$${sessionCost(this.ctx).toFixed(3)}${subscription(model?.provider) ? " (sub)" : ""}`;
+    const totals = sessionUsage(this.ctx);
+    const tokens = `↑${formatTokens(totals.input)} ↓${formatTokens(totals.output)}`;
+    const cost = `$${totals.cost.toFixed(3)}${subscription(model?.provider) ? " (sub)" : ""}`;
     const second = fitFooterFields(
-      [model?.id ?? "no-model", this.pi.getThinkingLevel(), ...statuses, cost, `${formatTokens(contextWindow)} (${contextPercent})`],
+      [tokens, cost, model?.id ?? "no-model", this.pi.getThinkingLevel(), ...statuses, `${formatTokens(contextWindow)} (${contextPercent})`],
       width,
       this.theme,
     );

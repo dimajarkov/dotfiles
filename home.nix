@@ -162,6 +162,12 @@ in {
       /bin/rm -- "$mcp_path"
     fi
 
+    onedark_theme_path="${config.home.homeDirectory}/.pi/agent/themes/onedark-wezterm.json"
+    onedark_theme_source="${dotfiles}/home/.pi/agent/themes/onedark-wezterm.json"
+    if [ -f "$onedark_theme_path" ] && [ ! -L "$onedark_theme_path" ] && /usr/bin/cmp -s "$onedark_theme_path" "$onedark_theme_source"; then
+      /bin/rm -- "$onedark_theme_path"
+    fi
+
     agents_path="${config.home.homeDirectory}/AGENTS.md"
     agents_source="${dotfiles}/home/AGENTS.md"
     if [ -f "$agents_path" ] && [ ! -L "$agents_path" ] && /usr/bin/cmp -s "$agents_path" "$agents_source"; then
@@ -193,8 +199,12 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/catppuccin-latte.json";
   home.file.".pi/agent/themes/catppuccin-mocha.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/catppuccin-mocha.json";
+  home.file.".pi/agent/themes/onedark-wezterm.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/onedark-wezterm.json";
   home.file.".pi/agent/themes/prime.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/prime.json";
+  home.file.".pi/agent/extensions/fullscreen-navigation.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/fullscreen-navigation.ts";
   home.file.".pi/agent/extensions/prime-style.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prime-style.ts";
   home.file.".pi/agent/extensions/prime-parity.ts".source =
