@@ -193,8 +193,6 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/models.json";
   home.file.".pi/agent/mcp.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/mcp.json";
-  home.file.".pi/agent/openai-server-compaction.json".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/openai-server-compaction.json";
   home.file.".pi/agent/themes/catppuccin-latte.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/catppuccin-latte.json";
   home.file.".pi/agent/themes/catppuccin-mocha.json".source =
