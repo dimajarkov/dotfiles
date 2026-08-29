@@ -18,7 +18,7 @@
   "collapseChangelog": true,
   "compaction": {
     "enabled": true,
-    "reserveTokens": 16384,
+    "reserveTokens": 149600,
     "keepRecentTokens": 20000
   },
   "retry": {
@@ -41,7 +41,6 @@
   },
   "lastChangelogVersion": "0.84.1",
   "packages": [
-    "git:github.com/algal/pi-openai-server-compaction@c6d593087709e9481223dc6c6c2269b371b5e055",
     "npm:@ryan_nookpi/pi-extension-codex-fast-mode@0.2.6",
     "npm:pi-mcp-adapter@2.11.0",
     "npm:pi-web-access@0.15.0",
