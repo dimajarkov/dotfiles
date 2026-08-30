@@ -34,13 +34,15 @@ end
 --
 -- Backslash+e: toggle the Arc sidebar.
 -- While the sidebar is visible, j/k select the next/previous tab.
--- Backslash+t: open Arc's command bar to search the web or open a URL.
+-- Backslash+t: open Google in a new Arc tab.
 -- Backslash+h: add Arc Split View.
 -- Backslash+;: focus split pane 2 (right, or bottom in a vertical split).
 -- Backslash+l: focus split pane 1 (left, or top in a vertical split).
 -- Backslash+x: close the current tab, or the current pane in Split View.
 
 local PREFIX_TIMEOUT = 1.25
+local ARC_BUNDLE_ID = "company.thebrowser.Browser"
+local GOOGLE_URL = "https://www.google.com/"
 local BACKSLASH_KEY = 42
 local E_KEY = 14
 local H_KEY = 4
@@ -54,11 +56,17 @@ local REPLAY_MARKER = 0x56494D
 local EVENT_SOURCE_USER_DATA = hs.eventtap.event.properties.eventSourceUserData
 
 local waitingForPrefix = false
+local prefixApplicationPid = nil
 local prefixTimer = nil
 
 local function isArcFrontmost()
   local app = hs.application.frontmostApplication()
   return app ~= nil and app:name() == "Arc"
+end
+
+local function isPrefixApplicationFrontmost()
+  local app = hs.application.frontmostApplication()
+  return app ~= nil and app:pid() == prefixApplicationPid
 end
 
 local function isPlainKey(flags)
@@ -102,10 +110,11 @@ end
 
 local function cancelPrefix(replay)
   stopPrefixTimer()
-  if waitingForPrefix and replay then
+  if waitingForPrefix and replay and isPrefixApplicationFrontmost() then
     replayPrefix()
   end
   waitingForPrefix = false
+  prefixApplicationPid = nil
 end
 
 local function sendArcShortcut(key)
@@ -114,6 +123,10 @@ end
 
 local function selectAdjacentSidebarTab(key)
   hs.eventtap.keyStroke({ "cmd", "alt" }, key, 0)
+end
+
+local function openGoogleInArc()
+  hs.urlevent.openURLWithBundle(GOOGLE_URL, ARC_BUNDLE_ID)
 end
 
 local function closeCurrentArcItem()
@@ -142,12 +155,17 @@ local keyTap = hs.eventtap.new({ hs.eventtap.event.types.keyDown }, function(eve
     return false
   end
 
+  if waitingForPrefix and not isPrefixApplicationFrontmost() then
+    cancelPrefix(false)
+  end
+
   local keyCode = event:getKeyCode()
   local flags = event:getFlags()
 
   if not waitingForPrefix then
     if keyCode == BACKSLASH_KEY and isPlainKey(flags) then
       waitingForPrefix = true
+      prefixApplicationPid = hs.application.frontmostApplication():pid()
       stopPrefixTimer()
       prefixTimer = hs.timer.doAfter(PREFIX_TIMEOUT, function()
         if waitingForPrefix then
@@ -182,7 +200,7 @@ local keyTap = hs.eventtap.new({ hs.eventtap.event.types.keyDown }, function(eve
 
   if keyCode == T_KEY then
     cancelPrefix(false)
-    hs.eventtap.keyStroke({ "cmd" }, "t", 0)
+    openGoogleInArc()
     return true
   end
 
@@ -225,7 +243,7 @@ if status then
     { title = "Arc leader mappings active", disabled = true },
     { title = "\\e  Toggle sidebar + j/k navigation", disabled = true },
     { title = "j/k  Next/previous tab while sidebar is visible", disabled = true },
-    { title = "\\t  Search the web or open a URL", disabled = true },
+    { title = "\\t  Open Google in a new tab", disabled = true },
     { title = "\\h  Split View", disabled = true },
     { title = "\\;  Focus right/bottom pane", disabled = true },
     { title = "\\l  Focus left/top pane", disabled = true },

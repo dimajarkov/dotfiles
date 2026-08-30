@@ -86,7 +86,8 @@ Hammerspoon treats backslash as a leader key while Arc is frontmost.
 Press the second key within 1.25 seconds.
 
 - `\e` toggles the sidebar, then `j` and `k` move to the next or previous tab while the sidebar is visible.
-- `\t` opens Arc's native command bar, where typing a query and pressing Enter searches Google and typing a URL opens it.
+- `\t` opens a new Arc tab directly at Google.
+  If the sidebar is visible, press `\e` to hide it before typing into Google's focused search field so `j` and `k` remain available for sidebar navigation.
 - `\h` creates Split View.
 - `\;` focuses the second split pane, and `\l` focuses the first.
 - `\x` closes the current split pane or archives the current tab.
