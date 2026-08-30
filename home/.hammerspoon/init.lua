@@ -41,8 +41,6 @@ end
 -- Backslash+x: close the current tab, or the current pane in Split View.
 
 local PREFIX_TIMEOUT = 1.25
-local ARC_BUNDLE_ID = "company.thebrowser.Browser"
-local GOOGLE_URL = "https://www.google.com/"
 local BACKSLASH_KEY = 42
 local E_KEY = 14
 local H_KEY = 4
@@ -126,7 +124,21 @@ local function selectAdjacentSidebarTab(key)
 end
 
 local function openGoogleInArc()
-  hs.urlevent.openURLWithBundle(GOOGLE_URL, ARC_BUNDLE_ID)
+  hs.eventtap.keyStroke({ "cmd" }, "t", 0)
+  arcNavigation.openGoogleTimer = hs.timer.doAfter(0.35, function()
+    arcNavigation.openGoogleTimer = nil
+    if not isArcFrontmost() then
+      return
+    end
+
+    hs.eventtap.keyStrokes("https://www.google.com/")
+    arcNavigation.openGoogleSubmitTimer = hs.timer.doAfter(0.3, function()
+      arcNavigation.openGoogleSubmitTimer = nil
+      if isArcFrontmost() then
+        hs.eventtap.keyStroke({}, "return", 0)
+      end
+    end)
+  end)
 end
 
 local function closeCurrentArcItem()
