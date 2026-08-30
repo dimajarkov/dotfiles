@@ -48,6 +48,7 @@
       "amethyst"
       "claude-code"
       "ghostty"
+      "hammerspoon"
       "opensuperwhisper"
       "tailscale-app"
       "wezterm"

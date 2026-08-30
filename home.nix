@@ -175,6 +175,14 @@ in {
     fi
   '';
 
+  home.activation.migrateLegacyHammerspoonConfig = config.lib.dag.entryBefore [ "checkFilesChanged" "checkLinkTargets" ] ''
+    config_path="${config.home.homeDirectory}/.hammerspoon/init.lua"
+    config_source="${dotfiles}/home/.hammerspoon/init.lua"
+    if [ -f "$config_path" ] && [ ! -L "$config_path" ] && /usr/bin/cmp -s "$config_path" "$config_source"; then
+      /bin/rm -- "$config_path"
+    fi
+  '';
+
   home.file.".local/bin/pi".source = piUpstream + "/bin/pi";
   home.file.".local/bin/owc-container-ready".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/owc-container-ready";
@@ -226,6 +234,8 @@ in {
     "${piSubagentExtension}/prompts/implement.md";
   home.file.".pi/agent/prompts/scout-and-plan.md".source =
     "${piSubagentExtension}/prompts/scout-and-plan.md";
+  home.file.".hammerspoon/init.lua".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.hammerspoon/init.lua";
   home.file.".config/gh/config.yml".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/gh/config.yml";
   home.file.".config/wezterm".source =

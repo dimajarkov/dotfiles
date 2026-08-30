@@ -16,6 +16,7 @@ If you find a bug, please open a GitHub Issue using the bug report template.
 Running the switch builds:
 
 - System settings (dark mode, key repeat, dock, Finder, trackpad)
+- Keyboard-driven Arc navigation through Hammerspoon
 - Homebrew apps (casks and CLI tools)
 - Nix user packages (ripgrep, fd, fzf, jq, lazygit, Neovim, Hack Nerd Font)
 - Shell (zsh, aliases, starship prompt)
@@ -79,6 +80,21 @@ Edit the config files in place, then apply:
 That's it.
 No separate build-and-copy step.
 
+## Arc keyboard navigation
+
+Hammerspoon treats backslash as a leader key while Arc is frontmost.
+Press the second key within 1.25 seconds.
+
+- `\e` toggles the sidebar, then `j` and `k` move to the next or previous tab while the sidebar is visible.
+- `\t` opens a new Arc tab directly at Google.
+  If the sidebar is visible, press `\e` to hide it before typing into Google's focused search field so `j` and `k` remain available for sidebar navigation.
+- `\h` creates Split View.
+- `\;` focuses the second split pane, and `\l` focuses the first.
+- `\x` closes the current split pane or archives the current tab.
+
+Vimium C provides page-level navigation when the extension is available in the active Arc profile.
+The current Vimium C mappings use `\,` or `\b` to search open tabs and `\f` to open its URL and search bar.
+
 ## Make it yours
 
 This repo is mine.
@@ -128,7 +144,7 @@ If you don't use it, just remove it from `brews` in your copy.
 - `home.nix` - user-level config: shell, packages, prompt, and the symlinks described below.
 - `rebuild.sh` - re-applies the config after the first switch.
   Run this every time you make a change.
-- `home/` - the actual config files that get symlinked into place (Neovim, WezTerm, herdr, Claude settings, the shared `AGENTS.md`).
+- `home/` - the actual config files that get symlinked into place (Hammerspoon, Neovim, WezTerm, herdr, Claude settings, the shared `AGENTS.md`).
 
 ## How the symlinks work
 
