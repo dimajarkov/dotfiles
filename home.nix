@@ -3,7 +3,7 @@
 let
   dotfiles = "${config.home.homeDirectory}/.dotfiles";
   piUpstream = pkgs.callPackage ./nix/packages/pi-coding-agent.nix {};
-  piSubagentExtension = "${piUpstream}/lib/pi-coding-agent/packages/coding-agent/examples/extensions/subagent";
+  piSubagentExtension = "${dotfiles}/home/.pi/agent/extensions/subagent";
 in {
   home.username = user;
   home.homeDirectory = "/Users/${user}";
@@ -162,11 +162,37 @@ in {
       /bin/rm -- "$mcp_path"
     fi
 
-    onedark_theme_path="${config.home.homeDirectory}/.pi/agent/themes/onedark-wezterm.json"
-    onedark_theme_source="${dotfiles}/home/.pi/agent/themes/onedark-wezterm.json"
-    if [ -f "$onedark_theme_path" ] && [ ! -L "$onedark_theme_path" ] && /usr/bin/cmp -s "$onedark_theme_path" "$onedark_theme_source"; then
-      /bin/rm -- "$onedark_theme_path"
+    custom_header_path="${config.home.homeDirectory}/.pi/agent/extensions/custom-header.ts"
+    custom_header_source="${dotfiles}/home/.pi/agent/extensions/custom-header.ts"
+    if [ -f "$custom_header_path" ] && [ ! -L "$custom_header_path" ] && /usr/bin/cmp -s "$custom_header_path" "$custom_header_source"; then
+      /bin/rm -- "$custom_header_path"
     fi
+
+    for extension in browser web-fetch; do
+      extension_path="${config.home.homeDirectory}/.pi/agent/extensions/$extension"
+      extension_source="${dotfiles}/home/.pi/agent/extensions/$extension"
+      if [ -d "$extension_path" ] && [ ! -L "$extension_path" ]; then
+        for runtime in node_modules .profile; do
+          runtime_path="$extension_path/$runtime"
+          runtime_source="$extension_source/$runtime"
+          if [ -e "$runtime_path" ] && [ ! -e "$runtime_source" ]; then
+            /bin/mv -- "$runtime_path" "$runtime_source"
+          fi
+        done
+
+        for file in README.md index.ts package.json package-lock.json; do
+          file_path="$extension_path/$file"
+          file_source="$extension_source/$file"
+          if [ -f "$file_path" ] && [ -f "$file_source" ] && /usr/bin/cmp -s "$file_path" "$file_source"; then
+            /bin/rm -- "$file_path"
+          fi
+        done
+
+        if [ -z "$(/usr/bin/find "$extension_path" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+          /bin/rmdir -- "$extension_path"
+        fi
+      fi
+    done
 
     agents_path="${config.home.homeDirectory}/AGENTS.md"
     agents_source="${dotfiles}/home/AGENTS.md"
@@ -201,12 +227,14 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/models.json";
   home.file.".pi/agent/mcp.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/mcp.json";
+  home.file.".pi/agent/skills/web-debug".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/skills/web-debug";
   home.file.".pi/agent/themes/catppuccin-latte.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/catppuccin-latte.json";
   home.file.".pi/agent/themes/catppuccin-mocha.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/catppuccin-mocha.json";
-  home.file.".pi/agent/themes/onedark-wezterm.json".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/onedark-wezterm.json";
+  home.file.".pi/agent/extensions/status-line.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/status-line.ts";
   home.file.".pi/agent/themes/prime.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/prime.json";
   home.file.".pi/agent/extensions/fullscreen-navigation.ts".source =
@@ -215,13 +243,30 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prime-style.ts";
   home.file.".pi/agent/extensions/prime-parity.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prime-parity.ts";
+  home.file.".pi/agent/extensions/prompt-snippets".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prompt-snippets";
+  home.file.".pi/agent/extensions/herdr-pane-name".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/herdr-pane-name";
   home.file.".pi/agent/extensions/terminal-status-title.js".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/terminal-status-title.js";
+  home.file.".pi/agent/extensions/mac-system-theme.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/mac-system-theme.ts";
   home.file.".pi/agent/extensions/supabase-keychain".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/supabase-keychain";
-  home.file.".pi/agent/extensions/subagent".source = piSubagentExtension;
+  home.file.".pi/agent/extensions/lib/herdr-blocked.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/lib/herdr-blocked.ts";
+  home.file.".pi/agent/extensions/subagent".source =
+    config.lib.file.mkOutOfStoreSymlink piSubagentExtension;
+  home.file.".pi/agent/extensions/browser".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser";
+  home.file.".pi/agent/extensions/web-fetch".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch";
+  home.file.".pi/agent/extensions/custom-header.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/custom-header.ts";
   home.file.".pi/agent/agents/planner.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/planner.md";
+  home.file.".pi/agent/agents/researcher.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/researcher.md";
   home.file.".pi/agent/agents/reviewer.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/reviewer.md";
   home.file.".pi/agent/agents/scout.md".source =
@@ -229,11 +274,11 @@ in {
   home.file.".pi/agent/agents/worker.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/worker.md";
   home.file.".pi/agent/prompts/implement-and-review.md".source =
-    "${piSubagentExtension}/prompts/implement-and-review.md";
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/prompts/implement-and-review.md";
   home.file.".pi/agent/prompts/implement.md".source =
-    "${piSubagentExtension}/prompts/implement.md";
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/prompts/implement.md";
   home.file.".pi/agent/prompts/scout-and-plan.md".source =
-    "${piSubagentExtension}/prompts/scout-and-plan.md";
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/prompts/scout-and-plan.md";
   home.file.".hammerspoon/init.lua".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.hammerspoon/init.lua";
   home.file.".config/gh/config.yml".source =

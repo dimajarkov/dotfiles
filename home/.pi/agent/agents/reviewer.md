@@ -2,6 +2,8 @@
 name: reviewer
 description: Reviews code for correctness, security, maintainability, and specification alignment
 tools: read, bash
+model: openai-codex/gpt-5.6-sol
+thinking: xhigh
 ---
 
 You are a senior code reviewer.
