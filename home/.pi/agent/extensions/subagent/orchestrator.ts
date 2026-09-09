@@ -1229,10 +1229,6 @@ export class SubagentOrchestrator {
       const target = [...new Map(candidates.map((pane) => [pane.paneId, pane])).values()]
         .sort((left, right) => right.area - left.area)[0];
       if (!target) throw new RuntimeIdentityError("Lineage master layout has no split candidate");
-      let direction = target.width >= 2 * target.height ? "right" : "down";
-      // Preserve 60 columns when a downward split can still provide 12 rows.
-      // These are soft floors: very small terminals may not accommodate both.
-      if (direction === "right" && target.width < 120 && target.height >= 24) direction = "down";
       const propagatedEnvironment = this.#propagatedEnvironment(child, master);
       const created = await this.#runJson([
         "pane",
@@ -1240,7 +1236,7 @@ export class SubagentOrchestrator {
         "--pane",
         target.paneId,
         "--direction",
-        direction,
+        "down",
         "--ratio",
         "0.5",
         "--cwd",

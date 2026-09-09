@@ -273,6 +273,45 @@ function spawnRequest() {
   };
 }
 
+test("spawns always split horizontally regardless of pane dimensions", async (t) => {
+  for (const [width, height] of [[240, 60], [120, 60], [89, 30], [89, 10], [40, 8]]) {
+    await t.test(`${width} columns by ${height} rows`, async () => {
+      const transport = new FakeHerdrTransport([
+        {
+          id: "cli:pane:layout",
+          result: {
+            layout: {
+              tab_id: "w1:t1",
+              workspace_id: "w1",
+              panes: [{ pane_id: "w1:p1", rect: { width, height } }],
+            },
+          },
+        },
+        ...successfulRootSpawnResponses(),
+      ]);
+      const orchestrator = new SubagentOrchestrator({
+        transport,
+        stateDirectory: temporaryDirectory(),
+        environment: {
+          HERDR_ENV: "1",
+          HERDR_WORKSPACE_ID: "w1",
+          HERDR_TAB_ID: "w1:t1",
+          HERDR_PANE_ID: "w1:p1",
+        },
+        id: () => "child-1",
+        monitor: false,
+      });
+
+      await orchestrator.spawn(spawnRequest());
+
+      const split = transport.calls.find((call) => call[0] === "pane" && call[1] === "split");
+      assert.ok(split);
+      assert.equal(split[split.indexOf("--direction") + 1], "down");
+      assert.ok(split.includes("--no-focus"));
+    });
+  }
+});
+
 test("depth zero spawn splits the master pane and prompts a ready persistent Pi", async () => {
   const transport = new FakeHerdrTransport(successfulRootSpawnResponses());
   const stateDirectory = temporaryDirectory();
@@ -311,7 +350,7 @@ test("depth zero spawn splits the master pane and prompts a ready persistent Pi"
     "--pane",
     "w1:p1",
     "--direction",
-    "right",
+    "down",
   ]);
   assert.ok(create.includes("--no-focus"));
   assert.ok(create.includes("HERDR_SUBAGENT_DEPTH=1"));
@@ -480,7 +519,7 @@ test("nested spawn splits the lineage master pane in the master tab", async () =
     "--pane",
     "w1:p1",
     "--direction",
-    "right",
+    "down",
   ]);
   assert.ok(create.includes("--no-focus"));
   assert.ok(create.includes("--cwd"));
@@ -2555,7 +2594,7 @@ test("message relaunches a finished nested child in a fresh owner pane", async (
     "--pane",
     "w1:p1",
     "--direction",
-    "right",
+    "down",
   ]);
   assert.ok(!relaunchTransport.calls.some((call) => call[0] === "tab"));
   assert.deepEqual(relaunchTransport.calls[1], ["pane", "rename", "w1:p3", "reviewer: review"]);

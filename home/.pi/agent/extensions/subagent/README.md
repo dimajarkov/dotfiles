@@ -51,8 +51,9 @@ Spawns run asynchronously and preserve user focus.
 Every child is created by splitting a pane in the master Pi agent's current Herdr tab.
 The master pane is used for root and unscoped children; later placement selects the largest currently live, ownership-verified child pane when one exists.
 Human panes and panes from other conversations are never placement candidates.
-Direction selection accounts for terminal-cell aspect ratio, not just equal character-cell area.
-It prefers preserving 60 columns when a downward split can still provide 12 rows; these are soft limits for small terminals.
+Every spawn and saved-session reactivation uses a horizontal split (`--direction down`), stacking panes top-to-bottom while preserving the selected pane's full width.
+Pane dimensions never switch placement to a vertical, side-by-side split, even when the terminal is short.
+More simultaneous agents therefore share the available height.
 Completion messages return to the spawning parent.
 
 ## Lifecycle
@@ -129,7 +130,7 @@ They create isolated test configurations and background surfaces, retain their e
 Focus checks reject test surfaces taking focus while allowing unrelated human focus changes.
 
 The lifecycle suite covers nonblocking messaging/cancellation, generation-specific completion delivery, saved-session crash/replay, and continued parent usability.
-The scope suite covers concurrent descendant spawns from different workers, role permissions, inherited scopes, equal-label conversation isolation, usable geometry at each count from three through eight agents, master-tab placement, sibling and human-pane preservation, saved-session reactivation, sequential stages, moved-pane safe rejection, and blocked cancellation.
+The scope suite covers concurrent descendant spawns from different workers, role permissions, inherited scopes, equal-label conversation isolation, horizontal full-width geometry at each count from three through eight agents, master-tab placement, sibling and human-pane preservation, saved-session reactivation, sequential stages, moved-pane safe rejection, and blocked cancellation.
 Its ownership case replaces an actual test child with another Pi session and verifies rejected stale controls, refused moved placement, durable release, fresh allocation, original-session reactivation, and preservation of the replacement's later shell.
 Run `SCOPE_CASES=ownership node home/.pi/agent/extensions/subagent/e2e-scopes.mjs` for that focused case.
 Independent-process lock tests cover descriptor retention, contenders, holder death, inode stability, exceptional release, and legacy-directory preservation.

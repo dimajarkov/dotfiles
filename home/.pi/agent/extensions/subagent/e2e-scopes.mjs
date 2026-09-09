@@ -190,19 +190,16 @@ function checkGeometry(paneId, count, workScope) {
     .map((record) => record.paneId));
   const relatedPanes = layout.panes.filter((pane) => ownedIds.has(pane.pane_id));
   assert.equal(relatedPanes.length, count);
-  const areas = relatedPanes.map((pane) => pane.rect.width * pane.rect.height);
-  // Closing a leaf can expand its sibling in Herdr's binary layout tree.
-  // At three remaining children, assert the readability floors below instead of
-  // rejecting that expected post-cleanup geometry.
+  assert.ok(relatedPanes.every((pane) => pane.rect.x === layout.area.x && pane.rect.width === layout.area.width),
+    `${count} related panes must use horizontal splits, preserving the full tab width`);
+  assert.ok(layout.splits.every((split) => split.direction === "down"), "Every split must stack panes top-to-bottom");
+  const heights = relatedPanes.map((pane) => pane.rect.height);
+  assert.ok(heights.every((height) => height > 0), `${count} related panes retain visible rows`);
+  // Largest-pane halving permits a 2:1 height ratio plus integer-row rounding.
+  // Closing a leaf can expand its sibling; skip balance after cleanup at count three.
   if (count !== 3) {
-    assert.ok(Math.max(...areas) / Math.min(...areas) < (count === 4 ? 2 : 2.1), `${count} related panes are balanced`);
+    assert.ok(Math.max(...heights) <= 2 * Math.min(...heights) + 1, `${count} related panes are balanced`);
   }
-  // The master pane consumes half the tab height, and up to eight children share the rest.
-  // Scale the smoke-test floor for the small terminal used by this live suite.
-  const minimumColumns = Math.min(60, Math.floor(layout.area.width / 4));
-  const minimumRows = Math.min(12, Math.floor(layout.area.height / 8));
-  assert.ok(relatedPanes.every((pane) => pane.rect.width >= minimumColumns && pane.rect.height >= minimumRows),
-    `${count} related panes must not become unreadably narrow or short`);
 }
 async function runCases() {
   if (process.env.SCOPE_CASES === "ownership") {
