@@ -20,8 +20,8 @@ Running the switch builds:
 - Homebrew apps (casks and CLI tools)
 - Nix user packages (ripgrep, fd, fzf, jq, lazygit, Neovim, Hack Nerd Font)
 - Shell (zsh, aliases, starship prompt)
-- Editor (Neovim config with the rose-pine moon theme)
-- Terminal (WezTerm config with the rose-pine moon theme)
+- Editor (Neovim follows macOS appearance: Guts dark, Rosé Pine Dawn light)
+- Terminal (WezTerm follows system appearance: Catppuccin Mocha dark, Latte light)
 - Agent configs (Claude, Codex, opencode all share one AGENTS.md)
 
 ## Prerequisites
@@ -154,10 +154,22 @@ You only run `./rebuild.sh` when you change something that isn't just a symlinke
 
 ## Notes
 
-The first time you launch `nvim`, it bootstraps [lazy.nvim](https://github.com/folke/lazy.nvim) by cloning plugins from GitHub.
+The first time you launch `nvim`, Neovim's built-in `vim.pack` clones the configured plugins from GitHub.
 That needs network access once; after that it's offline.
-Neovim and WezTerm both use the rose-pine moon theme.
-Neovim keeps italics off and uses a transparent background on macOS, Windows, and WSL so it matches the terminal setup.
+Neovim uses Guts in macOS dark mode and Rosé Pine Dawn in light mode, with opaque backgrounds for readable contrast.
+It reads the macOS appearance at startup, on focus, and every two seconds while open, without blocking editing or requiring a terminal theme notification.
+A manual colorscheme selection (`<leader>fc`) lasts until the system appearance changes.
+On non-macOS hosts, Neovim selects the palette using its `background` option, including terminal-driven changes.
+WezTerm independently follows system appearance with Catppuccin Mocha and Latte.
+
+After launching Neovim once to install the plugins, run the appearance regression tests from the repo root:
+
+```sh
+nvim --headless -u NONE -l tests/nvim-appearance.lua
+python3 tests/nvim-appearance-tui.py # macOS: full TUI against the real system appearance
+```
+
+The Lua tests exercise both palettes, live changes, failure recovery, reload safety, and non-macOS behavior without changing the system appearance.
 
 ## License
 

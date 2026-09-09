@@ -132,13 +132,9 @@ require('kanagawa').setup({
 		}
 	}
 })
--- vim.cmd('colorscheme kanagawa-wave')
--- Guts Colorscheme
-vim.cmd.colorscheme("guts")
-
--- Rose pine Colorscheme
+-- Keep Guts in dark mode and use Rose Pine Dawn in light mode.
 require("rose-pine").setup()
---vim.cmd.colorscheme("rose-pine")
+require('system-appearance').setup()
 
 -- Markdown
 require('render-markdown').setup({})
