@@ -25,9 +25,9 @@ See the [role provenance and compatibility notes](../../agents/README.md) for th
 ## Named work scopes
 
 Choose one short `workScope` slug per workstream and reuse it for every related root-level spawn.
-Different roles and direct parents can share that scope's background tab, with each child in its own pane.
-Different work scopes get different tabs.
-The main conversation stays in its own tab.
+Different roles and direct parents in one conversation share the master Pi agent's current Herdr tab, with each child in its own pane.
+Work scopes remain durable child metadata and descendants inherit them, but they do not create tabs or isolate panes from other scopes in the same conversation.
+The main conversation remains in its master pane.
 
 ```json
 {
@@ -40,14 +40,17 @@ The main conversation stays in its own tab.
 ```
 
 A related root-level reviewer uses a different `name` but the same `workScope`.
-`name` identifies an individual agent for subsequent controls; `workScope` identifies the shared terminal workstream.
+`name` identifies an individual agent for subsequent controls; `workScope` identifies the shared logical workstream.
 Root spawns require `workScope`.
+Unscoped descendants may inherit no work scope, but cannot opt into one.
 Descendants inherit their parent's scope and cannot choose another one.
-Scope identity includes conversation lineage, Herdr runtime session, workspace, and work-scope slug rather than tab title or working directory.
+Lineage identity includes conversation lineage, Herdr runtime session, workspace, master pane, and immutable master tab rather than tab title or working directory.
 Matching labels in unrelated sessions do not merge their agents.
 
 Spawns run asynchronously and preserve user focus.
-The extension selects an owned pane from live layout geometry rather than repeatedly splitting the caller into smaller strips.
+Every child is created by splitting a pane in the master Pi agent's current Herdr tab.
+The master pane is used for root and unscoped children; later placement selects the largest currently live, ownership-verified child pane when one exists.
+Human panes and panes from other conversations are never placement candidates.
 Direction selection accounts for terminal-cell aspect ratio, not just equal character-cell area.
 It prefers preserving 60 columns when a downward split can still provide 12 rows; these are soft limits for small terminals.
 Completion messages return to the spawning parent.
@@ -61,25 +64,25 @@ Unconsumed outbox entries replay after restart or a cleared message queue; consu
 `deliveredAt` means the completion was durably enqueued, not necessarily consumed by the parent model.
 A parent child cannot auto-exit while its branch still has unconsumed completions.
 Cleanup preserves sibling agents and user-owned panes.
-When the final pane closes, Herdr removes the empty tab.
-A later stage can recreate that scope's tab, so a sequential workflow does not retain an idle placeholder tab between stages.
-If only user-owned panes remain, they keep their old tab and the next stage creates a fresh managed tab rather than splitting those panes.
-If an owned scope pane has moved to another tab, new scope allocation fails safely rather than creating a duplicate tab or regrouping human surfaces.
-The moved agent remains intact and a new stage can allocate normally after it finishes.
+Child pane cleanup leaves the master tab and its main pane intact.
+A later stage reuses that same tab by splitting the largest ownership-verified pane, so sequential workflows do not create background tabs or idle placeholder tabs.
+If only user-owned panes remain among the old scope's children, the next stage splits the current master pane rather than splitting those human panes.
+If an owned child pane has moved to another tab, placement refuses the new allocation rather than creating a duplicate tab or regrouping human surfaces.
+The moved agent remains intact, and a new stage can allocate normally after it finishes.
 
 Pane IDs alone do not establish ownership.
 Cleanup verifies the pane's workspace and current Pi session, or positively establishes that its only foreground process is its shell.
 A different session, agent, or identifiable foreground command is preserved, and the original claim becomes durably `released` rather than closed.
 Released claims cannot reclaim that pane after its replacement exits, but their original saved sessions can reactivate on new managed surfaces.
 Uncertain observations remain `cleanup-pending` with a diagnostic and can be retried without discarding findings.
-Scope allocation validates every recorded owned pane before selecting an anchor and reconciles retired claims after interrupted bookkeeping.
-New allocations publish their pending owner under the scope lock, allowing concurrent parents to wait for startup session identity rather than mistake a launcher for a foreign occupant.
+Placement validates every recorded child pane before selecting a target and ignores retired or unproven panes.
+New allocations publish their pending owner under the lineage lock, and a persistent placement lock serializes layout observation and splitting across concurrent parents.
 Active message, focus, cancellation, and rejected-prompt stop paths validate runtime identity before sending controls.
 Failed control preflights do not abandon completion monitoring for children still working in the current Herdr session.
 
 These checks are observational, not atomic fencing.
 The current Herdr API has no expected-session or revision precondition for closing, splitting, prompting, or focusing.
-Scope locks serialize cooperating controllers but cannot prevent an external actor from replacing a runtime between verification and a subsequent Herdr command.
+Lineage locks serialize cooperating controllers but cannot prevent an external actor from replacing a runtime between verification and a subsequent Herdr command.
 
 Use `inspect`, `message`, `cancel`, or `resume` with the agent's semantic `name`.
 `message` can reactivate a finished child with its saved session and launch settings.
@@ -87,15 +90,16 @@ Cancelling an already-terminal child only finishes its surface cleanup and prese
 `resume` and `/subagent-focus <name>` intentionally focus that child.
 `/subagents` lists the current parent's children.
 
-Existing scope-less records retain their legacy placement rather than migrating live agents.
-Updating or reloading this extension does not regroup existing tabs.
-Use new named-scope spawns for the new behavior.
+Existing records retain their saved pane and tab identities rather than migrating live agents.
+Legacy scope metadata files are ignored by the current loader.
+Updating or reloading this extension does not regroup existing panes or tabs.
+Use new spawns for the master-tab placement behavior.
 
 ## Registry locking
 
 Registry allocation requires macOS `/usr/bin/lockf` with descriptor-mode support.
 The parent retains the locked file descriptor throughout each operation, so helper exit does not release ownership and process death does.
-Lineage and scope lockfiles retain a persistent inode; never unlink or rename them to clear a lock.
+Lineage lockfiles retain a persistent inode; never unlink or rename them to clear a lock.
 Unsupported platforms fail rather than falling back to age-based lock stealing.
 Old directory-format locks are waited on for a bounded interval and then fail closed, with instructions to reload their owner.
 Reload old controllers before reusing their registries; do not manually rewrite live registry records or steal directory locks.
@@ -125,11 +129,11 @@ They create isolated test configurations and background surfaces, retain their e
 Focus checks reject test surfaces taking focus while allowing unrelated human focus changes.
 
 The lifecycle suite covers nonblocking messaging/cancellation, generation-specific completion delivery, saved-session crash/replay, and continued parent usability.
-The scope suite covers concurrent descendant spawns from different workers, role permissions, inherited scopes, equal-label conversation isolation, usable geometry at each count from three through eight agents, sibling and human-pane preservation, saved-session reactivation, sequential stages, moved-anchor safe rejection, and blocked cancellation.
-Its ownership case replaces an actual test child with another Pi session and verifies rejected stale controls, rejected allocation, durable release, fresh allocation, original-session reactivation, and preservation of the replacement's later shell.
+The scope suite covers concurrent descendant spawns from different workers, role permissions, inherited scopes, equal-label conversation isolation, usable geometry at each count from three through eight agents, master-tab placement, sibling and human-pane preservation, saved-session reactivation, sequential stages, moved-pane safe rejection, and blocked cancellation.
+Its ownership case replaces an actual test child with another Pi session and verifies rejected stale controls, refused moved placement, durable release, fresh allocation, original-session reactivation, and preservation of the replacement's later shell.
 Run `SCOPE_CASES=ownership node home/.pi/agent/extensions/subagent/e2e-scopes.mjs` for that focused case.
 Independent-process lock tests cover descriptor retention, contenders, holder death, inode stability, exceptional release, and legacy-directory preservation.
-Ownership unit tests explicitly cover uncertain observations, foreground commands, pending-cleanup recovery, interrupted bookkeeping, and failed-preflight monitoring.
+Ownership unit tests explicitly cover uncertain observations, foreground commands, pending-cleanup recovery, moved panes, and failed-preflight monitoring.
 `e2e-herdr.sh` is a compatibility entry point for the offline scope suite.
 Tests and fixtures under this directory are not auto-loaded as production extensions.
 

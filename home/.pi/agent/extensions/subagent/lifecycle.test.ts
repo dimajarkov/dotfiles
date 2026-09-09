@@ -23,6 +23,8 @@ async function within<T>(promise: Promise<T>): Promise<T> {
 function scenario() {
   const directory = mkdtempSync(join(tmpdir(), "subagent-lifecycle-"));
   const session = join(directory, "child.jsonl");
+  const parentSession = join(directory, "parent.jsonl");
+  writeFileSync(parentSession, "");
   writeFileSync(session, `${JSON.stringify({
     type: "message", id: "result-1", parentId: null,
     message: { role: "assistant", content: [{ type: "text", text: "SAVED_SCOUT_FINDINGS" }], stopReason: "stop" },
@@ -50,12 +52,29 @@ function scenario() {
     transport: {
       async run(args, signal): Promise<CommandExecution> {
         let result: unknown;
-        if (args[0] === "tab" && args[1] === "create") {
+        if (args[0] === "pane" && args[1] === "current") {
+          result = { pane: {
+            pane_id: "w1:p1", tab_id: "w1:t1", workspace_id: "w1", agent: "pi",
+            agent_session: { kind: "path", value: parentSession },
+          } };
+        } else if (args[0] === "pane" && args[1] === "layout") {
+          result = {
+            layout: {
+              tab_id: "w1:t1", workspace_id: "w1",
+              panes: [
+                { pane_id: "w1:p1", rect: { width: 120, height: 60 } },
+                ...(generation > 0
+                  ? [{ pane_id: `w1:p${generation + 1}`, rect: { width: 120, height: 60 } }]
+                  : []),
+              ],
+            },
+          };
+        } else if (args[0] === "pane" && args[1] === "split") {
           generation += 1;
-          result = { tab: { tab_id: `w1:t${generation + 1}` }, root_pane: { pane_id: `w1:p${generation + 1}` } };
+          result = { pane: { pane_id: `w1:p${generation + 1}`, tab_id: "w1:t1" } };
         } else if (args[0] === "pane") {
           result = { pane: {
-            pane_id: `w1:p${generation + 1}`, workspace_id: "w1", agent: "pi",
+            pane_id: `w1:p${generation + 1}`, tab_id: "w1:t1", workspace_id: "w1", agent: "pi",
             agent_session: { kind: "path", value: session },
           } };
         } else if (args[0] === "agent") {

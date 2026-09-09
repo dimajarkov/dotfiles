@@ -102,7 +102,7 @@ function stateSymbol(state: ChildRecord["state"]): string {
 
 function summary(child: ChildRecord): string {
   const location = child.tabId && child.paneId ? `${child.tabId}/${child.paneId}` : "starting";
-  const scope = child.workScope ? ` scope=${child.workScope}` : " legacy-scope";
+  const scope = child.workScope ? ` scope=${child.workScope}` : " unscoped";
   const resolvedModel = child.model ?? child.launchLoadout?.model;
   const resolvedThinking = child.thinking ?? child.launchLoadout?.thinking;
   const model = resolvedModel ? ` model=${resolvedModel}` : "";
@@ -242,7 +242,7 @@ export default function herdrSubagents(pi: ExtensionAPI) {
     name: "subagent",
     label: "Subagent",
     description:
-      "Spawn and control persistent interactive Pi subagents in Herdr. Related agents share one background tab per named workScope, each in its own pane. Descendants inherit the scope. Spawning is asynchronous. Actions: spawn, list, inspect, message, cancel, resume.",
+      "Spawn and control persistent interactive Pi subagents in Herdr. Related agents in one conversation share the master Pi agent's current Herdr tab, each in its own pane. Root spawns use a workScope, and descendants inherit it. Spawning is asynchronous. Actions: spawn, list, inspect, message, cancel, resume.",
     promptSnippet:
       "Spawn or control persistent interactive Herdr Pi subagents by stable semantic name",
     promptGuidelines: [

@@ -116,21 +116,22 @@ export interface ChildRecord {
   result?: string;
   deliveredAt?: number;
   startedAfterEntryId?: string;
+  /** Monotonically increasing registry revision used for cross-process CAS writes. */
+  revision?: number;
 }
 
 interface JsonObject {
   [key: string]: unknown;
 }
 
-interface WorkScopeRecord {
+interface MasterIdentity {
   version: 1;
   rootId: string;
-  workScope: string;
-  workspaceId: string;
   herdrSession: string;
-  tabId?: string;
-  anchorPaneId?: string;
-  ownedPaneIds?: string[];
+  workspaceId: string;
+  masterPaneId: string;
+  tabId: string;
+  masterSessionPath?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -306,8 +307,8 @@ function isRetiredSurface(child: ChildRecord): boolean {
   return child.surfaceState === "closed" || child.surfaceState === "released";
 }
 
-class NoOwnedScopePaneError extends Error {}
 class StaleGenerationError extends Error {}
+class StaleRevisionError extends Error {}
 
 function isPositiveAgentAbsence(error: unknown): boolean {
   return error instanceof Error &&
@@ -319,11 +320,6 @@ function isPositivePaneAbsence(error: unknown): boolean {
     /(?:pane[ _]not[ _]found|unknown pane|no such pane)/i.test(error.message);
 }
 
-function isPositiveTabAbsence(error: unknown): boolean {
-  return error instanceof Error &&
-    /(?:tab[ _]not[ _]found|unknown tab|no such tab)/i.test(error.message);
-}
-
 function validateWorkScope(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   if (!/^[a-z][a-z0-9_-]{0,31}$/.test(value)) {
@@ -332,20 +328,6 @@ function validateWorkScope(value: string | undefined): string | undefined {
     );
   }
   return value;
-}
-
-function isWorkScopeRecord(value: unknown): value is WorkScopeRecord {
-  return isObject(value) &&
-    value.version === 1 &&
-    typeof value.rootId === "string" &&
-    typeof value.workScope === "string" &&
-    typeof value.workspaceId === "string" &&
-    typeof value.herdrSession === "string" &&
-    (value.tabId === undefined || typeof value.tabId === "string") &&
-    (value.anchorPaneId === undefined || typeof value.anchorPaneId === "string") &&
-    (value.ownedPaneIds === undefined || isStringArray(value.ownedPaneIds)) &&
-    typeof value.createdAt === "number" &&
-    typeof value.updatedAt === "number";
 }
 
 interface CompletionMarker {
@@ -499,77 +481,85 @@ export class SubagentOrchestrator {
 
   async recover(rootId: string, ownerId: string): Promise<ChildRecord[]> {
     const children = this.list(rootId).filter((child) => child.parentId === ownerId);
-    for (const child of children) {
-      this.#assertCurrentHerdrSession(child);
-      if (child.surfaceState === "cleanup-pending") {
-        const interruptedCleanup = ACTIVE_STATES.has(child.state);
-        await this.#cleanupSurface(child);
-        if (interruptedCleanup) {
-          child.state = "failed";
-          child.error =
-            `Recovered interrupted cleanup for generation ${child.generation}`;
-          child.updatedAt = this.#now();
-          this.#saveChild(child);
-          await this.#deliver(child);
-        }
-        continue;
-      }
-      if (
-        CLEANUP_TERMINAL_STATES.has(child.state) &&
-        child.deliveredAt !== undefined &&
-        !isRetiredSurface(child)
-      ) {
-        await this.#cleanupSurface(child);
-        continue;
-      }
-      if (child.state === "completed" || child.state === "failed" || child.state === "crashed") {
-        if (await this.#deliver(child)) await this.#cleanupSurface(child);
-        continue;
-      }
-      if (!ACTIVE_STATES.has(child.state)) continue;
+    for (const listedChild of children) {
+      this.#assertCurrentHerdrSession(listedChild);
+      await this.#stopMonitor(listedChild.id);
+      await this.#withChildRegistryLock(rootId, listedChild.id, () =>
+        this.#recoverChild(rootId, ownerId, listedChild.id));
+    }
+    return this.list(rootId);
+  }
 
-      try {
-        const response = await this.#runJson(["agent", "get", child.herdrName]);
-        const agent = objectAt(objectAt(response, "result"), "agent");
-        const status = this.#validatedAgentStatus(child, agent);
-        if (status === "working" || status === "blocked") {
-          child.state = status;
+  async #recoverChild(rootId: string, ownerId: string, childId: string): Promise<void> {
+    const child = this.#findChild(rootId, ownerId, childId);
+    this.#assertCurrentHerdrSession(child);
+    if (child.surfaceState === "cleanup-pending") {
+      const interruptedCleanup = ACTIVE_STATES.has(child.state);
+      await this.#cleanupSurface(child);
+      if (interruptedCleanup) {
+        child.state = "failed";
+        child.error =
+          `Recovered interrupted cleanup for generation ${child.generation}`;
+        child.updatedAt = this.#now();
+        this.#saveChild(child);
+        await this.#deliver(child);
+      }
+      return;
+    }
+    if (
+      CLEANUP_TERMINAL_STATES.has(child.state) &&
+      child.deliveredAt !== undefined &&
+      !isRetiredSurface(child)
+    ) {
+      await this.#cleanupSurface(child);
+      return;
+    }
+    if (child.state === "completed" || child.state === "failed" || child.state === "crashed") {
+      if (await this.#deliver(child)) await this.#cleanupSurface(child);
+      return;
+    }
+    if (!ACTIVE_STATES.has(child.state)) return;
+
+    try {
+      const response = await this.#runJson(["agent", "get", child.herdrName]);
+      const agent = objectAt(objectAt(response, "result"), "agent");
+      const status = this.#validatedAgentStatus(child, agent);
+      if (status === "working" || status === "blocked") {
+        child.state = status;
+        child.updatedAt = this.#now();
+        this.#saveChild(child);
+        if (this.#monitor) void this.#monitorChild(child);
+        return;
+      }
+      if (status === "idle" || status === "done") {
+        try {
+          await this.#completeFromSession(child);
+        } catch (error) {
+          if (!(error instanceof CompletionNotProvenError)) throw error;
           child.updatedAt = this.#now();
           this.#saveChild(child);
           if (this.#monitor) void this.#monitorChild(child);
-          continue;
         }
-        if (status === "idle" || status === "done") {
-          try {
-            await this.#completeFromSession(child);
-          } catch (error) {
-            if (!(error instanceof CompletionNotProvenError)) throw error;
-            child.updatedAt = this.#now();
-            this.#saveChild(child);
-            if (this.#monitor) void this.#monitorChild(child);
-          }
-          continue;
-        }
-        child.state = "stale";
-        child.error = `Unrecognized recovered Herdr state: ${status}`;
-        child.updatedAt = this.#now();
-        this.#saveChild(child);
-      } catch (error) {
-        if (!(error instanceof RuntimeIdentityError) && child.sessionPath) {
-          try {
-            await this.#completeFromSession(child);
-            continue;
-          } catch {
-            // The structured session has no result for this registered run.
-          }
-        }
-        child.state = "stale";
-        child.error = error instanceof Error ? error.message : String(error);
-        child.updatedAt = this.#now();
-        this.#saveChild(child);
+        return;
       }
+      child.state = "stale";
+      child.error = `Unrecognized recovered Herdr state: ${status}`;
+      child.updatedAt = this.#now();
+      this.#saveChild(child);
+    } catch (error) {
+      if (!(error instanceof RuntimeIdentityError) && child.sessionPath) {
+        try {
+          await this.#completeFromSession(child);
+          return;
+        } catch {
+          // The structured session has no result for this registered run.
+        }
+      }
+      child.state = "stale";
+      child.error = error instanceof Error ? error.message : String(error);
+      child.updatedAt = this.#now();
+      this.#saveChild(child);
     }
-    return this.list(rootId);
   }
 
   async inspect(
@@ -578,8 +568,13 @@ export class SubagentOrchestrator {
     target: string,
     signal?: AbortSignal,
   ): Promise<ChildRecord> {
-    return this.#withChildOperation(rootId, ownerId, target, () =>
-      this.#inspectUnlocked(rootId, ownerId, target, signal));
+    return this.#withChildOperation(
+      rootId,
+      ownerId,
+      target,
+      () => this.#inspectUnlocked(rootId, ownerId, target, signal),
+      { durable: false },
+    );
   }
 
   async #inspectUnlocked(
@@ -616,8 +611,13 @@ export class SubagentOrchestrator {
     message: string,
     signal?: AbortSignal,
   ): Promise<ChildRecord> {
-    return this.#withChildOperation(rootId, ownerId, target, () =>
-      this.#messageUnlocked(rootId, ownerId, target, message, signal));
+    return this.#withChildOperation(
+      rootId,
+      ownerId,
+      target,
+      () => this.#messageUnlocked(rootId, ownerId, target, message, signal),
+      { stopMonitor: true },
+    );
   }
 
   async #messageUnlocked(
@@ -681,8 +681,13 @@ export class SubagentOrchestrator {
     target: string,
     signal?: AbortSignal,
   ): Promise<ChildRecord> {
-    return this.#withChildOperation(rootId, ownerId, target, () =>
-      this.#cancelUnlocked(rootId, ownerId, target, signal));
+    return this.#withChildOperation(
+      rootId,
+      ownerId,
+      target,
+      () => this.#cancelUnlocked(rootId, ownerId, target, signal),
+      { stopMonitor: true },
+    );
   }
 
   async #cancelUnlocked(
@@ -793,9 +798,7 @@ export class SubagentOrchestrator {
     }
 
     const workspaceId = this.#environment.HERDR_WORKSPACE_ID;
-    const callerPaneId = this.#environment.HERDR_PANE_ID;
-    const herdrSession = currentHerdrSession(this.#environment);
-    if (!workspaceId || !callerPaneId) {
+    if (!workspaceId || !this.#environment.HERDR_PANE_ID) {
       throw new Error("Missing explicit Herdr workspace or pane identity");
     }
 
@@ -830,7 +833,13 @@ export class SubagentOrchestrator {
       );
     }
     const workScope = inheritedScope ?? requestedScope;
-    const child = await this.#withLineageLock(rootId, () => {
+    const child = await this.#withLineageLock(rootId, async () => {
+      const master = await this.#resolveMasterIdentity(
+        rootId,
+        callerDepth,
+        signal,
+        callerDepth === 0 ? request.parentSessionFile : undefined,
+      );
       const existingChildren = this.#loadChildren(rootId);
       if (
         existingChildren.some(
@@ -870,8 +879,8 @@ export class SubagentOrchestrator {
         cwd: request.cwd,
         depth,
         generation: 1,
-        workspaceId,
-        herdrSession,
+        workspaceId: master.workspaceId,
+        herdrSession: master.herdrSession,
         completionMarkerPath: join(
           this.#registryPath(rootId),
           `${slug(id)}.generation-1.complete`,
@@ -885,81 +894,42 @@ export class SubagentOrchestrator {
       return reserved;
     });
 
-    const propagatedEnvironment = this.#propagatedEnvironment(child);
+    return this.#withChildRegistryLock(child.rootId, child.id, () =>
+      this.#startReservedChild(child, callerDepth, signal));
+  }
 
-    let layoutCreated = false;
+  async #startReservedChild(
+    child: ChildRecord,
+    callerDepth: number,
+    signal?: AbortSignal,
+  ): Promise<ChildRecord> {
     let agentStarted = false;
     try {
-      if (child.workScope !== undefined) {
-        const placed = await this.#createScopedSurface(child, propagatedEnvironment, signal);
-        child.tabId = placed.tabId;
-        child.paneId = placed.paneId;
-        layoutCreated = true;
-        child.surfaceState = "open";
-      } else if (callerDepth === 0) {
-        const created = await this.#runJson([
-          "tab",
-          "create",
-          "--workspace",
-          workspaceId,
-          "--cwd",
-          child.launchLoadout.cwd,
-          "--label",
-          `Work: ${displayLabel(child.semanticName)}`,
-          ...propagatedEnvironment.flatMap((value) => ["--env", value]),
-          "--no-focus",
-        ], signal);
-        const result = objectAt(created, "result");
-        child.tabId = stringAt(objectAt(result, "tab"), "tab_id");
-        child.paneId = stringAt(objectAt(result, "root_pane"), "pane_id");
-        layoutCreated = true;
-        child.surfaceState = "open";
-      } else {
-        const created = await this.#runJson([
+      const started = await this.#withPlacementLock(child.rootId, async () => {
+        await this.#createSurface(child, callerDepth, signal, true);
+
+        await this.#runJson([
           "pane",
-          "split",
-          "--pane",
-          callerPaneId,
-          "--direction",
-          "down",
-          "--ratio",
-          "0.5",
-          "--cwd",
-          child.launchLoadout.cwd,
-          ...propagatedEnvironment.flatMap((value) => ["--env", value]),
-          "--no-focus",
+          "rename",
+          child.paneId,
+          paneLabel(child.launchLoadout.role, child.semanticName),
         ], signal);
-        const pane = objectAt(objectAt(created, "result"), "pane");
-        child.paneId = stringAt(pane, "pane_id");
-        child.tabId = stringAt(pane, "tab_id");
-        layoutCreated = true;
-        child.surfaceState = "open";
-      }
-      child.updatedAt = this.#now();
-      this.#saveChild(child);
 
-      await this.#runJson([
-        "pane",
-        "rename",
-        child.paneId,
-        paneLabel(child.launchLoadout.role, child.semanticName),
-      ], signal);
-
-      const piArguments = this.#piArguments(child);
-
-      const started = await this.#startAgent([
-        "agent",
-        "start",
-        child.herdrName,
-        "--kind",
-        "pi",
-        "--pane",
-        child.paneId,
-        "--timeout",
-        "60000",
-        "--",
-        ...piArguments,
-      ], signal);
+        const piArguments = this.#piArguments(child);
+        return this.#startAgent([
+          "agent",
+          "start",
+          child.herdrName,
+          "--kind",
+          "pi",
+          "--pane",
+          child.paneId,
+          "--timeout",
+          "60000",
+          "--",
+          ...piArguments,
+        ], signal);
+      });
       const startedAgent = objectAt(objectAt(started, "result"), "agent");
       agentStarted = true;
       child.sessionPath = sessionPathFromAgent(startedAgent);
@@ -985,7 +955,7 @@ export class SubagentOrchestrator {
           cleanupErrors.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
         }
       }
-      if (layoutCreated) {
+      if (child.paneId !== undefined) {
         await this.#cleanupSurface(child);
         if (child.cleanupError) cleanupErrors.push(child.cleanupError);
       }
@@ -1005,37 +975,24 @@ export class SubagentOrchestrator {
     return this.#environment.HERDR_SUBAGENT_REGISTRY ?? join(this.#stateDirectory, slug(rootId));
   }
 
-  #scopePath(child: ChildRecord): string {
-    const identity = createHash("sha256")
-      .update(child.workScope ?? "")
-      .update("\0")
-      .update(child.workspaceId)
-      .update("\0")
-      .update(child.herdrSession)
-      .digest("hex")
-      .slice(0, 24);
-    return join(
-      this.#registryPath(child.rootId),
-      `.scope-${slug(child.workScope ?? "scope")}-${identity}.json`,
-    );
+  #masterPath(rootId: string): string {
+    return join(this.#registryPath(rootId), ".lineage.json");
   }
 
-  #loadScope(child: ChildRecord): WorkScopeRecord | undefined {
-    const path = this.#scopePath(child);
+  #loadMaster(rootId: string): MasterIdentity | undefined {
+    const path = this.#masterPath(rootId);
     try {
       const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-      if (!isWorkScopeRecord(parsed)) {
-        throw new Error(`Malformed work scope record: ${path}`);
-      }
       if (
-        parsed.rootId !== child.rootId ||
-        parsed.workScope !== child.workScope ||
-        parsed.workspaceId !== child.workspaceId ||
-        parsed.herdrSession !== child.herdrSession
+        !isObject(parsed) || parsed.version !== 1 || parsed.rootId !== rootId ||
+        typeof parsed.herdrSession !== "string" || typeof parsed.workspaceId !== "string" ||
+        typeof parsed.masterPaneId !== "string" || typeof parsed.tabId !== "string" ||
+        (parsed.masterSessionPath !== undefined && typeof parsed.masterSessionPath !== "string") ||
+        !Number.isSafeInteger(parsed.createdAt) || !Number.isSafeInteger(parsed.updatedAt)
       ) {
-        throw new RuntimeIdentityError(`Work scope identity changed for ${child.workScope}`);
+        throw new Error(`Malformed lineage master record: ${path}`);
       }
-      return parsed;
+      return parsed as unknown as MasterIdentity;
     } catch (error) {
       const code = isObject(error) && typeof error.code === "string" ? error.code : undefined;
       if (code === "ENOENT") return undefined;
@@ -1043,96 +1000,149 @@ export class SubagentOrchestrator {
     }
   }
 
-  #saveScope(scope: WorkScopeRecord): void {
-    const path = this.#scopePath({
-      rootId: scope.rootId,
-      workScope: scope.workScope,
-      workspaceId: scope.workspaceId,
-      herdrSession: scope.herdrSession,
-    } as ChildRecord);
+  #saveMaster(master: MasterIdentity): void {
+    const path = this.#masterPath(master.rootId);
     const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    mkdirSync(this.#registryPath(scope.rootId), { recursive: true, mode: 0o700 });
-    writeFileSync(temporaryPath, `${JSON.stringify(scope, null, 2)}\n`, {
+    mkdirSync(this.#registryPath(master.rootId), { recursive: true, mode: 0o700 });
+    writeFileSync(temporaryPath, `${JSON.stringify(master, null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,
     });
     renameSync(temporaryPath, path);
   }
 
-  // Called only while the matching scope lock is held.
-  #forgetScopePaneUnlocked(child: ChildRecord): void {
-    if (child.workScope === undefined || child.paneId === undefined) return;
-    const scope = this.#loadScope(child);
-    if (!scope || !scope.ownedPaneIds?.includes(child.paneId)) return;
-    scope.ownedPaneIds = scope.ownedPaneIds.filter((paneId) => paneId !== child.paneId);
-    if (scope.anchorPaneId === child.paneId) {
-      scope.anchorPaneId = scope.ownedPaneIds.at(-1);
+  #masterFromPane(
+    rootId: string,
+    pane: JsonObject,
+    existing?: MasterIdentity,
+    parentSessionFile?: string,
+  ): MasterIdentity {
+    const paneId = stringAt(pane, "pane_id");
+    const tabId = stringAt(pane, "tab_id");
+    const workspaceId = stringAt(pane, "workspace_id");
+    const herdrSession = currentHerdrSession(this.#environment);
+    if (existing && (
+      existing.rootId !== rootId ||
+      existing.herdrSession !== herdrSession ||
+      existing.workspaceId !== workspaceId ||
+      existing.masterPaneId !== paneId ||
+      existing.tabId !== tabId
+    )) {
+      throw new RuntimeIdentityError("Lineage master identity changed");
     }
-    scope.updatedAt = this.#now();
-    this.#saveScope(scope);
-  }
-
-  #pruneRetiredScopePanes(scope: WorkScopeRecord): void {
-    const retired = new Set(this.#loadChildren(scope.rootId)
-      .filter((child) => child.workScope === scope.workScope && child.workspaceId === scope.workspaceId &&
-        child.herdrSession === scope.herdrSession && isRetiredSurface(child))
-      .map((child) => child.paneId));
-    const owned = scope.ownedPaneIds ?? (scope.anchorPaneId ? [scope.anchorPaneId] : []);
-    if (!owned.some((paneId) => retired.has(paneId))) return;
-    scope.ownedPaneIds = owned.filter((paneId) => !retired.has(paneId));
-    if (retired.has(scope.anchorPaneId)) scope.anchorPaneId = scope.ownedPaneIds.at(-1);
-    scope.updatedAt = this.#now();
-    this.#saveScope(scope);
-  }
-
-  async #withScopeLock<T>(child: ChildRecord, operation: () => Promise<T>): Promise<T> {
-    const directory = this.#registryPath(child.rootId);
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const identity = createHash("sha256")
-      .update(child.workScope ?? "")
-      .update("\0")
-      .update(child.workspaceId)
-      .update("\0")
-      .update(child.herdrSession)
-      .digest("hex")
-      .slice(0, 24);
-    const lockPath = join(directory, `.scope-${identity}.lock`);
-    return withRegistryLock(lockPath, operation);
-  }
-
-  #assertNoMovedScopePanes(scope: WorkScopeRecord, panes: unknown[]): void {
-    const ownedPaneIds = new Set(
-      scope.ownedPaneIds ?? (scope.anchorPaneId ? [scope.anchorPaneId] : []),
-    );
-    const movedOwnedPane = panes.find((entry) =>
-      isObject(entry) &&
-      typeof entry.pane_id === "string" &&
-      ownedPaneIds.has(entry.pane_id) &&
-      entry.tab_id !== scope.tabId,
-    );
-    if (movedOwnedPane) {
-      throw new RuntimeIdentityError(`Work scope ${scope.workScope} owned pane moved to another tab`);
+    if (pane.agent !== "pi") {
+      throw new RuntimeIdentityError("Lineage master pane is not occupied by Pi");
     }
+    const observedSessionPath = sessionPathFromAgent(pane);
+    if (parentSessionFile !== undefined && observedSessionPath !== undefined && parentSessionFile !== observedSessionPath) {
+      throw new RuntimeIdentityError("Root parent session artifact differs from the current master pane");
+    }
+    const masterSessionPath = parentSessionFile ?? observedSessionPath;
+    if (existing?.masterSessionPath !== undefined && existing.masterSessionPath !== masterSessionPath) {
+      throw new RuntimeIdentityError("Lineage master session artifact changed");
+    }
+    return {
+      version: 1,
+      rootId,
+      herdrSession,
+      workspaceId,
+      masterPaneId: paneId,
+      tabId,
+      ...(existing?.masterSessionPath || masterSessionPath
+        ? { masterSessionPath: existing?.masterSessionPath ?? masterSessionPath }
+        : {}),
+      createdAt: existing?.createdAt ?? this.#now(),
+      updatedAt: this.#now(),
+    };
   }
 
-  #scopeLayout(value: JsonObject, scope: WorkScopeRecord): PaneLayout {
+  async #resolveMasterIdentity(
+    rootId: string,
+    callerDepth: number,
+    signal?: AbortSignal,
+    parentSessionFile?: string,
+  ): Promise<MasterIdentity> {
+    const persisted = this.#loadMaster(rootId);
+    if (callerDepth === 0) {
+      const response = await this.#runJson(["pane", "current", "--current"], signal);
+      const pane = objectAt(objectAt(response, "result"), "pane");
+      if (pane.pane_id !== this.#environment.HERDR_PANE_ID) {
+        throw new RuntimeIdentityError("Root caller pane differs from explicit Herdr pane identity");
+      }
+      if (pane.workspace_id !== this.#environment.HERDR_WORKSPACE_ID) {
+        throw new RuntimeIdentityError("Root caller workspace differs from explicit Herdr workspace identity");
+      }
+      const master = this.#masterFromPane(rootId, pane, persisted, parentSessionFile);
+      if (!persisted || master.tabId !== persisted.tabId || master.updatedAt !== persisted.updatedAt) {
+        this.#saveMaster(master);
+      }
+      return master;
+    }
+
+    const expected = {
+      rootId: this.#environment.HERDR_SUBAGENT_MASTER_ROOT_ID,
+      herdrSession: this.#environment.HERDR_SUBAGENT_MASTER_HERDR_SESSION,
+      workspaceId: this.#environment.HERDR_SUBAGENT_MASTER_WORKSPACE_ID,
+      masterPaneId: this.#environment.HERDR_SUBAGENT_MASTER_PANE_ID,
+      masterTabId: this.#environment.HERDR_SUBAGENT_MASTER_TAB_ID,
+      masterSessionPath: this.#environment.HERDR_SUBAGENT_MASTER_SESSION_PATH,
+    };
+    if (
+      !expected.rootId || !expected.herdrSession || !expected.workspaceId || !expected.masterPaneId ||
+      !expected.masterTabId || !expected.masterSessionPath || !persisted || !persisted.masterSessionPath
+    ) {
+      throw new RuntimeIdentityError(
+        "Descendant cannot prove the persisted lineage master identity; reload the parent Pi agent",
+      );
+    }
+    if (
+      expected.rootId !== persisted.rootId ||
+      expected.herdrSession !== persisted.herdrSession ||
+      expected.workspaceId !== persisted.workspaceId ||
+      expected.masterPaneId !== persisted.masterPaneId ||
+      expected.masterTabId !== persisted.tabId ||
+      expected.masterSessionPath !== persisted.masterSessionPath ||
+      this.#environment.HERDR_WORKSPACE_ID !== persisted.workspaceId ||
+      currentHerdrSession(this.#environment) !== persisted.herdrSession
+    ) {
+      throw new RuntimeIdentityError("Descendant lineage master identity does not match its environment");
+    }
+    const response = await this.#runJson(["pane", "get", persisted.masterPaneId], signal);
+    const pane = objectAt(objectAt(response, "result"), "pane");
+    if (pane.pane_id !== persisted.masterPaneId || pane.workspace_id !== persisted.workspaceId) {
+      throw new RuntimeIdentityError("Lineage master pane identity changed");
+    }
+    if (pane.agent !== "pi") {
+      throw new RuntimeIdentityError("Lineage master pane is not occupied by Pi");
+    }
+    const masterSessionPath = sessionPathFromAgent(pane);
+    if (masterSessionPath === undefined || persisted.masterSessionPath !== masterSessionPath) {
+      throw new RuntimeIdentityError("Lineage master session artifact changed");
+    }
+    const tabId = stringAt(pane, "tab_id");
+    if (tabId !== persisted.tabId) {
+      throw new RuntimeIdentityError("Lineage master tab identity changed");
+    }
+    const master = {
+      ...persisted,
+      updatedAt: this.#now(),
+    };
+    if (master.updatedAt !== persisted.updatedAt) this.#saveMaster(master);
+    return master;
+  }
+
+  #masterLayout(value: JsonObject, master: MasterIdentity): PaneLayout {
     const layout = objectAt(objectAt(value, "result"), "layout");
     if (
       typeof layout.tab_id !== "string" ||
-      layout.tab_id !== scope.tabId ||
+      layout.tab_id !== master.tabId ||
       typeof layout.workspace_id !== "string" ||
-      layout.workspace_id !== scope.workspaceId ||
+      layout.workspace_id !== master.workspaceId ||
       !Array.isArray(layout.panes)
     ) {
-      throw new RuntimeIdentityError(`Work scope ${scope.workScope} layout identity changed`);
+      throw new RuntimeIdentityError("Lineage master layout identity changed");
     }
-    const ownedPaneIds = new Set(
-      scope.ownedPaneIds ?? (scope.anchorPaneId ? [scope.anchorPaneId] : []),
-    );
     const panes = layout.panes.flatMap((entry): PaneLayout["panes"] => {
-      if (
-        !isObject(entry) || typeof entry.pane_id !== "string" || !ownedPaneIds.has(entry.pane_id)
-      ) return [];
       if (!isObject(entry) || typeof entry.pane_id !== "string" || !isObject(entry.rect)) return [];
       const width = entry.rect.width;
       const height = entry.rect.height;
@@ -1142,196 +1152,84 @@ export class SubagentOrchestrator {
       ) return [];
       return [{ paneId: entry.pane_id, width, height, area: width * height }];
     });
-    if (panes.length === 0) {
-      throw new RuntimeIdentityError(`Work scope ${scope.workScope} has no live panes`);
+    if (!panes.some((pane) => pane.paneId === master.masterPaneId)) {
+      throw new RuntimeIdentityError("Lineage master pane is absent from its current layout");
     }
-    return {
-      tabId: scope.tabId!,
-      workspaceId: scope.workspaceId,
-      panes,
-    };
+    return { tabId: master.tabId, workspaceId: master.workspaceId, panes };
   }
 
-  async #scopeTab(scope: WorkScopeRecord, signal?: AbortSignal): Promise<boolean> {
-    if (!scope.tabId) return false;
-    try {
-      const response = await this.#runJson(["tab", "get", scope.tabId], signal);
-      const tab = objectAt(objectAt(response, "result"), "tab");
-      if (
-        stringAt(tab, "tab_id") !== scope.tabId ||
-        stringAt(tab, "workspace_id") !== scope.workspaceId
-      ) {
-        throw new RuntimeIdentityError(`Work scope ${scope.workScope} tab identity changed`);
-      }
-      return true;
-    } catch (error) {
-      if (isPositiveTabAbsence(error)) return false;
-      throw error;
-    }
-  }
-
-  async #scopePaneAnchor(
+  async #ownedLayoutPanes(
     child: ChildRecord,
-    scope: WorkScopeRecord,
+    master: MasterIdentity,
+    layout: PaneLayout,
     signal?: AbortSignal,
-  ): Promise<string> {
-    const ownedPaneIds = new Set(
-      scope.ownedPaneIds ?? (scope.anchorPaneId ? [scope.anchorPaneId] : []),
+  ): Promise<PaneLayout["panes"]> {
+    const records = this.#loadChildren(child.rootId).filter((candidate) =>
+      candidate.id !== child.id &&
+      candidate.paneId !== undefined &&
+      candidate.workspaceId === master.workspaceId &&
+      candidate.herdrSession === master.herdrSession &&
+      !isRetiredSurface(candidate),
     );
-    const response = await this.#runJson(["pane", "list", "--workspace", scope.workspaceId], signal);
-    const result = objectAt(response, "result");
-    const panes = result.panes;
-    if (!Array.isArray(panes)) {
-      throw new Error(`Malformed Herdr response: missing scope panes`);
-    }
-    this.#assertNoMovedScopePanes(scope, panes);
-    const liveScopePaneIds = panes.flatMap((entry) =>
-      isObject(entry) && entry.tab_id === scope.tabId && typeof entry.pane_id === "string"
-        ? [entry.pane_id]
-        : []);
-    if (liveScopePaneIds.length === 0) {
-      throw new RuntimeIdentityError(`Work scope ${scope.workScope} has no live panes`);
-    }
-    const livePaneIds = new Set(liveScopePaneIds.filter((paneId) => ownedPaneIds.has(paneId)));
-    const children = this.#loadChildren(child.rootId);
-    for (const pane of panes) {
-      if (!isObject(pane) || typeof pane.pane_id !== "string" || !livePaneIds.has(pane.pane_id)) continue;
-      let owner = children.find((candidate) =>
-        candidate.paneId === pane.pane_id && candidate.workScope === child.workScope &&
-        candidate.workspaceId === child.workspaceId && candidate.herdrSession === child.herdrSession);
-      let observed = pane;
-      const deadline = performance.now() + 60_000;
-      for (;;) {
-        try {
-          await this.#assertOwnedPane(owner ?? { paneId: pane.pane_id, workspaceId: child.workspaceId }, observed, signal);
-          break;
-        } catch (error) {
-          // The allocator publishes the pane before its owner starts Pi outside the scope lock.
-          // Wait for that owner to publish its session, never infer ownership from a label.
-          const pendingLaunch = owner?.state === "starting" && (
-            error instanceof SurfaceOwnershipUnprovenError ||
-            (!owner.sessionPath && error instanceof SurfaceOwnershipLostError)
-          );
-          if (!pendingLaunch || performance.now() >= deadline) throw error;
-          await abortableDelay(50, signal);
-          owner = this.#loadChildren(child.rootId).find((candidate) => candidate.id === owner!.id);
-          const response = await this.#runJson(["pane", "get", pane.pane_id], signal);
-          observed = objectAt(objectAt(response, "result"), "pane");
+    const owned: PaneLayout["panes"] = [];
+    for (const owner of records) {
+      try {
+        const response = await this.#runJson(["pane", "get", owner.paneId!], signal);
+        const observed = objectAt(objectAt(response, "result"), "pane");
+        if (typeof observed.tab_id !== "string" || observed.tab_id.length === 0) {
+          throw new SurfaceOwnershipUnprovenError(`Pane tab identity is unproven for ${owner.paneId}`);
         }
+        if (observed.tab_id !== master.tabId) {
+          throw new RuntimeIdentityError("An owned pane moved to another tab; refusing placement");
+        }
+        // An empty or transient pane observation is checked against the
+        // foreground process as well. Unproven observations are skipped by
+        // the ownership helper and cannot become placement targets.
+        await this.#assertOwnedPane(owner, observed, signal);
+        const pane = layout.panes.find((candidate) => candidate.paneId === owner.paneId);
+        if (pane) owned.push(pane);
+      } catch (error) {
+        if (error instanceof SurfaceOwnershipLostError) {
+          throw new RuntimeIdentityError(`An owned pane moved or was replaced; refusing placement (${error.message})`);
+        }
+        if (error instanceof SurfaceOwnershipUnprovenError || isPositivePaneAbsence(error)) continue;
+        throw error;
       }
     }
-    const sibling = children
-      .find((candidate) =>
-        candidate.id !== child.id &&
-        candidate.workScope === child.workScope &&
-        candidate.tabId === scope.tabId &&
-        candidate.paneId !== undefined &&
-        livePaneIds.has(candidate.paneId) &&
-        !isRetiredSurface(candidate),
+    return owned;
+  }
+
+  async #withPlacementLock<T>(rootId: string, operation: () => Promise<T>): Promise<T> {
+    const directory = this.#registryPath(rootId);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    return withRegistryLock(join(directory, ".lineage-placement.lock"), operation);
+  }
+
+  async #createSurface(
+    child: ChildRecord,
+    callerDepth: number,
+    signal?: AbortSignal,
+    placementLocked = false,
+  ): Promise<void> {
+    const create = async () => {
+      const master = await this.#resolveMasterIdentity(child.rootId, callerDepth, signal);
+      const layout = this.#masterLayout(
+        await this.#runJson(["pane", "layout", "--pane", master.masterPaneId], signal),
+        master,
       );
-    if (sibling?.paneId) return sibling.paneId;
-    if (scope.anchorPaneId && livePaneIds.has(scope.anchorPaneId)) return scope.anchorPaneId;
-    const paneId = [...livePaneIds][0];
-    if (!paneId) {
-      throw new NoOwnedScopePaneError(`Work scope ${scope.workScope} has no identifiable owned pane`);
-    }
-    return paneId;
-  }
-
-  async #createScopeTab(
-    child: ChildRecord,
-    scope: WorkScopeRecord,
-    propagatedEnvironment: string[],
-    signal?: AbortSignal,
-  ): Promise<{ tabId: string; paneId: string }> {
-    const created = await this.#runJson([
-      "tab",
-      "create",
-      "--workspace",
-      child.workspaceId,
-      "--cwd",
-      child.launchLoadout.cwd,
-      "--label",
-      `Work: ${displayLabel(child.workScope!)}`,
-      ...propagatedEnvironment.flatMap((value) => ["--env", value]),
-      "--no-focus",
-    ], signal);
-    const result = objectAt(created, "result");
-    scope.tabId = stringAt(objectAt(result, "tab"), "tab_id");
-    scope.anchorPaneId = stringAt(objectAt(result, "root_pane"), "pane_id");
-    scope.ownedPaneIds = [scope.anchorPaneId];
-    scope.updatedAt = this.#now();
-    this.#saveScope(scope);
-    child.tabId = scope.tabId;
-    child.paneId = scope.anchorPaneId;
-    child.surfaceState = "open";
-    child.updatedAt = this.#now();
-    this.#saveChild(child);
-    return { tabId: scope.tabId, paneId: scope.anchorPaneId };
-  }
-
-  async #createScopedSurface(
-    child: ChildRecord,
-    propagatedEnvironment: string[],
-    signal?: AbortSignal,
-  ): Promise<{ tabId: string; paneId: string }> {
-    return this.#withScopeLock(child, async () => {
-      const now = this.#now();
-      let scope = this.#loadScope(child) ?? {
-        version: 1,
-        rootId: child.rootId,
-        workScope: child.workScope!,
-        workspaceId: child.workspaceId,
-        herdrSession: child.herdrSession,
-        createdAt: now,
-        updatedAt: now,
-      } satisfies WorkScopeRecord;
-      this.#pruneRetiredScopePanes(scope);
-      if (!(await this.#scopeTab(scope, signal))) {
-        if (scope.tabId && (scope.anchorPaneId || scope.ownedPaneIds?.length)) {
-          const response = await this.#runJson(["pane", "list", "--workspace", scope.workspaceId], signal);
-          const panes = objectAt(response, "result").panes;
-          if (!Array.isArray(panes)) {
-            throw new Error(`Malformed Herdr response: missing scope panes`);
-          }
-          this.#assertNoMovedScopePanes(scope, panes);
-        }
-        return this.#createScopeTab(child, scope, propagatedEnvironment, signal);
-      }
-
-      let anchor: string;
-      try {
-        anchor = await this.#scopePaneAnchor(child, scope, signal);
-      } catch (error) {
-        if (!(error instanceof NoOwnedScopePaneError)) throw error;
-        return this.#createScopeTab(child, scope, propagatedEnvironment, signal);
-      }
-      let layout: PaneLayout;
-      try {
-        layout = this.#scopeLayout(
-          await this.#runJson(["pane", "layout", "--pane", anchor], signal),
-          scope,
-        );
-      } catch (error) {
-        if (!isPositivePaneAbsence(error) || scope.anchorPaneId === undefined) throw error;
-        scope.anchorPaneId = undefined;
-        let refreshedAnchor: string;
-        try {
-          refreshedAnchor = await this.#scopePaneAnchor(child, scope, signal);
-        } catch (refreshedError) {
-          if (!(refreshedError instanceof NoOwnedScopePaneError)) throw refreshedError;
-          return this.#createScopeTab(child, scope, propagatedEnvironment, signal);
-        }
-        layout = this.#scopeLayout(
-          await this.#runJson(["pane", "layout", "--pane", refreshedAnchor], signal),
-          scope,
-        );
-      }
-      const target = [...layout.panes].sort((left, right) => right.area - left.area)[0]!;
+      const owned = await this.#ownedLayoutPanes(child, master, layout, signal);
+      const candidates = [
+        layout.panes.find((pane) => pane.paneId === master.masterPaneId)!,
+        ...owned,
+      ];
+      const target = [...new Map(candidates.map((pane) => [pane.paneId, pane])).values()]
+        .sort((left, right) => right.area - left.area)[0];
+      if (!target) throw new RuntimeIdentityError("Lineage master layout has no split candidate");
       let direction = target.width >= 2 * target.height ? "right" : "down";
       // Preserve 60 columns when a downward split can still provide 12 rows.
       // These are soft floors: very small terminals may not accommodate both.
       if (direction === "right" && target.width < 120 && target.height >= 24) direction = "down";
+      const propagatedEnvironment = this.#propagatedEnvironment(child, master);
       const created = await this.#runJson([
         "pane",
         "split",
@@ -1348,29 +1246,38 @@ export class SubagentOrchestrator {
       ], signal);
       const pane = objectAt(objectAt(created, "result"), "pane");
       const paneId = stringAt(pane, "pane_id");
-      const tabId = stringAt(pane, "tab_id");
-      if (tabId !== scope.tabId) {
-        throw new RuntimeIdentityError(`Work scope ${scope.workScope} split created in another tab`);
-      }
-      const ownedPaneIds = [...new Set([...(scope.ownedPaneIds ?? []), paneId])];
-      const verified = this.#scopeLayout(
-        await this.#runJson(["pane", "layout", "--pane", paneId], signal),
-        { ...scope, ownedPaneIds },
-      );
-      if (!verified.panes.some((candidate) => candidate.paneId === paneId)) {
-        throw new RuntimeIdentityError(`Work scope ${scope.workScope} split pane is not live`);
-      }
-      scope.ownedPaneIds = ownedPaneIds;
-      scope.anchorPaneId = paneId;
-      scope.updatedAt = this.#now();
-      this.#saveScope(scope);
-      child.tabId = tabId;
+      const reportedTabId = typeof pane.tab_id === "string" && pane.tab_id.length > 0
+        ? pane.tab_id
+        : undefined;
+      const workspaceId = typeof pane.workspace_id === "string" && pane.workspace_id.length > 0
+        ? pane.workspace_id
+        : undefined;
+      // Publish the pane before validating its identity. Any later failure can
+      // then use the ordinary ownership-checked, pane-only cleanup path.
+      // Record the expected lineage tab rather than an untrusted response tab,
+      // so cleanup can prove that the current pane still occupies that tab.
       child.paneId = paneId;
+      child.tabId = master.tabId;
       child.surfaceState = "open";
       child.updatedAt = this.#now();
       this.#saveChild(child);
-      return { tabId, paneId };
-    });
+      if (!reportedTabId) throw new Error("Malformed Herdr response: missing string tab_id");
+      if (workspaceId !== undefined && workspaceId !== master.workspaceId) {
+        throw new RuntimeIdentityError("Subagent split created in a different workspace than the master pane");
+      }
+      if (reportedTabId !== master.tabId) {
+        throw new RuntimeIdentityError("Subagent split created in a different tab than the master Pi pane");
+      }
+      const verifiedLayout = this.#masterLayout(
+        await this.#runJson(["pane", "layout", "--pane", master.masterPaneId], signal),
+        master,
+      );
+      if (!verifiedLayout.panes.some((candidate) => candidate.paneId === paneId)) {
+        throw new RuntimeIdentityError(`Subagent split pane is not live: ${paneId}`);
+      }
+    };
+    if (placementLocked) await create();
+    else await this.#withPlacementLock(child.rootId, create);
   }
 
   #assertCurrentHerdrSession(child: ChildRecord): void {
@@ -1384,13 +1291,19 @@ export class SubagentOrchestrator {
     }
   }
 
-  #propagatedEnvironment(child: ChildRecord): string[] {
+  #propagatedEnvironment(child: ChildRecord, master: MasterIdentity): string[] {
     return [
       `HERDR_SUBAGENT_DEPTH=${child.depth}`,
       `HERDR_SUBAGENT_ROOT_ID=${child.rootId}`,
       `HERDR_SUBAGENT_PARENT_ID=${child.parentId}`,
       `HERDR_SUBAGENT_AGENT_ID=${child.id}`,
       `HERDR_SUBAGENT_GENERATION=${child.generation}`,
+      `HERDR_SUBAGENT_MASTER_ROOT_ID=${master.rootId}`,
+      `HERDR_SUBAGENT_MASTER_HERDR_SESSION=${master.herdrSession}`,
+      `HERDR_SUBAGENT_MASTER_WORKSPACE_ID=${master.workspaceId}`,
+      `HERDR_SUBAGENT_MASTER_PANE_ID=${master.masterPaneId}`,
+      `HERDR_SUBAGENT_MASTER_TAB_ID=${master.tabId}`,
+      ...(master.masterSessionPath ? [`HERDR_SUBAGENT_MASTER_SESSION_PATH=${master.masterSessionPath}`] : []),
       ...(child.workScope ? [`HERDR_SUBAGENT_WORK_SCOPE=${child.workScope}`] : []),
       `HERDR_SUBAGENT_REGISTRY=${this.#registryPath(child.rootId)}`,
       `HERDR_SUBAGENT_COMPLETION_MARKER=${child.completionMarkerPath}`,
@@ -1492,13 +1405,10 @@ export class SubagentOrchestrator {
     this.#assertCurrentHerdrSession(child);
     const { sessionPath, startedAfterEntryId } = this.#verifyRelaunchArtifacts(child);
     const callerPaneId = this.#environment.HERDR_PANE_ID;
-    if (child.depth > 1 && !callerPaneId) {
+    if (!callerPaneId) {
       throw new Error(`Cannot reactivate ${child.semanticName}: missing owner Herdr pane identity`);
     }
 
-    if (child.workScope !== undefined) {
-      await this.#withScopeLock(child, async () => this.#forgetScopePaneUnlocked(child));
-    }
     child.generation += 1;
     child.completionMarkerPath = join(
       this.#registryPath(child.rootId),
@@ -1515,73 +1425,31 @@ export class SubagentOrchestrator {
     child.updatedAt = this.#now();
     this.#saveChild(child);
 
-    let layoutCreated = false;
     let agentStarted = false;
     try {
-      const propagatedEnvironment = this.#propagatedEnvironment(child);
-      if (child.workScope !== undefined) {
-        const placed = await this.#createScopedSurface(child, propagatedEnvironment, signal);
-        child.tabId = placed.tabId;
-        child.paneId = placed.paneId;
-      } else if (child.depth === 1) {
-        const created = await this.#runJson([
-          "tab",
-          "create",
-          "--workspace",
-          child.workspaceId,
-          "--cwd",
-          child.launchLoadout.cwd,
-          "--label",
-          `Work: ${displayLabel(child.semanticName)}`,
-          ...propagatedEnvironment.flatMap((value) => ["--env", value]),
-          "--no-focus",
-        ], signal);
-        const result = objectAt(created, "result");
-        child.tabId = stringAt(objectAt(result, "tab"), "tab_id");
-        child.paneId = stringAt(objectAt(result, "root_pane"), "pane_id");
-      } else {
-        const created = await this.#runJson([
-          "pane",
-          "split",
-          "--pane",
-          callerPaneId!,
-          "--direction",
-          "down",
-          "--ratio",
-          "0.5",
-          "--cwd",
-          child.launchLoadout.cwd,
-          ...propagatedEnvironment.flatMap((value) => ["--env", value]),
-          "--no-focus",
-        ], signal);
-        const pane = objectAt(objectAt(created, "result"), "pane");
-        child.paneId = stringAt(pane, "pane_id");
-        child.tabId = stringAt(pane, "tab_id");
-      }
-      layoutCreated = true;
-      child.surfaceState = "open";
-      child.updatedAt = this.#now();
-      this.#saveChild(child);
+      const started = await this.#withPlacementLock(child.rootId, async () => {
+        await this.#createSurface(child, child.depth - 1, signal, true);
 
-      await this.#runJson([
-        "pane",
-        "rename",
-        child.paneId,
-        paneLabel(child.launchLoadout.role, child.semanticName),
-      ], signal);
-      const started = await this.#startAgent([
-        "agent",
-        "start",
-        child.herdrName,
-        "--kind",
-        "pi",
-        "--pane",
-        child.paneId,
-        "--timeout",
-        "60000",
-        "--",
-        ...this.#piArguments(child, sessionPath),
-      ], signal);
+        await this.#runJson([
+          "pane",
+          "rename",
+          child.paneId,
+          paneLabel(child.launchLoadout.role, child.semanticName),
+        ], signal);
+        return this.#startAgent([
+          "agent",
+          "start",
+          child.herdrName,
+          "--kind",
+          "pi",
+          "--pane",
+          child.paneId,
+          "--timeout",
+          "60000",
+          "--",
+          ...this.#piArguments(child, sessionPath),
+        ], signal);
+      });
       agentStarted = true;
       const reportedSessionPath = sessionPathFromAgent(
         objectAt(objectAt(started, "result"), "agent"),
@@ -1608,7 +1476,7 @@ export class SubagentOrchestrator {
           // Preserve the primary reactivation failure.
         }
       }
-      if (layoutCreated) {
+      if (child.paneId !== undefined) {
         await this.#cleanupSurface(child);
       }
       child.state = "failed";
@@ -1625,8 +1493,13 @@ export class SubagentOrchestrator {
     ownerId: string,
     target: string,
     operation: () => Promise<T>,
+    { durable = true, stopMonitor = false }: { durable?: boolean; stopMonitor?: boolean } = {},
   ): Promise<T> {
     const childId = this.#findChild(rootId, ownerId, target).id;
+    // Stop this process's monitor before taking the durable lock. A monitor
+    // may be waiting on Herdr, and waiting for its lock here would otherwise
+    // prevent cancellation from reaching its AbortController.
+    if (stopMonitor) await this.#stopMonitor(childId);
     const previous = this.#childOperations.get(childId) ?? Promise.resolve();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -1636,7 +1509,9 @@ export class SubagentOrchestrator {
     this.#childOperations.set(childId, queued);
     await previous.catch(() => {});
     try {
-      return await operation();
+      return await (durable
+        ? this.#withChildRegistryLock(rootId, childId, operation)
+        : operation());
     } catch (error) {
       try {
         const child = this.#findChild(rootId, ownerId, childId);
@@ -1656,6 +1531,16 @@ export class SubagentOrchestrator {
     }
   }
 
+  async #withChildRegistryLock<T>(
+    rootId: string,
+    childId: string,
+    operation: () => T | Promise<T>,
+  ): Promise<T> {
+    const directory = this.#registryPath(rootId);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    return withRegistryLock(join(directory, `.${slug(childId)}.lifecycle.lock`), operation);
+  }
+
   async #withLineageLock<T>(rootId: string, operation: () => T): Promise<T> {
     const directory = this.#registryPath(rootId);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -1667,7 +1552,7 @@ export class SubagentOrchestrator {
     let entries: string[];
     try {
       entries = readdirSync(directory).filter(
-        (entry) => entry.endsWith(".json") && !entry.startsWith(".scope-"),
+        (entry) => entry.endsWith(".json") && !entry.startsWith("."),
       );
     } catch (error) {
       const code = isObject(error) && typeof error.code === "string" ? error.code : undefined;
@@ -1691,27 +1576,38 @@ export class SubagentOrchestrator {
     const directory = this.#registryPath(child.rootId);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const path = join(directory, `${slug(child.id)}.json`);
+    let currentRevision = 0;
     try {
       const current: unknown = JSON.parse(readFileSync(path, "utf8"));
-      if (
-        isObject(current) &&
-        typeof current.generation === "number" &&
-        current.generation > child.generation
-      ) {
+      if (!isObject(current)) throw new Error(`Malformed subagent registry record: ${path}`);
+      if (typeof current.generation === "number" && current.generation > child.generation) {
         throw new StaleGenerationError(
           `Refusing to overwrite generation ${current.generation} with ${child.generation}`,
         );
       }
+      if (current.revision !== undefined &&
+        (!Number.isSafeInteger(current.revision) || current.revision < 0)) {
+        throw new Error(`Malformed subagent registry revision: ${path}`);
+      }
+      currentRevision = typeof current.revision === "number" ? current.revision : 0;
     } catch (error) {
       const code = isObject(error) && typeof error.code === "string" ? error.code : undefined;
       if (code !== "ENOENT") throw error;
     }
+    const expectedRevision = child.revision ?? 0;
+    if (currentRevision !== expectedRevision) {
+      throw new StaleRevisionError(
+        `Refusing to overwrite revision ${currentRevision} with ${expectedRevision} for ${child.id}`,
+      );
+    }
+    const next = { ...child, revision: currentRevision + 1 };
     const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    writeFileSync(temporaryPath, `${JSON.stringify(child, null, 2)}\n`, {
+    writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,
     });
     renameSync(temporaryPath, path);
+    child.revision = next.revision;
   }
 
   #findChild(rootId: string, ownerId: string, target: string): ChildRecord {
@@ -1808,6 +1704,24 @@ export class SubagentOrchestrator {
     return parsed;
   }
 
+  async #saveMonitoredChild(child: ChildRecord): Promise<boolean> {
+    try {
+      return await this.#withChildRegistryLock(child.rootId, child.id, () => {
+        const current = this.#findChild(child.rootId, child.parentId, child.id);
+        if (
+          current.generation !== child.generation ||
+          current.revision !== child.revision ||
+          isRetiredSurface(current)
+        ) return false;
+        this.#saveChild(child);
+        return true;
+      });
+    } catch (error) {
+      if (error instanceof StaleRevisionError) return false;
+      throw error;
+    }
+  }
+
   #monitorChild(initialChild: ChildRecord): Promise<void> {
     const existing = this.#monitorTasks.get(initialChild.id);
     if (existing) return existing;
@@ -1823,7 +1737,7 @@ export class SubagentOrchestrator {
             );
             child.lifecycleError = `Detached monitor failed: ${errorMessage(error)}`;
             child.updatedAt = this.#now();
-            this.#saveChild(child);
+            if (await this.#saveMonitoredChild(child)) return;
             return;
           } catch {
             await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 25));
@@ -1879,14 +1793,14 @@ export class SubagentOrchestrator {
               child.state = "crashed";
               child.error = errorMessage(waitError);
               child.updatedAt = this.#now();
-              this.#saveChild(child);
+              if (!await this.#saveMonitoredChild(child)) return;
               if (await this.#deliver(child)) await this.#cleanupSurface(child);
               return;
             }
             child.state = "stale";
             child.error = `Could not reconcile failed Herdr wait: ${errorMessage(reconcileError)}`;
             child.updatedAt = this.#now();
-            this.#saveChild(child);
+            if (!await this.#saveMonitoredChild(child)) return;
             return;
           }
         }
@@ -1901,13 +1815,13 @@ export class SubagentOrchestrator {
           child.state = "stale";
           child.error = errorMessage(error);
           child.updatedAt = this.#now();
-          this.#saveChild(child);
+          if (!await this.#saveMonitoredChild(child)) return;
           return;
         }
         if (status === "working" || status === "blocked") {
           child.state = status;
           child.updatedAt = this.#now();
-          this.#saveChild(child);
+          if (!await this.#saveMonitoredChild(child)) return;
           waitUntilUnblocked = status === "blocked";
           continue;
         }
@@ -1915,7 +1829,7 @@ export class SubagentOrchestrator {
           child.state = "stale";
           child.error = `Unexpected settled Herdr agent status: ${status}`;
           child.updatedAt = this.#now();
-          this.#saveChild(child);
+          if (!await this.#saveMonitoredChild(child)) return;
           return;
         }
         await this.#monitorCompletionProof(child, controller.signal);
@@ -1926,12 +1840,28 @@ export class SubagentOrchestrator {
       child.state = child.state === "cancelled" ? "cancelled" : "stale";
       child.error = errorMessage(error);
       child.updatedAt = this.#now();
-      this.#saveChild(child);
+      await this.#saveMonitoredChild(child);
     } finally {
       if (this.#monitorControllers.get(child.id) === controller) {
         this.#monitorControllers.delete(child.id);
       }
     }
+  }
+
+  async #monitorCompleteFromSession(
+    child: ChildRecord,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    return this.#withChildRegistryLock(child.rootId, child.id, async () => {
+      const current = this.#findChild(child.rootId, child.parentId, child.id);
+      if (
+        current.generation !== child.generation ||
+        current.revision !== child.revision ||
+        !ACTIVE_STATES.has(current.state)
+      ) return false;
+      await this.#completeFromSession(child, signal);
+      return true;
+    });
   }
 
   async #monitorCompletionProof(child: ChildRecord, signal: AbortSignal): Promise<void> {
@@ -1940,7 +1870,7 @@ export class SubagentOrchestrator {
       if (current.generation !== child.generation || !ACTIVE_STATES.has(current.state)) return;
 
       try {
-        await this.#completeFromSession(child, signal);
+        if (await this.#monitorCompleteFromSession(child, signal)) return;
         return;
       } catch (error) {
         if (!(error instanceof CompletionNotProvenError)) throw error;
@@ -1956,12 +1886,12 @@ export class SubagentOrchestrator {
           child.error =
             `Could not observe Herdr agent while awaiting completion proof: ${errorMessage(observeError)}`;
           child.updatedAt = this.#now();
-          this.#saveChild(child);
+          if (!await this.#saveMonitoredChild(child)) return;
           return;
         }
 
         try {
-          await this.#completeFromSession(child, signal);
+          if (await this.#monitorCompleteFromSession(child, signal)) return;
           return;
         } catch (completionError) {
           if (!(completionError instanceof CompletionNotProvenError)) throw completionError;
@@ -1970,7 +1900,7 @@ export class SubagentOrchestrator {
         child.error =
           `Herdr agent disappeared while awaiting completion proof: ${errorMessage(observeError)}`;
         child.updatedAt = this.#now();
-        this.#saveChild(child);
+        if (!await this.#saveMonitoredChild(child)) return;
         if (await this.#deliver(child)) await this.#cleanupSurface(child);
         return;
       }
@@ -1986,24 +1916,24 @@ export class SubagentOrchestrator {
         child.state = "stale";
         child.error = errorMessage(error);
         child.updatedAt = this.#now();
-        this.#saveChild(child);
+        if (!await this.#saveMonitoredChild(child)) return;
         return;
       }
       if (status === "working" || status === "blocked") {
         child.state = status;
         child.updatedAt = this.#now();
-        this.#saveChild(child);
+        if (!await this.#saveMonitoredChild(child)) return;
         continue;
       }
       if (status === "idle" || status === "done") {
         child.updatedAt = this.#now();
-        this.#saveChild(child);
+        if (!await this.#saveMonitoredChild(child)) return;
         continue;
       }
       child.state = "stale";
       child.error = `Unexpected Herdr agent status while awaiting completion proof: ${status}`;
       child.updatedAt = this.#now();
-      this.#saveChild(child);
+      if (!await this.#saveMonitoredChild(child)) return;
       return;
     }
   }
@@ -2094,12 +2024,23 @@ export class SubagentOrchestrator {
   }
 
   async #assertOwnedPane(
-    identity: Pick<ChildRecord, "paneId" | "workspaceId" | "sessionPath">,
+    identity: Pick<ChildRecord, "paneId" | "tabId" | "workspaceId" | "sessionPath">,
     pane: JsonObject,
     signal?: AbortSignal,
   ): Promise<void> {
-    if (pane.pane_id !== identity.paneId || pane.workspace_id !== identity.workspaceId) {
-      throw new SurfaceOwnershipUnprovenError(`Pane identity changed for ${identity.paneId}`);
+    if (pane.pane_id !== identity.paneId) {
+      if (typeof pane.pane_id === "string") {
+        throw new SurfaceOwnershipLostError(`Pane identity changed for ${identity.paneId}; preserving pane`);
+      }
+      throw new SurfaceOwnershipUnprovenError(`Pane identity is unproven for ${identity.paneId}`);
+    }
+    if (typeof pane.workspace_id !== "string" ||
+      (identity.tabId !== undefined && typeof pane.tab_id !== "string")) {
+      throw new SurfaceOwnershipUnprovenError(`Pane identity is unproven for ${identity.paneId}`);
+    }
+    if (pane.workspace_id !== identity.workspaceId ||
+      (identity.tabId !== undefined && pane.tab_id !== identity.tabId)) {
+      throw new SurfaceOwnershipLostError(`Pane identity changed for ${identity.paneId}; preserving pane`);
     }
     const session = sessionPathFromAgent(pane);
     if ((pane.agent && pane.agent !== "pi") || (session && identity.sessionPath && session !== identity.sessionPath)) {
@@ -2120,7 +2061,8 @@ export class SubagentOrchestrator {
     if (processes.length === 1 && isObject(processes[0]) && processes[0].pid === info.shell_pid) return;
     if (processes.length > 0 && processes.every((entry) => isObject(entry) &&
       typeof entry.pid === "number" && Number.isSafeInteger(entry.pid) && entry.pid > 0 &&
-      typeof entry.argv0 === "string" && entry.argv0.length > 0 && entry.argv0 !== "pi" && entry.name !== "node")) {
+      typeof entry.argv0 === "string" && entry.argv0.length > 0 && entry.argv0 !== "pi" &&
+      !/(?:^|\/)node(?:js)?$/.test(entry.argv0) && entry.name !== "node")) {
       throw new SurfaceOwnershipLostError(`Another foreground command occupies ${identity.paneId}; preserving pane`);
     }
     throw new SurfaceOwnershipUnprovenError(`Foreground ownership is unproven in ${identity.paneId}`);
@@ -2146,13 +2088,11 @@ export class SubagentOrchestrator {
           child.cleanupError = error.message;
         } else child.cleanupError = errorMessage(error);
       }
-      if (isRetiredSurface(child)) this.#forgetScopePaneUnlocked(child);
       child.updatedAt = this.#now();
       this.#saveChild(child);
     };
     try {
-      if (child.workScope === undefined) await cleanup();
-      else await this.#withScopeLock(child, cleanup);
+      await this.#withPlacementLock(child.rootId, cleanup);
     } catch (error) {
       child.cleanupError = errorMessage(error);
       child.updatedAt = this.#now();

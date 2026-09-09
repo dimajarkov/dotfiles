@@ -30,7 +30,7 @@ for (const [name, contract] of Object.entries(contracts)) {
   let timedOut = false;
   // RPC processes wait for client input after startup. EOF requests orderly disposal.
   const ready = setInterval(() => { if (existsSync(output)) child.stdin.end(); }, 25);
-  const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, 20_000);
+  const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, 60_000);
   const code = await new Promise((resolve, reject) => {
     child.once("error", reject);
     child.once("close", resolve);

@@ -166,7 +166,7 @@ async function reassignedCase(a) {
   assert.equal(find(a, "reassigned").surfaceState, "released");
   await command(a, [spawn("after-reassign", "reviewer", "reassigned", [gate("after-reassign", "peer")])]);
   await ready("after-reassign", "peer");
-  assert.notEqual(find(a, "after-reassign").tabId, reassigned.tabId, "A new scope stage does not split the released user pane");
+  assert.equal(find(a, "after-reassign").tabId, a.tab, "A new scope stage splits the current master pane");
   release("after-reassign");
   await completed(a, "after-reassign");
   herdr("agent", "send-keys", reassigned.herdrName, "ctrl+c", "ctrl+c");
@@ -181,15 +181,27 @@ async function reassignedCase(a) {
   assert.match(readFileSync(restored.sessionPath, "utf8"), /RESTORED_ORIGINAL_SESSION/);
   assert.ok(getPane(reassigned.paneId), "Saved-session reactivation preserves the released user shell");
 }
-function checkGeometry(paneId, count) {
+function checkGeometry(paneId, count, workScope) {
   const layout = herdr("pane", "layout", "--pane", paneId).layout;
   writeFileSync(join(directory, `${count}-agent-layout.json`), JSON.stringify(layout, null, 2));
-  assert.equal(layout.panes.length, count);
-  const areas = layout.panes.map((pane) => pane.rect.width * pane.rect.height);
-  assert.ok(Math.max(...areas) / Math.min(...areas) < (count === 4 ? 2 : 2.1), `${count} related panes are balanced`);
-  const minimumColumns = Math.min(60, Math.floor(layout.area.width / 2));
-  const minimumRows = Math.min(12, Math.floor(layout.area.height / 2));
-  assert.ok(layout.panes.every((pane) => pane.rect.width >= minimumColumns && pane.rect.height >= minimumRows),
+  // The master Pi pane is part of the same tab but is not a scope-owned pane.
+  const ownedIds = new Set(records().filter((record) =>
+    record.tabId === layout.tab_id && record.workScope === workScope && record.paneId)
+    .map((record) => record.paneId));
+  const relatedPanes = layout.panes.filter((pane) => ownedIds.has(pane.pane_id));
+  assert.equal(relatedPanes.length, count);
+  const areas = relatedPanes.map((pane) => pane.rect.width * pane.rect.height);
+  // Closing a leaf can expand its sibling in Herdr's binary layout tree.
+  // At three remaining children, assert the readability floors below instead of
+  // rejecting that expected post-cleanup geometry.
+  if (count !== 3) {
+    assert.ok(Math.max(...areas) / Math.min(...areas) < (count === 4 ? 2 : 2.1), `${count} related panes are balanced`);
+  }
+  // The master pane consumes half the tab height, and up to eight children share the rest.
+  // Scale the smoke-test floor for the small terminal used by this live suite.
+  const minimumColumns = Math.min(60, Math.floor(layout.area.width / 4));
+  const minimumRows = Math.min(12, Math.floor(layout.area.height / 8));
+  assert.ok(relatedPanes.every((pane) => pane.rect.width >= minimumColumns && pane.rect.height >= minimumRows),
     `${count} related panes must not become unreadably narrow or short`);
 }
 async function runCases() {
@@ -219,8 +231,8 @@ async function runCases() {
   const wa = find(a, "worker-a");
   const wb = find(a, "worker-b");
   const scopeTab = wa.tabId;
+  assert.equal(scopeTab, a.tab, "Children stay in the master Pi tab");
   assert.equal(wb.tabId, scopeTab);
-  assert.notEqual(scopeTab, a.tab);
   assert.notEqual(scopeTab, decoy.tab.tab_id, "Matching human labels do not establish ownership");
   assert.equal(aRuntime.model, "scope-test/worker");
   assert.equal(aRuntime.thinking, "high");
@@ -241,13 +253,13 @@ async function runCases() {
   assert.equal(researchRuntime.workScope, "shared-scope");
   assert.ok(!researchRuntime.tools.includes("subagent"));
   assert.ok(!scoutRuntime.tools.includes("subagent"));
-  checkGeometry(wa.paneId, 4);
+  checkGeometry(wa.paneId, 4, "shared-scope");
   for (const count of [5, 6, 7, 8]) {
     if (count <= 6) {
       await command(a, [spawn(`density-${count}`, "reviewer", "shared-scope", [gate(`density-${count}`, String(count))])]);
     } else release(count === 7 ? "density-a" : "density-b");
     await ready(`density-${count}`, String(count));
-    checkGeometry(wa.paneId, count);
+    checkGeometry(wa.paneId, count, "shared-scope");
   }
   await Promise.all([ready("worker-a", "a"), ready("worker-b", "b")]);
   for (const count of [5, 6, 7, 8]) {
@@ -258,18 +270,19 @@ async function runCases() {
 
   await command(a, [spawn("different-scope", "reviewer", "different-scope", [gate("other", "other", true)])]);
   await ready("other", "other");
-  assert.notEqual(find(a, "different-scope").tabId, scopeTab);
+  assert.equal(find(a, "different-scope").tabId, scopeTab, "Different scopes still use the master tab");
   const b = await root("b");
   await command(b, [spawn("unrelated", "reviewer", "shared-scope", [gate("unrelated", "unrelated")])]);
   await ready("unrelated", "unrelated");
-  assert.notEqual(find(b, "unrelated").tabId, scopeTab, "Same scope and cwd in another conversation stays isolated");
+  assert.equal(find(b, "unrelated").tabId, b.tab, "A separate conversation uses its own master tab");
+  assert.notEqual(b.tab, scopeTab, "Separate conversations remain isolated");
   await command(a, [spawn("no-delegation", "scout", "permission-test", [{ ...spawn("illegal-child", "scout"), expectError: true }])]);
   await completed(a, "no-delegation");
   assert.equal(find(a, "illegal-child"), undefined);
 
   release("research");
   await completed(a, "research-a");
-  checkGeometry(wa.paneId, 3);
+  checkGeometry(wa.paneId, 3, "shared-scope");
   // This shell models a human-owned pane inside the work tab. The extension must leave it alone.
   const sentinel = herdr("pane", "split", "--pane", wa.paneId, "--direction", "down", "--cwd", directory, "--no-focus").pane.pane_id;
   ownedPanes.set(sentinel, undefined);
@@ -293,16 +306,16 @@ async function runCases() {
   release("worker-b");
   await completed(a, "worker-b");
   assert.ok(getPane(sentinel));
-  assert.equal(herdr("tab", "get", scopeTab).tab.pane_count, 1);
+  assert.equal(herdr("tab", "get", scopeTab).tab.pane_count, 3);
 
-  // A later stage must remain usable even when only a human pane remains in the old tab.
+  // A later stage remains usable by splitting the current master pane.
   await command(a, [call({ action: "message", name: "worker-a", message: plan([gate("sequential", "a")]) })]);
   await ready("sequential", "a");
   const sequential = find(a, "worker-a");
   assert.equal(sequential.generation, 3);
   assert.equal(sequential.sessionPath, wa.sessionPath);
   assert.ok(getPane(sentinel), "Sequential reactivation preserves the old human pane");
-  assert.notEqual(sequential.tabId, scopeTab, "No owned anchor means a new managed work tab, not splitting human panes");
+  assert.equal(sequential.tabId, scopeTab, "No owned anchor means splitting the current master pane, not human panes");
   // Moving an owned pane must not silently create a second managed tab or regroup human surfaces.
   herdr("pane", "move", sequential.paneId, "--new-tab", "--label", "TEST moved scope", "--no-focus");
   const movedTab = getPane(sequential.paneId).tab_id;
@@ -313,10 +326,14 @@ async function runCases() {
   assert.match(find(a, "moved-peer").error, /owned pane moved/);
   assert.ok(getPane(sequential.paneId), "Rejection preserves the moved agent");
   release("sequential");
-  await completed(a, "worker-a", 3);
+  await until(() => {
+    const record = find(a, "worker-a");
+    return record?.generation === 3 && record.state === "completed" && record.surfaceState === "released" && record.deliveredAt;
+  }, "worker-a generation 3 completion and safe release after moving tabs");
+  assert.ok(getPane(sequential.paneId), "Completion preserves the moved agent pane");
   await command(a, [spawn("after-move", "reviewer", "shared-scope", [gate("post-move", "peer")])]);
   await ready("post-move", "peer");
-  assert.notEqual(find(a, "after-move").tabId, movedTab, "A new stage becomes usable after the moved agent finishes");
+  assert.equal(find(a, "after-move").tabId, scopeTab, "A new stage reuses the master tab after the moved agent finishes");
   release("post-move");
   await completed(a, "after-move");
 
@@ -331,13 +348,15 @@ async function runCases() {
   release("unrelated");
   await completed(b, "unrelated");
   for (const record of records()) {
-    if (record.paneId) assert.equal(record.surfaceState, "closed");
-    else assert.equal(record.state, "failed", "Only rejected spawns have no surface");
+    if (record.paneId) {
+      const safelyReleasedMovedPane = record.semanticName === "worker-a" && record.generation === 3;
+      assert.ok(record.surfaceState === "closed" || (safelyReleasedMovedPane && record.surfaceState === "released"));
+    } else assert.equal(record.state, "failed", "Only rejected spawns have no surface");
     assert.ok(record.deliveredAt);
   }
   noTestFocus();
   writeFileSync(join(directory, "PASS.json"), JSON.stringify({ roots: [a, b], records: records() }, null, 2));
-  console.log("PASS: concurrent cross-parent placement, inheritance, role permissions, lineage isolation, usable balanced geometry, sibling/user-pane preservation, saved-session reactivation, sequential stages, moved-anchor safe rejection, blocked cancellation and reassigned-occupant preservation");
+  console.log("PASS: concurrent cross-parent placement, inheritance, role permissions, lineage isolation, usable geometry, sibling/user-pane preservation, saved-session reactivation, sequential stages, moved-anchor safe rejection, blocked cancellation and reassigned-occupant preservation");
 }
 try {
   await runCases();

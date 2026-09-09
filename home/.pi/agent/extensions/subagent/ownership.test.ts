@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
@@ -8,11 +8,14 @@ import { SubagentOrchestrator, type ChildRecord, type CommandExecution } from ".
 async function scenario(t: TestContext, workScope?: string, monitor = false) {
   const directory = mkdtempSync(join(tmpdir(), "subagent-ownership-"));
   const session = join(directory, "child.jsonl");
+  const parentSession = join(directory, "parent.jsonl");
+  writeFileSync(parentSession, "");
   writeFileSync(session, `${JSON.stringify({
     type: "message", id: "result-1", parentId: null,
     message: { role: "assistant", content: [{ type: "text", text: "SAVED_FINDINGS" }], stopReason: "stop" },
   })}\n`);
   let nextChild = 0;
+  let allocated = false;
   const pendingWaits = new Set<() => void>();
   const calls: string[][] = [];
   const delivered: ChildRecord[] = [];
@@ -30,13 +33,20 @@ async function scenario(t: TestContext, workScope?: string, monitor = false) {
   };
   const orchestrator = new SubagentOrchestrator({
     stateDirectory: directory,
-    environment: { HERDR_ENV: "1", HERDR_SESSION: "session-a", HERDR_WORKSPACE_ID: "w1", HERDR_PANE_ID: "w1:p1" },
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_SESSION: "session-a",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_TAB_ID: "w1:t1",
+      HERDR_PANE_ID: "w1:p1",
+    },
     id: () => `child-${++nextChild}`, monitor,
     onCompletion: async (child) => { delivered.push({ ...child }); return true; },
     transport: {
       async run(args, signal): Promise<CommandExecution> {
         calls.push([...args]);
         const command = args.slice(0, 2).join(" ");
+        let result: unknown;
         if (command === "agent get" && runtime.lookupError) {
           return { code: 1, stdout: "", stderr: runtime.lookupError };
         }
@@ -50,17 +60,34 @@ async function scenario(t: TestContext, workScope?: string, monitor = false) {
             if (signal?.aborted) abort();
           });
         }
-        let result: unknown;
         const agent = {
           pane_id: "w1:p9", agent_status: "done",
           agent_session: runtime.session ? { kind: "path", value: runtime.session } : undefined,
         };
         switch (command) {
-          case "tab create":
+          case "pane current":
+            result = { pane: {
+              pane_id: "w1:p1", tab_id: "w1:t1", workspace_id: "w1", agent: "pi",
+              agent_session: { kind: "path", value: parentSession },
+            } }; break;
+          case "pane layout":
+            result = {
+              layout: {
+                tab_id: "w1:t1", workspace_id: "w1",
+                panes: [
+                  { pane_id: "w1:p1", rect: { width: 120, height: 60 } },
+                  ...(allocated
+                    ? [{ pane_id: "w1:p9", rect: { width: 120, height: 60 } }]
+                    : []),
+                ],
+              },
+            }; break;
+          case "pane split":
             if (runtime.allocationError) return { code: 1, stdout: "", stderr: runtime.allocationError };
-            result = { tab: { tab_id: "w1:t9" }, root_pane: { pane_id: "w1:p9" } }; break;
-          case "tab get": result = { tab: { tab_id: "w1:t9", workspace_id: "w1" } }; break;
-          case "pane list": result = { panes: [{ ...agent, tab_id: "w1:t9", workspace_id: "w1", agent: runtime.agent }] }; break;
+            allocated = true;
+            result = { pane: { pane_id: "w1:p9", tab_id: "w1:t1" } }; break;
+          case "tab get": result = { tab: { tab_id: "w1:t1", workspace_id: "w1" } }; break;
+          case "pane list": result = { panes: [{ ...agent, tab_id: "w1:t1", workspace_id: "w1", agent: runtime.agent }] }; break;
           case "pane rename": result = { type: "ok" }; break;
           case "agent start":
           case "agent prompt":
@@ -72,7 +99,7 @@ async function scenario(t: TestContext, workScope?: string, monitor = false) {
             if (runtime.observationError || !runtime.present) return {
               code: 1, stdout: "", stderr: runtime.observationError ?? "pane_not_found",
             };
-            result = { pane: { ...agent, workspace_id: "w1", agent: runtime.agent } }; break;
+            result = { pane: { ...agent, tab_id: "w1:t1", workspace_id: "w1", agent: runtime.agent } }; break;
           case "pane process-info": result = { process_info: runtime.foreground }; break;
           case "pane close": runtime.present = false; result = { type: "ok" }; break;
           default: throw new Error(`Unexpected transport command: ${command}`);
@@ -114,50 +141,6 @@ for (const operation of ["message", "cancel"]) {
     while (s.record().surfaceState !== "closed") await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(s.delivered.length, 1);
     assert.equal(s.delivered[0]?.result, "SAVED_FINDINGS");
-  });
-}
-
-for (const session of [undefined, "/tmp/replacement.jsonl"]) {
-  test(`scope allocation rejects ${session ? "changed" : "unproven"} anchor occupancy before creating a surface`, async (t) => {
-    const s = await scenario(t, "ownership");
-    const before = s.record();
-    s.runtime.session = session;
-    await assert.rejects(s.orchestrator.spawn({
-      name: "next-stage", task: "Review", cwd: s.directory, parentSessionId: "parent", workScope: "ownership",
-      agent: { name: "reviewer", description: "Review", tools: ["read"], skillPaths: [], spawnTargets: [] },
-    }), /occupant session (?:changed|is unproven)/);
-    assert.deepEqual(s.record(), before);
-    assert.deepEqual(s.calls.map((args) => args.slice(0, 2)), [["tab", "get"], ["pane", "list"]]);
-    const rejected = s.orchestrator.list("parent").find((child) => child.semanticName === "next-stage");
-    assert.equal(rejected?.state, "failed");
-    assert.equal(rejected?.paneId, undefined);
-  });
-}
-
-for (const operation of ["spawn", "message"]) {
-  test(`${operation} reconciles a released claim after interrupted scope bookkeeping`, async (t) => {
-    const s = await scenario(t, "ownership");
-    const scopeFile = readdirSync(s.registry).find((entry) => entry.startsWith(".scope-") && entry.endsWith(".json"));
-    assert.ok(scopeFile);
-    const scopePath = join(s.registry, scopeFile);
-    const savedScope = readFileSync(scopePath, "utf8");
-    // Corrupt only this test's disposable scope file to interrupt post-release bookkeeping.
-    writeFileSync(scopePath, "incomplete scope write");
-    s.runtime.session = "/tmp/replacement.jsonl";
-    await s.cancel();
-    assert.equal(s.record().surfaceState, "released");
-    assert.ok(s.record().cleanupError);
-    writeFileSync(scopePath, savedScope);
-    s.calls.length = 0;
-    s.runtime.allocationError = "fresh managed tab requested";
-    await assert.rejects(operation === "spawn" ? s.orchestrator.spawn({
-      name: "next-stage", task: "Review", cwd: s.directory, parentSessionId: "parent", workScope: "ownership",
-      agent: { name: "reviewer", description: "Review", tools: ["read"], skillPaths: [], spawnTargets: [] },
-    }) : s.orchestrator.message("parent", "parent", "owned", "CONTINUE"), /fresh managed tab requested/);
-    assert.deepEqual(JSON.parse(readFileSync(scopePath, "utf8")).ownedPaneIds, []);
-    assert.deepEqual(mutations(s.calls), []);
-    assert.equal(s.runtime.present, true);
-    assert.match(readFileSync(s.session, "utf8"), /SAVED_FINDINGS/);
   });
 }
 

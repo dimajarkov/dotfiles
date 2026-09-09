@@ -54,7 +54,7 @@ Select the role with `agent` and provide `action: "spawn"` and a short stable `n
 ```
 
 `name` identifies this child for later controls; it does not select its role.
-Related children inherit your named work scope and share its background tab in separate panes.
+Related children inherit your named work scope and share the master Pi agent's Herdr tab in separate panes.
 
 ### When to dispatch a scout vs. read directly
 
