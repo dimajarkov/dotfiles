@@ -18,11 +18,7 @@
  * sessions, cookies, and localStorage survive between turns. It's torn
  * down on `session_shutdown`.
  *
- * Setup:
- *   cd ~/.pi/agent/extensions/browser
- *   npm install
- *   npx playwright install chromium
- *   # then /reload in pi (or restart)
+ * Home Manager provisions the locked dependencies and Chromium binary.
  *
  * Tweaks:
  *   PI_BROWSER_HEADFUL=1   launch a visible window (useful when debugging
@@ -37,30 +33,31 @@ import { tmpdir } from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
-  chromium,
-  type BrowserContext,
-  type Page,
-  type ConsoleMessage,
-  type Request,
+  serializeNetworkEntries,
+  type NetworkEntry,
+} from "./network-serialization.ts";
+import type {
+  BrowserContext,
+  ConsoleMessage,
+  Page,
+  Request,
 } from "playwright-core";
+
+const DEFAULT_BROWSERS_DIR = join(
+  homedir(),
+  ".pi",
+  "agent",
+  "extensions",
+  "browser",
+  ".browsers",
+);
+process.env.PLAYWRIGHT_BROWSERS_PATH ??= DEFAULT_BROWSERS_DIR;
 
 type ConsoleEntry = {
   ts: number;
   type: string;
   text: string;
   location?: string;
-};
-
-type NetEntry = {
-  ts: number;
-  method: string;
-  url: string;
-  status?: number;
-  statusText?: string;
-  resourceType: string;
-  requestHeaders?: Record<string, string>;
-  responseHeaders?: Record<string, string>;
-  failure?: string;
 };
 
 const MAX_BUF = 1000;
@@ -93,17 +90,6 @@ function pushBounded<T>(buf: T[], entry: T): void {
   if (buf.length > MAX_BUF) buf.splice(0, buf.length - MAX_BUF);
 }
 
-function filterHeaders(
-  h: Record<string, string>,
-  allow: Set<string>,
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(h)) {
-    if (allow.has(k.toLowerCase())) out[k] = v;
-  }
-  return out;
-}
-
 /**
  * Serialize all tool executions against the single shared Page.
  *
@@ -128,17 +114,21 @@ export default function browserExtension(pi: ExtensionAPI) {
   let context: BrowserContext | null = null;
   let page: Page | null = null;
   const consoleBuf: ConsoleEntry[] = [];
-  const netBuf: NetEntry[] = [];
+  const netBuf: NetworkEntry[] = [];
 
   const profileDir =
     process.env.PI_BROWSER_PROFILE ??
     join(homedir(), ".pi", "agent", "extensions", "browser", ".profile");
+  const browsersDir =
+    process.env.PLAYWRIGHT_BROWSERS_PATH ?? DEFAULT_BROWSERS_DIR;
   const headless = !process.env.PI_BROWSER_HEADFUL;
 
   async function ensurePage(): Promise<Page> {
     if (page && !page.isClosed()) return page;
 
     if (!context) {
+      process.env.PLAYWRIGHT_BROWSERS_PATH = browsersDir;
+      const { chromium } = await import("playwright-core");
       context = await chromium.launchPersistentContext(profileDir, {
         headless,
         viewport: { width: 1280, height: 800 },
@@ -402,12 +392,12 @@ export default function browserExtension(pi: ExtensionAPI) {
     name: "browser_network",
     label: "Browser Network",
     promptSnippet:
-      "Inspect the actual HTTP requests the page made — status, method, URL, and (with verbose=true) Authorization / apikey / content-type headers. Use for 401 / 403 / CORS debugging",
+      "Inspect the actual HTTP requests the page made - status, method, URL, and (with verbose=true) redacted Authorization / apikey / content-type headers. Use for 401 / 403 / CORS debugging",
     promptGuidelines: [
-      "Use browser_network with verbose=true (and urlFilter to narrow scope) for any auth or CORS issue — it reveals the exact Authorization / apikey / Origin / content-type headers the browser actually sent, which is otherwise invisible from source.",
+      "Use browser_network with verbose=true (and urlFilter to narrow scope) for auth or CORS issues. Sensitive header values are redacted while their presence remains visible.",
     ],
     description:
-      "Drain buffered network requests. Default text output is one terse line per request ('<status> <method> <url>') to keep context small.\n\nOpt-in for headers: set verbose=true to inline a curated set of request/response headers on each returned row (authorization, apikey, content-type, x-client-info, accept-profile, content-profile, prefer, location, www-authenticate, retry-after). Pass includeHeaders=['cookie','cache-control',...] to add more for this call only (case-insensitive). Best paired with urlFilter / status so headers only appear on the rows you care about.\n\nClear semantics: with clear=true (default) the ENTIRE buffer is wiped after read, not just the returned entries — this is intentional, so subsequent calls observe a fresh window of activity rather than re-walking the same subresource noise. Pass clear=false to peek without draining.\n\nCaveat: fetches whose body is never consumed (e.g. `await fetch(url)` without `.text()`/`.json()`) often appear here as 'ERR ... net::ERR_ABORTED' even though the JS side saw a successful response — Chromium cancels the body stream and Playwright reports requestfailed. Consume the body if you want a clean status row.",
+      "Drain buffered network requests. Default text output is one terse line per request ('<status> <method> <url>') to keep context small.\n\nOpt-in for headers: set verbose=true to inline a curated set of request/response headers on each returned row (authorization, apikey, content-type, x-client-info, accept-profile, content-profile, prefer, location, www-authenticate, retry-after). Sensitive values are always redacted. Pass includeHeaders=['cookie','cache-control',...] to add more header names for this call only (case-insensitive); sensitive values remain redacted. Best paired with urlFilter / status so headers only appear on the rows you care about.\n\nClear semantics: with clear=true (default) the ENTIRE buffer is wiped after read, not just the returned entries. This is intentional, so subsequent calls observe a fresh activity window rather than re-walking the same subresource noise. Pass clear=false to peek without draining.\n\nCaveat: fetches whose body is never consumed (e.g. `await fetch(url)` without `.text()`/`.json()`) often appear here as 'ERR ... net::ERR_ABORTED' even though the JS side saw a successful response. Chromium cancels the body stream and Playwright reports requestfailed. Consume the body if you want a clean status row.",
     parameters: Type.Object({
       limit: Type.Optional(Type.Number()),
       urlFilter: Type.Optional(Type.String({ description: "Substring filter on URL" })),
@@ -421,7 +411,7 @@ export default function browserExtension(pi: ExtensionAPI) {
       includeHeaders: Type.Optional(
         Type.Array(Type.String(), {
           description:
-            "Extra header names (case-insensitive) to surface alongside the curated default set. Implies verbose=true.",
+            "Extra header names (case-insensitive) to surface alongside the curated default set. Sensitive values remain redacted. Implies verbose=true.",
         }),
       ),
       clear: Type.Optional(
@@ -449,20 +439,11 @@ export default function browserExtension(pi: ExtensionAPI) {
         const showHeaders = params.verbose === true || extra.length > 0;
         const allow = new Set([...KEEP_HEADERS, ...extra]);
 
-        const lines: string[] = [];
-        for (const e of out) {
-          lines.push(
-            `${e.status ?? "ERR"} ${e.method} ${e.url}${e.failure ? `  (${e.failure})` : ""}`,
-          );
-          if (showHeaders) {
-            const reqH = e.requestHeaders ? filterHeaders(e.requestHeaders, allow) : {};
-            for (const [k, v] of Object.entries(reqH)) lines.push(`  → ${k}: ${v}`);
-            const resH = e.responseHeaders ? filterHeaders(e.responseHeaders, allow) : {};
-            for (const [k, v] of Object.entries(resH)) lines.push(`  ← ${k}: ${v}`);
-          }
-        }
-        const text = lines.join("\n") || "(empty)";
-        return { content: [{ type: "text", text }], details: { entries: out } };
+        const result = serializeNetworkEntries(out, showHeaders, allow);
+        return {
+          content: [{ type: "text", text: result.text }],
+          details: { entries: result.entries },
+        };
       });
     },
   });

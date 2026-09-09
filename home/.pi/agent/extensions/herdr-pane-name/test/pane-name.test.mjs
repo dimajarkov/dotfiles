@@ -219,18 +219,19 @@ for (const complete of [
 ]) {
   test("model failure uses a bounded fallback without disrupting the request", async () => {
     const h = harness({ complete });
-    await h.prompt("Fix a very important bug " + "x".repeat(100));
+    await h.prompt("authorization=Bearer private-token");
     assert.equal(renames(h).length, 1);
-    assert.ok(renames(h)[0][3].startsWith("Fix a very important bug"));
-    assert.ok(renames(h)[0][3].length <= 48);
+    assert.equal(renames(h)[0][3], "Coding task");
+    assert.doesNotMatch(JSON.stringify(h.entries), /private-token/);
     assert.equal(h.notices.length, 1);
   });
 }
 
-test("missing model still supplies a prompt fallback", async () => {
+test("missing model uses a generic fallback", async () => {
   const h = harness({ model: null });
-  await h.prompt("Fix authentication");
-  assert.equal(renames(h)[0][3], "Fix authentication");
+  await h.prompt("password=private-password");
+  assert.equal(renames(h)[0][3], "Coding task");
+  assert.doesNotMatch(JSON.stringify(h.entries), /private-password/);
 });
 
 for (const exec of [

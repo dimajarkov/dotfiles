@@ -1,9 +1,10 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { Text } from "@mariozechner/pi-tui";
+import { Text } from "@earendil-works/pi-tui";
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
+import { readResponseBytes, readResponseText } from "./response-body.ts";
 
 const USER_AGENT =
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
@@ -40,11 +41,11 @@ function isPDF(url: string, contentType?: string): boolean {
 }
 
 async function extractPDF(
-	buffer: ArrayBuffer,
+	buffer: Uint8Array,
 	url: string,
 ): Promise<FetchResult> {
 	const { getDocumentProxy } = await import("unpdf");
-	const pdf = await getDocumentProxy(new Uint8Array(buffer));
+	const pdf = await getDocumentProxy(buffer);
 
 	const metadata = await pdf.getMetadata();
 	const metadataInfo =
@@ -348,7 +349,7 @@ async function extractWithJinaReader(
 		});
 		if (!res.ok) return null;
 
-		const content = await res.text();
+		const content = await readResponseText(res, MAX_RESPONSE_SIZE);
 		const contentStart = content.indexOf("Markdown Content:");
 		if (contentStart < 0) return null;
 
@@ -406,24 +407,8 @@ async function extractViaHttp(
 		}
 
 		const contentType = response.headers.get("content-type") || "";
-		const contentLengthHeader = response.headers.get("content-length");
 		const isPDFContent = isPDF(url, contentType);
 		const maxSize = isPDFContent ? MAX_PDF_SIZE : MAX_RESPONSE_SIZE;
-
-		if (contentLengthHeader) {
-			const contentLength = parseInt(contentLengthHeader, 10);
-			if (contentLength > maxSize) {
-				return {
-					url, title: "", content: "",
-					error: `Response too large (${Math.round(contentLength / 1024 / 1024)}MB)`,
-				};
-			}
-		}
-
-		if (isPDFContent) {
-			const buffer = await response.arrayBuffer();
-			return await extractPDF(buffer, url);
-		}
 
 		if (
 			contentType.includes("application/octet-stream") ||
@@ -438,7 +423,10 @@ async function extractViaHttp(
 			};
 		}
 
-		const text = await response.text();
+		const body = await readResponseBytes(response, maxSize);
+		if (isPDFContent) return await extractPDF(body, url);
+
+		const text = new TextDecoder().decode(body);
 		const isHTML =
 			contentType.includes("text/html") ||
 			contentType.includes("application/xhtml+xml");

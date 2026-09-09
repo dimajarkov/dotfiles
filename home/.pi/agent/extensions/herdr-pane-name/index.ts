@@ -96,7 +96,7 @@ export default function herdrPaneName(pi: ExtensionAPI) {
 
   async function generate(prompt: string, ctx: ExtensionContext): Promise<void> {
     const request = requestText(prompt);
-    let title = cleanTitle(request) || "Image request";
+    let title = request ? "Coding task" : "Image request";
     try {
       if (ctx.model && request) {
         const response = await ctx.modelRegistry.complete(
@@ -126,10 +126,7 @@ export default function herdrPaneName(pi: ExtensionAPI) {
       }
     } catch {
       if (!lifetime.signal.aborted)
-        ctx.ui.notify(
-          "Pane title generation unavailable; using the first request as a fallback.",
-          "warning",
-        );
+        ctx.ui.notify("Pane title generation unavailable; using a generic fallback.", "warning");
     }
     // A response from a replaced/reloaded session must never name its successor.
     if (lifetime.signal.aborted) return;

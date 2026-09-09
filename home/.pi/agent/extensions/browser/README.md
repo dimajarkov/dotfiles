@@ -6,17 +6,20 @@ inspect localStorage, watch the console and network, fill forms, click.
 
 ## Why it exists
 
-When a frontend bug reduces to "what's in localStorage?" or "what `Authorization`
-header did supabase-js attach?", the agent currently has to ask the user to
+When a frontend bug reduces to "what's in localStorage?" or "did supabase-js
+attach an `Authorization` header?", the agent currently has to ask the user to
 paste console output and curls. With this extension it can answer those
-questions itself.
+questions itself without exposing credential values in network output.
 
 ## Install
 
+Home Manager installs the locked dependencies and Chromium binary during
+activation. To repair an installation manually:
+
 ```bash
 cd ~/.pi/agent/extensions/browser
-npm install
-npx playwright install chromium    # one-time browser binary download (~150MB)
+npm ci --ignore-scripts
+PLAYWRIGHT_BROWSERS_PATH="$PWD/.browsers" ./node_modules/.bin/playwright-core install chromium
 ```
 
 Then `/reload` inside pi (or restart). The new tools (`browser_goto`,
@@ -83,6 +86,7 @@ for status; `close` and `kill` are aliases for `off`).
 |---|---|---|
 | `PI_BROWSER_HEADFUL` | unset | If set, launch a visible Chromium window. Useful when debugging the extension itself. |
 | `PI_BROWSER_PROFILE` | `~/.pi/agent/extensions/browser/.profile` | Override the persistent user-data dir. Set to a tempdir for ephemeral sessions. |
+| `PLAYWRIGHT_BROWSERS_PATH` | `~/.pi/agent/extensions/browser/.browsers` | Override the Home Manager-provisioned browser binary directory. |
 
 ## Network output: terse by default, headers on opt-in
 
@@ -93,21 +97,24 @@ agent's context window in noise.
 
 When you actually want headers (the auth-debugging use case), opt in:
 
-- `verbose: true` — inline a curated set of request/response headers on each
-  returned row. The curated set is small on purpose:
+- `verbose: true` - inline a curated set of request/response header names on
+  each returned row. Sensitive values are replaced with `[REDACTED]`. The
+  curated set is small on purpose:
 
   ```
   authorization, apikey, content-type, x-client-info, accept-profile,
   content-profile, prefer, location, www-authenticate, retry-after
   ```
 
-- `includeHeaders: ["cookie", "cache-control", ...]` — extend the curated set
-  for this call only (case-insensitive). Implies `verbose: true`.
+- `includeHeaders: ["cookie", "cache-control", ...]` - extend the curated set
+  for this call only (case-insensitive). Implies `verbose: true`; sensitive
+  values remain redacted.
 
-All headers are captured into the ring buffer regardless; `verbose` /
-`includeHeaders` only affect what's rendered into the text output. Best
-paired with `urlFilter` / `status` so headers only appear on the rows you
-actually care about.
+All headers are captured into the ring buffer regardless; the shared output
+serializer redacts sensitive values from both rendered text and structured
+details. `verbose` / `includeHeaders` only affect what's rendered into the text
+output. Best paired with `urlFilter` / `status` so headers only appear on the
+rows you actually care about.
 
 Clear-on-read drains the **entire** buffer by default, not just the rows
 returned. This is intentional: subsequent calls observe a fresh activity
@@ -116,8 +123,8 @@ to peek without draining.
 
 ## Caveats and known limits
 
-- `playwright-core` ships without browser binaries; the `npx playwright install
-  chromium` step above is required exactly once per machine.
+- `playwright-core` ships without browser binaries; Home Manager provisions the
+  matching Chromium build into the ignored `.browsers` runtime directory.
 - The page object is a singleton — there's no tab/window management. If you
   need multiple tabs, extend `ensurePage` to accept a tab id.
 - `browser_eval` evaluates the source once and, if the result is a function,

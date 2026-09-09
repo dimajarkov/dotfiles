@@ -171,25 +171,55 @@ in {
     for extension in browser web-fetch; do
       extension_path="${config.home.homeDirectory}/.pi/agent/extensions/$extension"
       extension_source="${dotfiles}/home/.pi/agent/extensions/$extension"
-      if [ -d "$extension_path" ] && [ ! -L "$extension_path" ]; then
-        for runtime in node_modules .profile; do
-          runtime_path="$extension_path/$runtime"
-          runtime_source="$extension_source/$runtime"
-          if [ -e "$runtime_path" ] && [ ! -e "$runtime_source" ]; then
-            /bin/mv -- "$runtime_path" "$runtime_source"
+
+      if [ -L "$extension_path" ] && [ "$(/usr/bin/readlink "$extension_path")" = "$extension_source" ]; then
+        migration_stage="$(/usr/bin/mktemp -d "$extension_path.migration.XXXXXX")"
+        moved_runtimes=""
+        for runtime in node_modules .profile .browsers; do
+          if [ -e "$extension_source/$runtime" ]; then
+            if /bin/mv -- "$extension_source/$runtime" "$migration_stage/$runtime"; then
+              moved_runtimes="$runtime $moved_runtimes"
+            else
+              for moved_runtime in $moved_runtimes; do
+                /bin/mv -- "$migration_stage/$moved_runtime" "$extension_source/$moved_runtime"
+              done
+              /bin/rmdir -- "$migration_stage"
+              false
+            fi
           fi
         done
+        if ! /bin/rm -- "$extension_path" || ! /bin/mv -- "$migration_stage" "$extension_path"; then
+          for moved_runtime in $moved_runtimes; do
+            /bin/mv -- "$migration_stage/$moved_runtime" "$extension_source/$moved_runtime"
+          done
+          /bin/rmdir -- "$migration_stage"
+          if [ ! -e "$extension_path" ]; then
+            /bin/ln -s -- "$extension_source" "$extension_path"
+          fi
+          false
+        fi
+      fi
 
-        for file in README.md index.ts package.json package-lock.json; do
+      if [ -d "$extension_path" ] && [ ! -L "$extension_path" ]; then
+        migration_ready=1
+        for file in .gitignore README.md index.ts network-serialization.ts response-body.ts package.json package-lock.json; do
           file_path="$extension_path/$file"
           file_source="$extension_source/$file"
-          if [ -f "$file_path" ] && [ -f "$file_source" ] && /usr/bin/cmp -s "$file_path" "$file_source"; then
-            /bin/rm -- "$file_path"
+          if [ -e "$file_path" ] && [ ! -L "$file_path" ]; then
+            if [ ! -f "$file_path" ] || [ ! -f "$file_source" ] || ! /usr/bin/cmp -s "$file_path" "$file_source"; then
+              migration_ready=0
+            fi
           fi
         done
 
-        if [ -z "$(/usr/bin/find "$extension_path" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-          /bin/rmdir -- "$extension_path"
+        if [ "$migration_ready" -eq 1 ]; then
+          for file in .gitignore README.md index.ts network-serialization.ts response-body.ts package.json package-lock.json; do
+            file_path="$extension_path/$file"
+            file_source="$extension_source/$file"
+            if [ -f "$file_path" ] && [ ! -L "$file_path" ] && [ -f "$file_source" ] && /usr/bin/cmp -s "$file_path" "$file_source"; then
+              /bin/rm -- "$file_path"
+            fi
+          done
         fi
       fi
     done
@@ -199,6 +229,24 @@ in {
     if [ -f "$agents_path" ] && [ ! -L "$agents_path" ] && /usr/bin/cmp -s "$agents_path" "$agents_source"; then
       /bin/rm -- "$agents_path"
     fi
+  '';
+
+  home.activation.installPiExtensionDependencies = config.lib.dag.entryAfter [ "linkGeneration" ] ''
+    install_pi_extension_dependencies() {
+      extension_path="$1"
+      lock_hash="$(${pkgs.coreutils}/bin/sha256sum "$extension_path/package-lock.json" | ${pkgs.coreutils}/bin/cut -d ' ' -f 1)"
+      stamp_path="$extension_path/node_modules/.home-manager-lock-hash"
+      if [ ! -f "$stamp_path" ] || [ "$(/bin/cat "$stamp_path")" != "$lock_hash" ]; then
+        ${pkgs.nodejs_22}/bin/npm ci --ignore-scripts --no-audit --no-fund --prefix "$extension_path"
+        printf '%s\n' "$lock_hash" > "$stamp_path"
+      fi
+    }
+
+    browser_path="${config.home.homeDirectory}/.pi/agent/extensions/browser"
+    install_pi_extension_dependencies "$browser_path"
+    install_pi_extension_dependencies "${config.home.homeDirectory}/.pi/agent/extensions/web-fetch"
+    PLAYWRIGHT_BROWSERS_PATH="${config.home.homeDirectory}/.pi/agent/extensions/browser/.browsers" \
+      "$browser_path/node_modules/.bin/playwright-core" install chromium
   '';
 
   home.activation.migrateLegacyHammerspoonConfig = config.lib.dag.entryBefore [ "checkFilesChanged" "checkLinkTargets" ] ''
@@ -257,10 +305,28 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/lib/herdr-blocked.ts";
   home.file.".pi/agent/extensions/subagent".source =
     config.lib.file.mkOutOfStoreSymlink piSubagentExtension;
-  home.file.".pi/agent/extensions/browser".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser";
-  home.file.".pi/agent/extensions/web-fetch".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch";
+  home.file.".pi/agent/extensions/browser/.gitignore".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/.gitignore";
+  home.file.".pi/agent/extensions/browser/README.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/README.md";
+  home.file.".pi/agent/extensions/browser/index.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/index.ts";
+  home.file.".pi/agent/extensions/browser/network-serialization.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/network-serialization.ts";
+  home.file.".pi/agent/extensions/browser/package.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/package.json";
+  home.file.".pi/agent/extensions/browser/package-lock.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/package-lock.json";
+  home.file.".pi/agent/extensions/web-fetch/.gitignore".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/.gitignore";
+  home.file.".pi/agent/extensions/web-fetch/index.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/index.ts";
+  home.file.".pi/agent/extensions/web-fetch/response-body.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/response-body.ts";
+  home.file.".pi/agent/extensions/web-fetch/package.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/package.json";
+  home.file.".pi/agent/extensions/web-fetch/package-lock.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/package-lock.json";
   home.file.".pi/agent/extensions/custom-header.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/custom-header.ts";
   home.file.".pi/agent/agents/planner.md".source =
