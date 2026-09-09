@@ -52,6 +52,9 @@ const CLEANUP_TERMINAL_STATES = new Set<ChildState>([
 const CHILD_COMPLETION_EXTENSION = fileURLToPath(
   new URL("./completion-protocol.ts", import.meta.url),
 );
+const AGENT_START_TIMEOUT_MILLISECONDS = 60_000;
+const PLACEMENT_LOCK_TIMEOUT_SECONDS =
+  Math.ceil(AGENT_START_TIMEOUT_MILLISECONDS / 1_000) + 30;
 
 export type ChildState =
   | "starting"
@@ -905,7 +908,7 @@ export class SubagentOrchestrator {
   ): Promise<ChildRecord> {
     let agentStarted = false;
     try {
-      const started = await this.#withPlacementLock(child.rootId, async () => {
+      await this.#withPlacementLock(child.rootId, async () => {
         await this.#createSurface(child, callerDepth, signal, true);
 
         await this.#runJson([
@@ -916,7 +919,7 @@ export class SubagentOrchestrator {
         ], signal);
 
         const piArguments = this.#piArguments(child);
-        return this.#startAgent([
+        child.sessionPath = await this.#startChildAgent([
           "agent",
           "start",
           child.herdrName,
@@ -925,16 +928,15 @@ export class SubagentOrchestrator {
           "--pane",
           child.paneId,
           "--timeout",
-          "60000",
+          String(AGENT_START_TIMEOUT_MILLISECONDS),
           "--",
           ...piArguments,
-        ], signal);
+        ], child, undefined, () => {
+          agentStarted = true;
+        }, signal);
+        child.updatedAt = this.#now();
+        this.#saveChild(child);
       });
-      const startedAgent = objectAt(objectAt(started, "result"), "agent");
-      agentStarted = true;
-      child.sessionPath = sessionPathFromAgent(startedAgent);
-      child.updatedAt = this.#now();
-      this.#saveChild(child);
 
       await this.#runJson(["agent", "prompt", child.herdrName, child.task], signal);
       child.state = "working";
@@ -1202,7 +1204,9 @@ export class SubagentOrchestrator {
   async #withPlacementLock<T>(rootId: string, operation: () => Promise<T>): Promise<T> {
     const directory = this.#registryPath(rootId);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    return withRegistryLock(join(directory, ".lineage-placement.lock"), operation);
+    return withRegistryLock(join(directory, ".lineage-placement.lock"), operation, {
+      timeoutSeconds: PLACEMENT_LOCK_TIMEOUT_SECONDS,
+    });
   }
 
   async #createSurface(
@@ -1427,7 +1431,7 @@ export class SubagentOrchestrator {
 
     let agentStarted = false;
     try {
-      const started = await this.#withPlacementLock(child.rootId, async () => {
+      await this.#withPlacementLock(child.rootId, async () => {
         await this.#createSurface(child, child.depth - 1, signal, true);
 
         await this.#runJson([
@@ -1436,7 +1440,7 @@ export class SubagentOrchestrator {
           child.paneId,
           paneLabel(child.launchLoadout.role, child.semanticName),
         ], signal);
-        return this.#startAgent([
+        child.sessionPath = await this.#startChildAgent([
           "agent",
           "start",
           child.herdrName,
@@ -1445,21 +1449,15 @@ export class SubagentOrchestrator {
           "--pane",
           child.paneId,
           "--timeout",
-          "60000",
+          String(AGENT_START_TIMEOUT_MILLISECONDS),
           "--",
           ...this.#piArguments(child, sessionPath),
-        ], signal);
+        ], child, sessionPath, () => {
+          agentStarted = true;
+        }, signal);
+        child.updatedAt = this.#now();
+        this.#saveChild(child);
       });
-      agentStarted = true;
-      const reportedSessionPath = sessionPathFromAgent(
-        objectAt(objectAt(started, "result"), "agent"),
-      );
-      if (reportedSessionPath && reportedSessionPath !== sessionPath) {
-        throw new Error(`Herdr relaunched ${child.semanticName} with a different session artifact`);
-      }
-      child.sessionPath = sessionPath;
-      child.updatedAt = this.#now();
-      this.#saveChild(child);
 
       await this.#runJson(["agent", "prompt", child.herdrName, message], signal);
       child.state = "working";
@@ -1674,6 +1672,79 @@ export class SubagentOrchestrator {
     throw lastError;
   }
 
+  #startedSessionPath(
+    child: ChildRecord,
+    response: JsonObject,
+    expectedSessionPath?: string,
+  ): string | undefined {
+    const result = response.result;
+    if (!isObject(result) || !isObject(result.agent)) return undefined;
+    const agent = result.agent;
+    if (typeof agent.pane_id !== "string") return undefined;
+    if (!child.paneId || agent.pane_id !== child.paneId) {
+      throw new RuntimeIdentityError(`Herdr pane identity changed for ${child.herdrName}`);
+    }
+    const sessionPath = sessionPathFromAgent(agent);
+    if (sessionPath === undefined) return undefined;
+    if (expectedSessionPath !== undefined && sessionPath !== expectedSessionPath) {
+      throw new RuntimeIdentityError(
+        `Herdr relaunched ${child.semanticName} with a different session artifact`,
+      );
+    }
+    return sessionPath;
+  }
+
+  async #startChildAgent(
+    args: string[],
+    child: ChildRecord,
+    expectedSessionPath: string | undefined,
+    markStarted: () => void,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    let started: JsonObject | undefined;
+    let malformedStartError: Error | undefined;
+    try {
+      started = await this.#startAgent(args, signal);
+      markStarted();
+    } catch (error) {
+      if (!(error instanceof Error) ||
+        error.message !== "Malformed Herdr JSON for command: herdr agent start") throw error;
+      malformedStartError = error;
+      markStarted();
+    }
+
+    if (started !== undefined) {
+      const reportedSessionPath = this.#startedSessionPath(
+        child,
+        started,
+        expectedSessionPath,
+      );
+      if (reportedSessionPath !== undefined) return reportedSessionPath;
+    }
+
+    let reconciled: JsonObject;
+    try {
+      reconciled = await this.#runJson(["agent", "get", child.herdrName], signal);
+    } catch (error) {
+      if (malformedStartError === undefined) throw error;
+      throw new Error(
+        `${malformedStartError.message}; startup reconciliation failed: ${errorMessage(error)}`,
+        { cause: error },
+      );
+    }
+    const reconciledSessionPath = this.#startedSessionPath(
+      child,
+      reconciled,
+      expectedSessionPath,
+    );
+    if (reconciledSessionPath === undefined) {
+      throw new RuntimeIdentityError(
+        `Herdr did not report a persistent session for ${child.herdrName}`,
+      );
+    }
+    return reconciledSessionPath;
+  }
+
   async #runJson(args: string[], signal?: AbortSignal): Promise<JsonObject> {
     const execution = await this.#transport.run(args, signal);
     if (execution.code !== 0) {
@@ -1719,6 +1790,28 @@ export class SubagentOrchestrator {
     } catch (error) {
       if (error instanceof StaleRevisionError) return false;
       throw error;
+    }
+  }
+
+  async #crashMonitoredChild(child: ChildRecord, error: string): Promise<boolean> {
+    try {
+      return await this.#withChildRegistryLock(child.rootId, child.id, async () => {
+        const current = this.#findChild(child.rootId, child.parentId, child.id);
+        if (
+          current.generation !== child.generation ||
+          current.revision !== child.revision ||
+          !ACTIVE_STATES.has(current.state)
+        ) return false;
+        current.state = "crashed";
+        current.error = error;
+        current.updatedAt = this.#now();
+        this.#saveChild(current);
+        if (await this.#deliver(current)) await this.#cleanupSurface(current);
+        return true;
+      });
+    } catch (lockError) {
+      if (lockError instanceof StaleRevisionError) return false;
+      throw lockError;
     }
   }
 
@@ -1790,11 +1883,7 @@ export class SubagentOrchestrator {
           } catch (reconcileError) {
             if (this.#disposed || controller.signal.aborted) return;
             if (isPositiveAgentAbsence(reconcileError)) {
-              child.state = "crashed";
-              child.error = errorMessage(waitError);
-              child.updatedAt = this.#now();
-              if (!await this.#saveMonitoredChild(child)) return;
-              if (await this.#deliver(child)) await this.#cleanupSurface(child);
+              await this.#crashMonitoredChild(child, errorMessage(waitError));
               return;
             }
             child.state = "stale";
@@ -1896,12 +1985,10 @@ export class SubagentOrchestrator {
         } catch (completionError) {
           if (!(completionError instanceof CompletionNotProvenError)) throw completionError;
         }
-        child.state = "crashed";
-        child.error =
-          `Herdr agent disappeared while awaiting completion proof: ${errorMessage(observeError)}`;
-        child.updatedAt = this.#now();
-        if (!await this.#saveMonitoredChild(child)) return;
-        if (await this.#deliver(child)) await this.#cleanupSurface(child);
+        await this.#crashMonitoredChild(
+          child,
+          `Herdr agent disappeared while awaiting completion proof: ${errorMessage(observeError)}`,
+        );
         return;
       }
       signal.throwIfAborted();

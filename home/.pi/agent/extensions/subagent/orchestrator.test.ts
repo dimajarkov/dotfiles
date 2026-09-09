@@ -16,6 +16,7 @@ import {
   type CommandExecution,
   type HerdrTransport,
 } from "./orchestrator.ts";
+import { withRegistryLock } from "./registry-lock.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -431,6 +432,10 @@ test("nested spawn splits the lineage master pane in the master tab", async () =
     id: "cli:pane:rename",
     result: { pane: { pane_id: "w1:p2" } },
   };
+  const started = responses[2] as {
+    result: { agent: { pane_id: string } };
+  };
+  started.result.agent.pane_id = "w1:p2";
   const stateDirectory = temporaryDirectory();
   writeLineageIdentity(stateDirectory, "root-1");
   const transport = new FakeHerdrTransport(responses);
@@ -782,12 +787,134 @@ test("recovery rejects a child owned by another Herdr session", async () => {
   assert.equal(recovered.list("parent-session")[0]?.state, "working");
 });
 
-test("restart recovery classifies a missing live agent as stale", async () => {
+test("spawn reconciles a persistent session omitted from the start response", async () => {
   const spawnResponses = successfulRootSpawnResponses();
   const started = spawnResponses[2] as {
     result: { agent: { agent_session?: unknown } };
   };
   delete started.result.agent.agent_session;
+  spawnResponses.splice(3, 0, {
+    id: "cli:agent:get",
+    result: {
+      agent: {
+        name: "authentication-worker-child1",
+        pane_id: "w1:p9",
+        agent_status: "idle",
+        agent_session: { kind: "path", value: "/tmp/child.jsonl" },
+      },
+    },
+  });
+  const directory = temporaryDirectory();
+  const environment = {
+    HERDR_ENV: "1",
+    HERDR_WORKSPACE_ID: "w1",
+    HERDR_TAB_ID: "w1:t1",
+    HERDR_PANE_ID: "w1:p1",
+  };
+  const transport = new FakeHerdrTransport(spawnResponses);
+  const initial = new SubagentOrchestrator({
+    transport,
+    stateDirectory: directory,
+    environment,
+    id: () => "child-1",
+    monitor: false,
+  });
+  const child = await initial.spawn(spawnRequest());
+
+  assert.equal(child.sessionPath, "/tmp/child.jsonl");
+  assert.deepEqual(transport.calls.slice(2, 5).map((call) => call.slice(0, 2)), [
+    ["agent", "start"],
+    ["agent", "get"],
+    ["agent", "prompt"],
+  ]);
+});
+
+test("spawn rejects an unproven persistent session before prompting", async () => {
+  const responses = successfulRootSpawnResponses();
+  const started = responses[2] as {
+    result: { agent: { agent_session?: unknown } };
+  };
+  delete started.result.agent.agent_session;
+  responses.splice(3, 0, {
+    id: "cli:agent:get",
+    result: {
+      agent: {
+        name: "authentication-worker-child1",
+        pane_id: "w1:p9",
+        agent_status: "idle",
+      },
+    },
+  });
+  const transport = new FakeHerdrTransport(responses);
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: temporaryDirectory(),
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_TAB_ID: "w1:t1",
+      HERDR_PANE_ID: "w1:p1",
+    },
+    id: () => "child-1",
+    monitor: false,
+  });
+
+  await assert.rejects(
+    orchestrator.spawn(spawnRequest()),
+    /did not report a persistent session/,
+  );
+
+  assert.equal(
+    transport.calls.some((call) => call[0] === "agent" && call[1] === "prompt"),
+    false,
+  );
+  assert.equal(orchestrator.list("parent-session")[0]?.state, "failed");
+});
+
+test("spawn reconciles a committed start whose response is malformed", async () => {
+  const responses = successfulRootSpawnResponses();
+  const transport = new FakeHerdrTransport(responses);
+  transport.responses[2] = { code: 0, stdout: "not-json\n", stderr: "" };
+  transport.responses.splice(3, 0, {
+    code: 0,
+    stdout: `${JSON.stringify({
+      id: "cli:agent:get",
+      result: {
+        agent: {
+          name: "authentication-worker-child1",
+          pane_id: "w1:p9",
+          agent_status: "idle",
+          agent_session: { kind: "path", value: "/tmp/child.jsonl" },
+        },
+      },
+    })}\n`,
+    stderr: "",
+  });
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: temporaryDirectory(),
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_TAB_ID: "w1:t1",
+      HERDR_PANE_ID: "w1:p1",
+    },
+    id: () => "child-1",
+    monitor: false,
+  });
+
+  const child = await orchestrator.spawn(spawnRequest());
+
+  assert.equal(child.state, "working");
+  assert.equal(child.sessionPath, "/tmp/child.jsonl");
+  assert.deepEqual(transport.calls.slice(2, 5).map((call) => call.slice(0, 2)), [
+    ["agent", "start"],
+    ["agent", "get"],
+    ["agent", "prompt"],
+  ]);
+});
+
+test("restart recovery classifies a missing live agent as stale", async () => {
   const directory = temporaryDirectory();
   const environment = {
     HERDR_ENV: "1",
@@ -796,7 +923,7 @@ test("restart recovery classifies a missing live agent as stale", async () => {
     HERDR_PANE_ID: "w1:p1",
   };
   const initial = new SubagentOrchestrator({
-    transport: new FakeHerdrTransport(spawnResponses),
+    transport: new FakeHerdrTransport(successfulRootSpawnResponses()),
     stateDirectory: directory,
     environment,
     id: () => "child-1",
@@ -966,6 +1093,10 @@ test("recovery reconciles only children owned by the current parent", async () =
     id: "cli:pane:split",
     result: { pane: { pane_id: "w1:p2", tab_id: "w1:t1" } },
   };
+  const nestedStarted = nestedResponses[2] as {
+    result: { agent: { pane_id: string } };
+  };
+  nestedStarted.result.agent.pane_id = "w1:p2";
   const nested = new SubagentOrchestrator({
     transport: new FakeHerdrTransport(nestedResponses),
     stateDirectory: directory,
@@ -2035,6 +2166,15 @@ test("message relaunches a finished root child with its exact saved loadout and 
         agent: {
           pane_id: "w1:p10",
           agent_status: "idle",
+        },
+      },
+    },
+    {
+      id: "cli:agent:get",
+      result: {
+        agent: {
+          pane_id: "w1:p10",
+          agent_status: "idle",
           agent_session: { kind: "path", value: childSession },
         },
       },
@@ -2117,7 +2257,7 @@ test("message relaunches a finished root child with its exact saved loadout and 
     "--session",
     childSession,
   ]);
-  assert.deepEqual(relaunchTransport.calls[3], [
+  assert.deepEqual(relaunchTransport.calls[4], [
     "agent",
     "prompt",
     "authentication-worker-child1",
@@ -2321,8 +2461,9 @@ test("message relaunches a finished nested child in a fresh owner pane", async (
     result: { pane: { pane_id: "w1:p2", tab_id: "w1:t1" } },
   };
   const initiallyStarted = spawnResponses[2] as {
-    result: { agent: { agent_session: { value: string } } };
+    result: { agent: { pane_id: string; agent_session: { value: string } } };
   };
+  initiallyStarted.result.agent.pane_id = "w1:p2";
   initiallyStarted.result.agent.agent_session.value = childSession;
   spawnResponses.push(
     {
@@ -2632,8 +2773,9 @@ test("successful nested completion closes only its child pane", async () => {
     result: { pane: { pane_id: "w1:p2", tab_id: "w1:t1" } },
   };
   const started = responses[2] as {
-    result: { agent: { agent_session: { value: string } } };
+    result: { agent: { pane_id: string; agent_session: { value: string } } };
   };
+  started.result.agent.pane_id = "w1:p2";
   started.result.agent.agent_session.value = childSession;
   responses.push(
     {
@@ -3890,6 +4032,64 @@ test("positively absent child is delivered as crashed and cleaned", async () => 
   assert.equal(outcome.error, "agent process disappeared");
   assert.equal(orchestrator.list("parent-session")[0]?.surfaceState, "closed");
   assert.deepEqual(transport.calls.at(-1), ["pane", "close", "w1:p9"]);
+});
+
+test("crash delivery retains the lifecycle lock through parent side effects", async () => {
+  const directory = temporaryDirectory();
+  const responses = successfulRootSpawnResponses();
+  responses.push(
+    { id: "unused-wait", result: { type: "unused" } },
+    { id: "unused-get", result: { type: "unused" } },
+    { id: "cli:pane:close", result: { type: "ok" } },
+  );
+  const transport = new FakeHerdrTransport(responses);
+  transport.responses[4] = { code: 1, stdout: "", stderr: "agent process disappeared" };
+  transport.responses[5] = { code: 1, stdout: "", stderr: "agent not found" };
+  let beginDelivery!: () => void;
+  const deliveryStarted = new Promise<void>((resolve) => {
+    beginDelivery = resolve;
+  });
+  let releaseDelivery!: () => void;
+  const deliveryReleased = new Promise<void>((resolve) => {
+    releaseDelivery = resolve;
+  });
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: directory,
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_PANE_ID: "w1:p1",
+    },
+    id: () => "child-1",
+    onCompletion: async () => {
+      beginDelivery();
+      await deliveryReleased;
+      return true;
+    },
+  });
+
+  await orchestrator.spawn(spawnRequest());
+  await deliveryStarted;
+  const lifecycleLock = join(
+    directory,
+    "parent-session",
+    ".child-1.lifecycle.lock",
+  );
+  try {
+    await assert.rejects(
+      withRegistryLock(
+        lifecycleLock,
+        () => assert.fail("Crash delivery released the child lifecycle transaction"),
+        { timeoutSeconds: 0 },
+      ),
+      /Timed out acquiring registry lock/,
+    );
+  } finally {
+    releaseDelivery();
+  }
+  await waitUntil(() => orchestrator.list("parent-session")[0]?.surfaceState === "closed");
+  assert.equal(orchestrator.list("parent-session")[0]?.state, "crashed");
 });
 
 test("detached delivery callback errors are absorbed and persisted", async () => {
