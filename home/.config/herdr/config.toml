@@ -5,7 +5,7 @@ shell_mode = "auto"
 new_cwd = "follow"
 
 [theme]
-name = "gruvbox"
+name = "gruvbox-light"
 auto_switch = false
 dark_name = "catppuccin"
 light_name = "catppuccin-latte"
@@ -35,6 +35,17 @@ zoom = ["prefix+f", "alt+f"]
 [ui]
 agent_panel_sort = "spaces"
 show_agent_labels_on_pane_borders = true
+
+status_indicators = "symbols"
+sidebar_start_collapsed = true
+sidebar_collapsed_mode = "hidden"
+
+# Show the persistent Herdr session name in the tab bar's right-aligned status area.
+# Herdr exposes HERDR_SESSION to the server and its status commands.
+tab_bar_right = [
+  { type = "command", command = "printf '%s\\n' \"${HERDR_SESSION:-default}\"", interval_seconds = 60, timeout_seconds = 1 },
+]
+tab_bar_right_separator = " "
 
 [ui.toast]
 delivery = "off"
