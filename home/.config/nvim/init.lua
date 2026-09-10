@@ -2,6 +2,35 @@
 vim.g.mapleader = ' '
 vim.g.maplocalleader = ' '
 
+-- Recover if a terminal pane's working directory was removed before Nvim started.
+-- Oil's filetype fallback needs a valid cwd when it opens an unresolved path.
+local uv = vim.uv or vim.loop
+local function ensure_valid_cwd()
+	if uv.cwd() then
+		return true
+	end
+
+	local fallback = vim.env.HOME
+	if fallback and vim.fn.isdirectory(fallback) == 1 then
+		vim.cmd.cd(fallback)
+	end
+
+	return uv.cwd() ~= nil
+end
+
+local function open_oil()
+	if ensure_valid_cwd() then
+		vim.cmd('Oil')
+	end
+end
+
+ensure_valid_cwd()
+vim.api.nvim_create_autocmd({ 'BufEnter', 'FocusGained' }, {
+	group = vim.api.nvim_create_augroup('cwd-recovery', { clear = true }),
+	desc = 'Recover from a removed working directory',
+	callback = function() ensure_valid_cwd() end,
+})
+
 -- Relative line numbers
 vim.o.relativenumber = true
 vim.o.number = true -- display absolute line number instead of 0
@@ -345,7 +374,7 @@ require("oil").setup({
 		}
 	},
 })
-vim.keymap.set("n", "-", "<CMD>Oil<CR>", { desc = "Open parent directory" })
+vim.keymap.set("n", "-", open_oil, { desc = "Open parent directory" })
 
 -- Hunk
 local function git_root_from_dir(dir)
@@ -469,7 +498,7 @@ vim.keymap.set('n', '<leader>rm', '<cmd>CodeDiff main<cr>', { desc = 'Code diff 
 vim.keymap.set('n', '<leader>rh', '<cmd>CodeDiff HEAD~1<cr>', { desc = 'Code diff previous commit' })
 
 -- Compatibility shortcuts from the previous local setup.
-vim.keymap.set('n', '<leader>o', '<cmd>Oil<cr>', { desc = 'Open file browser' })
+vim.keymap.set('n', '<leader>o', open_oil, { desc = 'Open file browser' })
 vim.keymap.set('n', '<leader>f', '<cmd>FzfLua files<cr>', { desc = 'Find files' })
 vim.keymap.set('n', '<leader>b', '<cmd>FzfLua buffers<cr>', { desc = 'Buffers' })
 vim.keymap.set('n', '<leader>g', '<cmd>Hunk<cr>', { desc = 'Hunk diff' })

@@ -3,7 +3,11 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import {
+  getAgentDir,
+  getMarkdownTheme,
+  keyText,
+} from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -18,6 +22,8 @@ import {
   COMPLETION_TYPE,
   CompletionDelivery,
 } from "./completion-delivery.ts";
+import { renderCompletionMessage } from "./completion-renderer.ts";
+import { renderSubagentWidget } from "./widget.ts";
 import {
   SubagentOrchestrator,
   type ChildRecord,
@@ -154,14 +160,14 @@ export default function herdrSubagents(pi: ExtensionAPI) {
       ctx.ui.setWidget(WIDGET_KEY, undefined);
       return;
     }
-    const lines = [
-      ctx.ui.theme.fg("accent", `Subagents (${visible.length})`),
-      ...visible.slice(0, 5).map((child) =>
-        ctx.ui.theme.fg(child.state === "blocked" ? "warning" : "muted", `  ${summary(child)}`),
-      ),
-    ];
-    if (visible.length > 5) lines.push(ctx.ui.theme.fg("dim", `  +${visible.length - 5} more`));
-    ctx.ui.setWidget(WIDGET_KEY, lines, { placement: "belowEditor" });
+    ctx.ui.setWidget(
+      WIDGET_KEY,
+      (_tui, theme) => ({
+        render: (width) => renderSubagentWidget(visible, width, theme),
+        invalidate() {},
+      }),
+      { placement: "aboveEditor" },
+    );
   }
 
   pi.on("session_start", async (_event, ctx) => {
@@ -200,22 +206,15 @@ export default function herdrSubagents(pi: ExtensionAPI) {
     ctx.ui.setWidget(WIDGET_KEY, undefined);
   });
 
-  pi.registerMessageRenderer(COMPLETION_TYPE, (message, _options, theme) => {
-    const details = message.details as {
-      semanticName?: string;
-      role?: string;
-      state?: ChildRecord["state"];
-    } | undefined;
-    const label = details?.semanticName ?? "subagent";
-    const role = details?.role ? ` [${details.role}]` : "";
-    const failed = details?.state === "failed" || details?.state === "crashed";
-    const content = typeof message.content === "string" ? message.content : "Subagent finished";
-    return new Text(
-      `${theme.fg(failed ? "error" : "success", failed ? "✗" : "✓")} ${theme.fg("toolTitle", theme.bold(label))}${theme.fg("muted", role)}\n${theme.fg("toolOutput", content.replace(/^Subagent [^\n]+ [^.]+\.\n\n/, ""))}`,
-      0,
-      0,
-    );
-  });
+  pi.registerMessageRenderer(COMPLETION_TYPE, (message, options, theme) =>
+    renderCompletionMessage(
+      message,
+      options,
+      theme,
+      getMarkdownTheme(),
+      keyText("app.tools.expand"),
+    ),
+  );
 
   pi.registerCommand("subagents", {
     description: "List Herdr subagents in the current lineage",

@@ -35,6 +35,7 @@ class FakeFullscreenTui {
   readonly mode = "fullscreen";
   isFollowingOutput = true;
   currentLayout: { lines: string[] } | undefined;
+  wheelScrollLines = 1;
   scrollToBottomCalls = 0;
   requestRenderCalls = 0;
   fallbackInputCalls = 0;
@@ -113,6 +114,21 @@ test("renders Claude-style jump control only while scrolled away", () => {
 
   tui.isFollowingOutput = true;
   assert.deepEqual(widget.render(80), []);
+});
+
+test("speeds up fullscreen wheel scrolling", () => {
+  const { events } = fakePi();
+  const { context, mountWidget } = fakeContext();
+  const tui = new FakeFullscreenTui();
+
+  events.get("session_start")!({}, context);
+  const widget = mountWidget(tui);
+  widget.render(80);
+
+  assert.equal(tui.wheelScrollLines, 2);
+
+  widget.dispose?.();
+  assert.equal(tui.wheelScrollLines, 1);
 });
 
 test("clicking the control scrolls to the bottom and consumes the mouse gesture", () => {

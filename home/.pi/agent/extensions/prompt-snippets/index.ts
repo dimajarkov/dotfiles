@@ -4,8 +4,8 @@
  * Each snippet is a markdown file with frontmatter (name, description,
  * placement, order) stored in the `snippets/` directory next to this file.
  *
- * - Press alt+s or run /snippets to open the toggle menu (space: toggle,
- *   tab: preview, enter: apply, esc: cancel). The menu is a bordered,
+ * - Press alt+s or run /snippets to open the toggle menu (j/k: navigate,
+ *   space: toggle, tab: preview, enter: apply, esc: cancel). The menu is a bordered,
  *   scrollable view.
  * - Active snippets appear as a widget above the editor, with prepend and
  *   append groups visually distinguished.
@@ -218,7 +218,7 @@ export default function (pi: ExtensionAPI) {
 						content = v.out;
 						listScroll = v.scroll;
 						title = "Prompt snippets";
-						hints = "↑↓ navigate • Space toggle • Tab preview • Enter apply • Esc cancel";
+						hints = "j/k navigate • Space toggle • Tab preview • Enter apply • Esc cancel";
 					} else {
 						const snippet = items[cursor];
 						const rows = buildPreviewRows(snippet, width);
@@ -242,10 +242,10 @@ export default function (pi: ExtensionAPI) {
 				invalidate() {},
 				handleInput(data: string) {
 					if (mode === "list") {
-						if (matchesKey(data, Key.up)) {
+						if (matchesKey(data, "k")) {
 							cursor = (cursor - 1 + items.length) % items.length;
 							tui.requestRender();
-						} else if (matchesKey(data, Key.down)) {
+						} else if (matchesKey(data, "j")) {
 							cursor = (cursor + 1) % items.length;
 							tui.requestRender();
 						} else if (matchesKey(data, Key.space)) {

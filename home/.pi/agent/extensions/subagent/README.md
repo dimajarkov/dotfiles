@@ -56,6 +56,16 @@ Pane dimensions never switch placement to a vertical, side-by-side split, even w
 More simultaneous agents therefore share the available height.
 Completion messages return to the spawning parent.
 
+## Live widget
+
+Active direct children appear in a rounded, theme-aware panel above the editor, separate from the footer.
+The layout is inspired by [Amos's interactive-subagent widget](https://github.com/amosblomqvist/pi-interactive-subagents/tree/main/pi-extension/subagents), while Herdr remains responsible for orchestration.
+Each row shows the child's name, role, and right-aligned lifecycle state: `○ starting`, `● working`, or `! blocked`.
+Blocked children appear first so they are not hidden by the five-row limit.
+An overflow row points to `/subagents`, which retains the full model, thinking, work-scope, and pane details.
+Long names truncate to keep the state visible, including on narrow terminals.
+The panel disappears when no direct children are active.
+
 ## Lifecycle
 
 Completed children retain Pi session history while their owned terminal panes are cleaned up.
@@ -110,9 +120,19 @@ Reload old controllers before reusing their registries; do not manually rewrite 
 From the dotfiles root:
 
 ```bash
-node --experimental-strip-types --test home/.pi/agent/extensions/subagent/*.test.ts
+npm --prefix home/.pi/agent/extensions/subagent ci --ignore-scripts
+npm --prefix home/.pi/agent/extensions/subagent test
+npm --prefix home/.pi/agent/extensions/subagent run lint
+npm --prefix home/.pi/agent/extensions/subagent run format:check
+uv run --script home/.pi/agent/extensions/subagent/e2e-widget.py
 node home/.pi/agent/extensions/subagent/e2e-roles.mjs
 ```
+
+The widget suite starts real Pi TUI processes in isolated PTYs with seeded child records, the Prime editor, and the custom footer.
+It verifies placement above the editor, direct-child filtering, blocked-first overflow, narrow-width alignment, empty-state clearing, and reload cleanup in fullscreen and regular modes.
+It does not access credentials, prompt a model, or call Herdr, and it saves screen captures and ANSI transcripts in the printed evidence directory.
+Renderer unit tests also exercise theme colors, Unicode, control-sequence sanitization, and widths from one to 160 columns.
+Oxc and Pi TUI dependencies are local development tools; the live extension uses Pi's bundled packages.
 
 The role smoke starts real Pi RPC processes with the installed linked role definitions and checks model pins, `xhigh`, exact active tools, and the actual spawn handler's resolved launch permissions.
 It strips Herdr caller identity, mocks only the final orchestrator spawn boundary, and never prompts a model or creates terminal surfaces.

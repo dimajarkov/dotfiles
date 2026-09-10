@@ -5,6 +5,8 @@ import type {
 import type { Component, TUI } from "@earendil-works/pi-tui";
 
 const WIDGET_KEY = "fullscreen-navigation";
+// Pi's fullscreen factory currently leaves this at 1 and does not expose it in settings.
+const FULLSCREEN_WHEEL_SCROLL_LINES = 2;
 const HOOK_STATE = Symbol.for("pi.fullscreen-navigation.viewport-hook");
 
 type AppTheme = ExtensionContext["ui"]["theme"];
@@ -19,6 +21,7 @@ type FullscreenTui = TUI & {
 type ViewportHookState = {
   owner: JumpToBottomComponent;
   original: ViewportInputHandler;
+  originalWheelScrollLines: unknown;
 };
 
 type HookableTui = FullscreenTui & {
@@ -123,6 +126,11 @@ class JumpToBottomComponent implements Component {
       | undefined;
     if (state?.owner !== this) return;
     Reflect.set(this.tui, "handleViewportInput", state.original);
+    Reflect.set(
+      this.tui,
+      "wheelScrollLines",
+      state.originalWheelScrollLines,
+    );
     Reflect.set(this.tui, HOOK_STATE, undefined);
   }
 
@@ -165,6 +173,16 @@ class JumpToBottomComponent implements Component {
       : undefined;
     if (typeof original !== "function") return;
 
+    const originalWheelScrollLines = Reflect.get(
+      this.tui,
+      "wheelScrollLines",
+    );
+    Reflect.set(
+      this.tui,
+      "wheelScrollLines",
+      FULLSCREEN_WHEEL_SCROLL_LINES,
+    );
+
     const component = this;
     const originalHandler = original as ViewportInputHandler;
     const wrapped = function (
@@ -178,6 +196,7 @@ class JumpToBottomComponent implements Component {
     Reflect.set(this.tui, HOOK_STATE, {
       owner: this,
       original: originalHandler,
+      originalWheelScrollLines,
     } satisfies ViewportHookState);
     Reflect.set(this.tui, "handleViewportInput", wrapped);
   }
