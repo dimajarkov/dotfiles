@@ -142,6 +142,8 @@ interface MasterIdentity {
 interface PaneLayout {
   tabId: string;
   workspaceId: string;
+  focusedPaneId?: string;
+  zoomed?: boolean;
   panes: Array<{
     paneId: string;
     width: number;
@@ -405,8 +407,7 @@ function finalAssistantResult(sessionPath: string): {
       const text = content
         .filter((part): part is JsonObject => isObject(part) && part.type === "text")
         .map((part) => (typeof part.text === "string" ? part.text : ""))
-        .join("\n")
-        .trim();
+        .join("\n");
       return {
         entryId: stringAt(leaf, "id"),
         text,
@@ -1157,7 +1158,46 @@ export class SubagentOrchestrator {
     if (!panes.some((pane) => pane.paneId === master.masterPaneId)) {
       throw new RuntimeIdentityError("Lineage master pane is absent from its current layout");
     }
-    return { tabId: master.tabId, workspaceId: master.workspaceId, panes };
+    const focusedPaneId = typeof layout.focused_pane_id === "string"
+      ? layout.focused_pane_id
+      : undefined;
+    const zoomed = typeof layout.zoomed === "boolean" ? layout.zoomed : undefined;
+    return { tabId: master.tabId, workspaceId: master.workspaceId, focusedPaneId, zoomed, panes };
+  }
+
+  async #restoreZoom(
+    before: PaneLayout,
+    after: PaneLayout,
+    master: MasterIdentity,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (before.zoomed !== true || after.zoomed === true || before.focusedPaneId === undefined) return;
+    if (
+      !before.panes.some((pane) => pane.paneId === before.focusedPaneId) ||
+      after.focusedPaneId !== before.focusedPaneId ||
+      !after.panes.some((pane) => pane.paneId === before.focusedPaneId)
+    ) return;
+
+    // Herdr's split --no-focus preserves the focused pane, but splitting a
+    // zoomed pane necessarily clears its zoom. The zoom command has no
+    // --no-focus form, so first prove that the zoomed pane still owns the
+    // user's actual focus. If the user switched tabs or panes meanwhile,
+    // skip restoration rather than focusing the lineage tab as a side effect.
+    try {
+      const response = await this.#runJson(["pane", "get", before.focusedPaneId], signal);
+      const pane = objectAt(objectAt(response, "result"), "pane");
+      if (
+        pane.pane_id !== before.focusedPaneId ||
+        pane.tab_id !== master.tabId ||
+        pane.workspace_id !== master.workspaceId ||
+        pane.focused !== true
+      ) return;
+      await this.#runJson(["pane", "zoom", "--pane", before.focusedPaneId, "--on"], signal);
+    } catch {
+      signal?.throwIfAborted();
+      // Zoom restoration is best effort. A focus-changing race or an older
+      // Herdr server must not make an otherwise successful child spawn fail.
+    }
   }
 
   async #ownedLayoutPanes(
@@ -1275,6 +1315,7 @@ export class SubagentOrchestrator {
       if (!verifiedLayout.panes.some((candidate) => candidate.paneId === paneId)) {
         throw new RuntimeIdentityError(`Subagent split pane is not live: ${paneId}`);
       }
+      await this.#restoreZoom(layout, verifiedLayout, master, signal);
     };
     if (placementLocked) await create();
     else await this.#withPlacementLock(child.rootId, create);

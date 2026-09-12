@@ -48,6 +48,7 @@ Lineage identity includes conversation lineage, Herdr runtime session, workspace
 Matching labels in unrelated sessions do not merge their agents.
 
 Spawns run asynchronously and preserve user focus.
+If a split clears the focused pane's existing zoom, the extension restores it only while that pane still has actual user focus; it never restores zoom by pulling the user back from another pane or tab.
 Every child is created by splitting a pane in the master Pi agent's current Herdr tab.
 The master pane is used for root and unscoped children; later placement selects the largest currently live, ownership-verified child pane when one exists.
 Human panes and panes from other conversations are never placement candidates.
@@ -58,13 +59,29 @@ Completion messages return to the spawning parent.
 
 ## Live widget
 
-Active direct children appear in a rounded, theme-aware panel above the editor, separate from the footer.
+Children and their descendants appear as a tree in a rounded, theme-aware panel above the editor, separate from the footer.
 The layout is inspired by [Amos's interactive-subagent widget](https://github.com/amosblomqvist/pi-interactive-subagents/tree/main/pi-extension/subagents), while Herdr remains responsible for orchestration.
-Each row shows the child's name, role, and right-aligned lifecycle state: `○ starting`, `● working`, or `! blocked`.
-Blocked children appear first so they are not hidden by the five-row limit.
-An overflow row points to `/subagents`, which retains the full model, thinking, work-scope, and pane details.
+Each row shows the child's name, role, and right-aligned lifecycle state, including green `● done` for completed agents.
+Finished agents remain visible after their panes close, including when no work remains active.
+Blocked and active subtrees take priority over completed history, but descendants always stay beneath their ancestors.
+The five-row limit keeps the editor usable; overflow and `/subagents` open the complete tree, including older finished agents.
 Long names truncate to keep the state visible, including on narrow terminals.
-The panel disappears when no direct children are active.
+The panel is cleared only when the current lineage has no children.
+
+Click a row in fullscreen mode to open its complete initial delegation prompt in a scrollable modal.
+Click a completed agent's `[output]` button to read its saved final response, not a summary or terminal tail.
+The modal displays literal text, preserving Markdown source, and strips unsafe terminal controls.
+Output URLs and asset links are clickable; relative file links resolve against the child's working directory and use the system's default handler, such as the associated text editor.
+Fullscreen Pi opens links on click; regular terminals use their native hyperlink gesture.
+Only HTTP, HTTPS, and local file targets become links, and nothing opens until clicked.
+
+`/subagents [name]` opens the prompt picker or a uniquely named agent's prompt in fullscreen and regular mode.
+`/subagent-output [name]` opens the corresponding output picker or response directly.
+In the picker, use arrows and Enter for the prompt or `o` for output.
+In a detail modal, use arrows, Page Up/Down, or Home/End to navigate; `p` and `o` switch between prompt and output, and Escape closes it.
+The mouse wheel also scrolls the modal in fullscreen mode.
+The displayed prompt is the exact saved initial task, not a reconstructed system prompt or a concatenation of later steering messages.
+Inspection is read-only and never resumes an agent, focuses its pane, or submits another model turn.
 
 ## Lifecycle
 
@@ -99,7 +116,7 @@ Use `inspect`, `message`, `cancel`, or `resume` with the agent's semantic `name`
 `message` can reactivate a finished child with its saved session and launch settings.
 Cancelling an already-terminal child only finishes its surface cleanup and preserves its outcome and saved result.
 `resume` and `/subagent-focus <name>` intentionally focus that child.
-`/subagents` lists the current parent's children.
+`/subagents` inspects the current parent's complete descendant tree.
 
 Existing records retain their saved pane and tab identities rather than migrating live agents.
 Legacy scope metadata files are ignored by the current loader.
@@ -129,7 +146,8 @@ node home/.pi/agent/extensions/subagent/e2e-roles.mjs
 ```
 
 The widget suite starts real Pi TUI processes in isolated PTYs with seeded child records, the Prime editor, and the custom footer.
-It verifies placement above the editor, direct-child filtering, blocked-first overflow, narrow-width alignment, empty-state clearing, and reload cleanup in fullscreen and regular modes.
+It verifies placement above the editor, lineage filtering, descendant ordering, retained done states, blocked-subtree overflow, full prompt and output paging, modal switching, mouse input, keyboard selection, narrow-width alignment, empty-state clearing, and reload cleanup in fullscreen and regular modes.
+Fullscreen hyperlink clicks run Pi's real opener against an intercepted system command, proving URL and encoded local-asset targets without launching applications.
 It does not access credentials, prompt a model, or call Herdr, and it saves screen captures and ANSI transcripts in the printed evidence directory.
 Renderer unit tests also exercise theme colors, Unicode, control-sequence sanitization, and widths from one to 160 columns.
 Oxc and Pi TUI dependencies are local development tools; the live extension uses Pi's bundled packages.

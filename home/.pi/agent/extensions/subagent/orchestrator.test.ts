@@ -47,8 +47,10 @@ class FakeHerdrTransport implements HerdrTransport {
   #runtimeAgents = new Map<string, unknown>();
   #runtimePaneId: string | undefined;
   #runtimeSessionPath: string | undefined;
+  #focusedPaneId: string | undefined;
 
-  constructor(responses: unknown[]) {
+  constructor(responses: unknown[], focusedPaneId = "w1:p1") {
+    this.#focusedPaneId = focusedPaneId;
     this.responses = responses.map((response) => ({
       code: 0,
       stdout: `${JSON.stringify(response)}\n`,
@@ -79,6 +81,7 @@ class FakeHerdrTransport implements HerdrTransport {
           pane_id: args[2],
           tab_id: "w1:t1",
           workspace_id: "w1",
+          focused: args[2] === this.#focusedPaneId,
           ...(args[2] === "w1:p1"
             ? { agent: "pi", agent_session: { kind: "path", value: "/tmp/parent.jsonl" } }
             : {}),
@@ -310,6 +313,146 @@ test("spawns always split horizontally regardless of pane dimensions", async (t)
       assert.ok(split.includes("--no-focus"));
     });
   }
+});
+
+test("restores the focused master zoom after splitting without issuing a focus command", async () => {
+  const lifecycle = successfulRootSpawnResponses();
+  const transport = new FakeHerdrTransport([
+    {
+      id: "cli:pane:layout",
+      result: {
+        layout: {
+          tab_id: "w1:t1",
+          workspace_id: "w1",
+          focused_pane_id: "w1:p1",
+          zoomed: true,
+          panes: [{ pane_id: "w1:p1", rect: { width: 120, height: 60 } }],
+        },
+      },
+    },
+    lifecycle[0],
+    {
+      id: "cli:pane:layout",
+      result: {
+        layout: {
+          tab_id: "w1:t1",
+          workspace_id: "w1",
+          focused_pane_id: "w1:p1",
+          zoomed: false,
+          panes: [
+            { pane_id: "w1:p1", rect: { width: 120, height: 30 } },
+            { pane_id: "w1:p9", rect: { width: 120, height: 30 } },
+          ],
+        },
+      },
+    },
+    { id: "cli:pane:zoom", result: { type: "pane_zoom" } },
+    ...lifecycle.slice(1),
+  ]);
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: temporaryDirectory(),
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_TAB_ID: "w1:t1",
+      HERDR_PANE_ID: "w1:p1",
+    },
+    id: () => "child-1",
+    monitor: false,
+  });
+
+  await orchestrator.spawn(spawnRequest());
+
+  assert.deepEqual(transport.calls
+    .filter((call) => !(call[0] === "pane" && call[1] === "layout"))
+    .map((call) => call.slice(0, 2)), [
+      ["pane", "split"],
+      ["pane", "zoom"],
+      ["pane", "rename"],
+      ["agent", "start"],
+      ["agent", "prompt"],
+    ]);
+  assert.deepEqual(
+    transport.calls.find((call) => call[0] === "pane" && call[1] === "zoom"),
+    ["pane", "zoom", "--pane", "w1:p1", "--on"],
+  );
+  assert.equal(transport.calls.some((call) => call[0] === "agent" && call[1] === "focus"), false);
+});
+
+test("does not restore a background zoomed tab and steal unrelated focus", async () => {
+  const lifecycle = successfulRootSpawnResponses();
+  const transport = new FakeHerdrTransport([
+    {
+      id: "cli:pane:layout",
+      result: {
+        layout: {
+          tab_id: "w1:t1",
+          workspace_id: "w1",
+          focused_pane_id: "w1:p1",
+          zoomed: true,
+          panes: [{ pane_id: "w1:p1", rect: { width: 120, height: 60 } }],
+        },
+      },
+    },
+    lifecycle[0],
+    {
+      id: "cli:pane:layout",
+      result: {
+        layout: {
+          tab_id: "w1:t1",
+          workspace_id: "w1",
+          focused_pane_id: "w1:p1",
+          zoomed: false,
+          panes: [
+            { pane_id: "w1:p1", rect: { width: 120, height: 30 } },
+            { pane_id: "w1:p9", rect: { width: 120, height: 30 } },
+          ],
+        },
+      },
+    },
+    ...lifecycle.slice(1),
+  ], "w1:p-other");
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: temporaryDirectory(),
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_TAB_ID: "w1:t1",
+      HERDR_PANE_ID: "w1:p1",
+    },
+    id: () => "child-1",
+    monitor: false,
+  });
+
+  await orchestrator.spawn(spawnRequest());
+
+  assert.equal(transport.calls.some((call) => call[0] === "pane" && call[1] === "zoom"), false);
+  assert.ok(transport.ownershipReads.some((call) => call[0] === "pane" && call[1] === "get" && call[2] === "w1:p1"));
+});
+
+test("resume uses explicit focus only when requested", async () => {
+  const responses = successfulRootSpawnResponses();
+  responses.push({ id: "cli:agent:focus", result: { type: "agent_focus" } });
+  const transport = new FakeHerdrTransport(responses);
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: temporaryDirectory(),
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_PANE_ID: "w1:p1",
+    },
+    id: () => "child-1",
+    monitor: false,
+  });
+
+  const child = await orchestrator.spawn(spawnRequest());
+  await orchestrator.resume("parent-session", "parent-session", child.id);
+
+  assert.deepEqual(transport.calls.at(-1), ["agent", "focus", child.herdrName]);
+  assert.equal(transport.calls.filter((call) => call[0] === "agent" && call[1] === "focus").length, 1);
 });
 
 test("depth zero spawn splits the master pane and prompts a ready persistent Pi", async () => {
@@ -2727,7 +2870,7 @@ test("successful detached root completion closes only its recorded pane after du
       parentId: null,
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "DELIVERED_RESULT" }],
+        content: [{ type: "text", text: "\n  DELIVERED_RESULT  \n" }],
         stopReason: "stop",
       },
     })}\n`,
@@ -2783,7 +2926,7 @@ test("successful detached root completion closes only its recorded pane after du
   assert.equal(child?.state, "completed");
   assert.equal(child?.deliveredAt, 2_000);
   assert.equal(child?.sessionPath, childSession);
-  assert.equal(child?.result, "DELIVERED_RESULT");
+  assert.equal(child?.result, "\n  DELIVERED_RESULT  \n");
   assert.equal(child?.surfaceState, "closed");
   assert.deepEqual(transport.calls.at(-1), ["pane", "close", "w1:p9"]);
   assert.equal(transport.calls.some((call) => call[0] === "tab" && call[1] === "close"), false);

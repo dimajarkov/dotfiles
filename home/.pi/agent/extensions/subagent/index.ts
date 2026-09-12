@@ -23,7 +23,8 @@ import {
   CompletionDelivery,
 } from "./completion-delivery.ts";
 import { renderCompletionMessage } from "./completion-renderer.ts";
-import { renderSubagentWidget } from "./widget.ts";
+import { buildSubagentTree, renderSubagentWidgetLayout, type TreeRow } from "./widget.ts";
+import { SubagentInspector } from "./inspector.ts";
 import {
   SubagentOrchestrator,
   type ChildRecord,
@@ -128,6 +129,7 @@ export default function herdrSubagents(pi: ExtensionAPI) {
   let widgetTimer: ReturnType<typeof setInterval> | undefined;
   let deliveryController = new AbortController();
   let completionDelivery: CompletionDelivery | undefined;
+  const inspector = new SubagentInspector();
 
   const orchestrator = new SubagentOrchestrator({
     transport: new PiExecHerdrTransport(pi),
@@ -143,34 +145,55 @@ export default function herdrSubagents(pi: ExtensionAPI) {
     },
   });
 
+  function treeRows(ctx: ExtensionContext): TreeRow[] {
+    return buildSubagentTree(orchestrator.list(rootId(ctx)), currentParentId(ctx));
+  }
+
   function updateWidget(ctx: ExtensionContext): void {
     if (ctx.mode !== "tui") return;
-    let children: ChildRecord[];
+    let rows: TreeRow[];
     try {
-      children = orchestrator
-        .list(rootId(ctx))
-        .filter((child) => child.parentId === currentParentId(ctx));
+      rows = treeRows(ctx);
     } catch {
-      children = [];
+      rows = [];
     }
-    const visible = children.filter(
-      (child) => child.state === "starting" || child.state === "working" || child.state === "blocked",
-    );
-    if (visible.length === 0) {
+    if (rows.length === 0) {
       ctx.ui.setWidget(WIDGET_KEY, undefined);
       return;
     }
     ctx.ui.setWidget(
       WIDGET_KEY,
-      (_tui, theme) => ({
-        render: (width) => renderSubagentWidget(visible, width, theme),
-        invalidate() {},
-      }),
+      (_tui, theme) => {
+        let layout: ReturnType<typeof renderSubagentWidgetLayout> | undefined;
+        return {
+          render: (width) => {
+            layout = renderSubagentWidgetLayout(rows, width, theme);
+            return layout.lines;
+          },
+          handleMouse: (event) => {
+            if (event.type !== "click" || event.button !== "left" || !layout) return undefined;
+            const target = layout.targets.find((target) => target.y === event.y);
+            if (target) {
+              const output = target.outputStart !== undefined && event.x >= target.outputStart && event.x < target.outputStart + "[output]".length;
+              void inspector.show(ctx, rows, output ? "output" : "prompt", "", target.row)
+                .catch((error) => ctx.ui.notify(String(error), "error"));
+              return { handled: true };
+            }
+            if (event.y > (layout.targets.at(-1)?.y ?? -1)) {
+              void inspector.show(ctx, rows).catch((error) => ctx.ui.notify(String(error), "error"));
+              return { handled: true };
+            }
+            return undefined;
+          },
+          invalidate() {},
+        };
+      },
       { placement: "aboveEditor" },
     );
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    inspector.dispose();
     deliveryController.abort();
     deliveryController = new AbortController();
     orchestrator.restart();
@@ -197,6 +220,7 @@ export default function herdrSubagents(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
+    inspector.dispose();
     deliveryController.abort();
     completionDelivery = undefined;
     await orchestrator.shutdown();
@@ -217,13 +241,13 @@ export default function herdrSubagents(pi: ExtensionAPI) {
   );
 
   pi.registerCommand("subagents", {
-    description: "List Herdr subagents in the current lineage",
-    handler: async (_args, ctx) => {
-      const children = orchestrator
-        .list(rootId(ctx))
-        .filter((child) => child.parentId === currentParentId(ctx));
-      ctx.ui.notify(children.length > 0 ? children.map(summary).join("\n") : "No subagents", "info");
-    },
+    description: "Inspect subagent tree and full delegation prompts (optional name)",
+    handler: async (args, ctx) => inspector.show(ctx, treeRows(ctx), "prompt", args),
+  });
+
+  pi.registerCommand("subagent-output", {
+    description: "Read a subagent's saved final response (optional name)",
+    handler: async (args, ctx) => inspector.show(ctx, treeRows(ctx), "output", args),
   });
 
   pi.registerCommand("subagent-focus", {

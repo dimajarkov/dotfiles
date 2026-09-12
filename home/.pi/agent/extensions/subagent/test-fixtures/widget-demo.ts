@@ -11,7 +11,7 @@ export default function widgetDemo(pi: ExtensionAPI) {
   let parentId = "";
   const originalList = SubagentOrchestrator.prototype.list;
   const originalRecover = SubagentOrchestrator.prototype.recover;
-  SubagentOrchestrator.prototype.recover = async () => {};
+  SubagentOrchestrator.prototype.recover = async () => [];
   SubagentOrchestrator.prototype.list = () => {
     if (scenario === "empty") return [];
     const children: ChildRecord[] = Array.from(
@@ -22,11 +22,22 @@ export default function widgetDemo(pi: ExtensionAPI) {
         parentId,
         parentSessionId: parentId,
         semanticName: index === 0 ? "widget-reference" : `layout-review-${index}`,
-        role: index === 0 ? "researcher" : "reviewer",
-        state: index === 1 || index === 7 ? "blocked" : "working",
-        task: "Inspect the subagent widget",
+        role: index === 0 ? "worker" : "reviewer",
+        state:
+          scenario === "completed"
+            ? "completed"
+            : index === 1 || index === 7
+              ? "blocked"
+              : "working",
+        task:
+          "PROMPT-FIRST: Inspect the subagent widget\n\n" +
+          Array.from(
+            { length: 100 },
+            (_, line) => `Prompt line ${line + 1}: preserve **literal** material.`,
+          ).join("\n") +
+          "\nPROMPT-LAST: exact final instruction",
         herdrName: `fixture-${index}`,
-        cwd: "/test",
+        cwd: process.cwd(),
         depth: 1,
         generation: 1,
         workspaceId: "test",
@@ -52,6 +63,14 @@ export default function widgetDemo(pi: ExtensionAPI) {
     );
     children.push({
       ...children[0],
+      id: "nested",
+      parentId: "fixture-0",
+      semanticName: "nested-scout",
+      role: "researcher",
+      depth: 2,
+    });
+    children.push({
+      ...children[0],
       id: "other-parent",
       parentId: "another-parent",
       semanticName: "NOT-OUR-CHILD",
@@ -61,6 +80,13 @@ export default function widgetDemo(pi: ExtensionAPI) {
       id: "finished",
       state: "completed",
       semanticName: "FINISHED-CHILD",
+      result:
+        "OUTPUT-FIRST: exact agent conclusion\n[Report](./report%20notes.md)\n[Reference](https://example.com/subagent-report)\n\n" +
+        Array.from(
+          { length: 100 },
+          (_, line) => `Result line ${line + 1}: preserved **literal** material.`,
+        ).join("\n") +
+        "\nOUTPUT-LAST: final conclusion ends here\n",
     });
     return children;
   };
