@@ -45,3 +45,32 @@ test("network output preserves header presence without exposing credentials", ()
   assert.match(result.entries[0].responseHeaders.location, /code=%5BREDACTED%5D/);
   assert.doesNotMatch(JSON.stringify(result), /private-/);
 });
+
+test("camelCase credential names are redacted in headers and URLs", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "POST",
+        url: "https://example.test/refresh?refreshToken=private-refresh-token",
+        resourceType: "fetch",
+        requestHeaders: {
+          refreshToken: "private-refresh-token",
+          idToken: "private-id-token",
+          clientSecret: "private-client-secret",
+        },
+      },
+    ],
+    true,
+    new Set(["refreshtoken", "idtoken", "clientsecret"]),
+  );
+
+  assert.match(result.text, /refreshToken: \[REDACTED\]/);
+  assert.match(result.text, /idToken: \[REDACTED\]/);
+  assert.match(result.text, /clientSecret: \[REDACTED\]/);
+  assert.equal(result.entries[0].requestHeaders.refreshToken, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.idToken, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.clientSecret, "[REDACTED]");
+  assert.match(result.entries[0].url, /refreshToken=%5BREDACTED%5D/);
+  assert.doesNotMatch(JSON.stringify(result), /private-/);
+});

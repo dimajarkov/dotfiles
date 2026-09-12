@@ -4,6 +4,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
+import { runEligibleJinaFallback } from "./jina-fallback.ts";
 import { readResponseBytes, readResponseText } from "./response-body.ts";
 
 const USER_AGENT =
@@ -519,7 +520,8 @@ async function fetchAndExtract(
 		return httpResult;
 	}
 
-	const jinaResult = await extractWithJinaReader(url, signal);
+	const jinaResult = await runEligibleJinaFallback(url, (eligibleUrl) =>
+		extractWithJinaReader(eligibleUrl, signal));
 	if (jinaResult) return jinaResult;
 	if (signal?.aborted)
 		return { url, title: "", content: "", error: "Aborted" };

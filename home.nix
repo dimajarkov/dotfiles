@@ -202,7 +202,7 @@ in {
 
       if [ -d "$extension_path" ] && [ ! -L "$extension_path" ]; then
         migration_ready=1
-        for file in .gitignore README.md index.ts network-serialization.ts response-body.ts package.json package-lock.json; do
+        for file in .gitignore README.md index.ts jina-fallback.ts network-serialization.ts response-body.ts package.json package-lock.json; do
           file_path="$extension_path/$file"
           file_source="$extension_source/$file"
           if [ -e "$file_path" ] && [ ! -L "$file_path" ]; then
@@ -213,7 +213,7 @@ in {
         done
 
         if [ "$migration_ready" -eq 1 ]; then
-          for file in .gitignore README.md index.ts network-serialization.ts response-body.ts package.json package-lock.json; do
+          for file in .gitignore README.md index.ts jina-fallback.ts network-serialization.ts response-body.ts package.json package-lock.json; do
             file_path="$extension_path/$file"
             file_source="$extension_source/$file"
             if [ -f "$file_path" ] && [ ! -L "$file_path" ] && [ -f "$file_source" ] && /usr/bin/cmp -s "$file_path" "$file_source"; then
@@ -321,6 +321,8 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/.gitignore";
   home.file.".pi/agent/extensions/web-fetch/index.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/index.ts";
+  home.file.".pi/agent/extensions/web-fetch/jina-fallback.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/jina-fallback.ts";
   home.file.".pi/agent/extensions/web-fetch/response-body.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/response-body.ts";
   home.file.".pi/agent/extensions/web-fetch/package.json".source =

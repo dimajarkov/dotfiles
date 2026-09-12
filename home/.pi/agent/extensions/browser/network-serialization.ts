@@ -22,7 +22,10 @@ const SENSITIVE_HEADER_NAMES = new Set([
 ]);
 
 function isSensitiveHeader(name: string): boolean {
-  const normalized = name.toLowerCase();
+  const normalized = name
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
+    .replace(/([a-z\d])([A-Z])/g, "$1-$2")
+    .toLowerCase();
   return (
     SENSITIVE_HEADER_NAMES.has(normalized) ||
     /(?:^|[-_])(?:access[-_]?token|api[-_]?key|credential|password|secret|token)(?:$|[-_])/i.test(

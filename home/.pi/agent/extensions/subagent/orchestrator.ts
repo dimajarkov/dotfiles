@@ -2117,7 +2117,7 @@ export class SubagentOrchestrator {
         `Child ${child.herdrName} completion marker does not match its session artifact`,
       );
     }
-    child.result = result.text || result.errorMessage || "(no output)";
+    child.result = result.text;
     child.state = result.stopReason === "aborted"
       ? "cancelled"
       : result.stopReason === "error"

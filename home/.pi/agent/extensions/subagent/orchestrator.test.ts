@@ -4050,9 +4050,76 @@ test("error completion is delivered as failed and its recorded pane is cleaned",
   assert.equal(outcome.error, "provider exploded");
   const child = orchestrator.list("parent-session")[0];
   assert.equal(child?.state, "failed");
-  assert.equal(child?.result, "provider exploded");
+  assert.equal(child?.result, "");
+  assert.equal(child?.error, "provider exploded");
   assert.equal(child?.surfaceState, "closed");
   assert.deepEqual(transport.calls.at(-1), ["pane", "close", "w1:p9"]);
+});
+
+test("successful empty final response is preserved exactly", async () => {
+  const directory = temporaryDirectory();
+  const childSession = join(directory, "empty.jsonl");
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({
+      type: "message",
+      id: "assistant-empty",
+      parentId: null,
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "stop",
+      },
+    })}\n`,
+  );
+  writeCompletionMarker(directory, "parent-session", "child-1");
+  const responses = successfulRootSpawnResponses();
+  const started = responses[2] as {
+    result: { agent: { agent_session: { value: string } } };
+  };
+  started.result.agent.agent_session.value = childSession;
+  responses.push(
+    {
+      id: "cli:agent:wait",
+      result: {
+        agent: {
+          pane_id: "w1:p9",
+          agent_status: "done",
+          agent_session: { kind: "path", value: childSession },
+        },
+      },
+    },
+    { id: "cli:pane:close", result: { type: "ok" } },
+  );
+  const transport = new FakeHerdrTransport(responses);
+  let resolveDelivered!: (child: { result?: string; error?: string }) => void;
+  const delivered = new Promise<{ result?: string; error?: string }>((resolve) => {
+    resolveDelivered = resolve;
+  });
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: directory,
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_PANE_ID: "w1:p1",
+    },
+    id: () => "child-1",
+    onCompletion: async (child) => {
+      resolveDelivered(child);
+      return true;
+    },
+  });
+
+  await orchestrator.spawn(spawnRequest());
+  const outcome = await delivered;
+  await waitUntil(() => orchestrator.list("parent-session")[0]?.surfaceState === "closed");
+
+  assert.equal(outcome.result, "");
+  assert.equal(outcome.error, undefined);
+  const child = orchestrator.list("parent-session")[0];
+  assert.equal(child?.result, "");
+  assert.equal(child?.error, undefined);
 });
 
 test("agent wait transport failure reconciles the same runtime and continues monitoring", async () => {
