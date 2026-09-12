@@ -24,7 +24,7 @@ const SENSITIVE_COMPACT_NAMES = new Set(
   [...SENSITIVE_HEADER_NAMES, "session-id"].map((name) => name.replace(/[-_]/g, "")),
 );
 
-function isSensitiveHeader(name: string): boolean {
+function isSensitiveName(name: string): boolean {
   const normalized = name
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
     .replace(/([a-z\d])([A-Z])/g, "$1-$2")
@@ -41,25 +41,58 @@ function isSensitiveHeader(name: string): boolean {
   );
 }
 
+function isSensitiveUrlParameter(name: string): boolean {
+  return isSensitiveName(name) || /^(?:code|key|sig|signature)$/i.test(name);
+}
+
+function redactParameters(params: URLSearchParams): boolean {
+  let changed = false;
+  for (const name of new Set(params.keys())) {
+    if (!isSensitiveUrlParameter(name)) continue;
+    params.set(name, REDACTED);
+    changed = true;
+  }
+  return changed;
+}
+
+function redactFragment(hash: string): string {
+  if (!hash) return hash;
+
+  let changed = false;
+  const fragments = hash.slice(1).split("#").map((fragment) => {
+    const queryStart = fragment.indexOf("?");
+    const parameterText = queryStart === -1 ? fragment : fragment.slice(queryStart + 1);
+    const params = new URLSearchParams(parameterText);
+    if (!redactParameters(params)) return fragment;
+
+    changed = true;
+    const prefix = queryStart === -1 ? "" : fragment.slice(0, queryStart + 1);
+    return `${prefix}${params.toString()}`;
+  });
+
+  return changed ? `#${fragments.join("#")}` : hash;
+}
+
 function redactUrl(value: string): string {
   try {
     const absolute = /^[a-z][a-z\d+.-]*:/i.test(value);
     const url = new URL(value, "https://redaction.invalid");
     if (url.username) url.username = REDACTED;
     if (url.password) url.password = REDACTED;
-    for (const name of new Set(url.searchParams.keys())) {
-      if (isSensitiveHeader(name) || /^(?:code|key|sig|signature)$/i.test(name)) {
-        url.searchParams.set(name, REDACTED);
-      }
+    redactParameters(url.searchParams);
+    const fragment = redactFragment(url.hash);
+    if (absolute) {
+      url.hash = fragment;
+      return url.toString();
     }
-    return absolute ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
+    return `${url.pathname}${url.search}${fragment}`;
   } catch {
     return value;
   }
 }
 
 function redactHeaderValue(name: string, value: string): string {
-  if (isSensitiveHeader(name)) return REDACTED;
+  if (isSensitiveName(name)) return REDACTED;
   return name.toLowerCase() === "location" ? redactUrl(value) : value;
 }
 

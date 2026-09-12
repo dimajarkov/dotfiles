@@ -131,3 +131,64 @@ test("signature authentication headers are redacted in structured and rendered o
   assert.equal(result.entries[0].requestHeaders.signature256, "[REDACTED]");
   assert.doesNotMatch(JSON.stringify(result), /proof-secret/);
 });
+
+test("redacts credentials from OAuth and route-query URL fragments in rendered details", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/oauth#access_token=oauth-hash-secret&state=keep-hash-state",
+        resourceType: "fetch",
+        responseHeaders: {
+          Location:
+            "/callback#/finish?refreshToken=relative-fragment-secret&idtoken=compact-fragment-secret&signature256=signature-fragment-secret&state=keep-route-state",
+        },
+      },
+    ],
+    true,
+    new Set(["location"]),
+  );
+
+  assert.match(
+    result.text,
+    /https:\/\/example\.test\/oauth#access_token=%5BREDACTED%5D&state=keep-hash-state/,
+  );
+  assert.match(
+    result.text,
+    /Location: \/callback#\/finish\?refreshToken=%5BREDACTED%5D&idtoken=%5BREDACTED%5D&signature256=%5BREDACTED%5D&state=keep-route-state/,
+  );
+  assert.equal(
+    result.entries[0].url,
+    "https://example.test/oauth#access_token=%5BREDACTED%5D&state=keep-hash-state",
+  );
+  assert.equal(
+    result.entries[0].responseHeaders.Location,
+    "/callback#/finish?refreshToken=%5BREDACTED%5D&idtoken=%5BREDACTED%5D&signature256=%5BREDACTED%5D&state=keep-route-state",
+  );
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /(?:oauth-hash|relative-fragment|compact-fragment|signature-fragment)-secret/,
+  );
+});
+
+test("preserves harmless URL anchors while serializing network details", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/docs#installation",
+        resourceType: "document",
+        responseHeaders: { location: "/docs#troubleshooting" },
+      },
+    ],
+    true,
+    new Set(["location"]),
+  );
+
+  assert.match(result.text, /https:\/\/example\.test\/docs#installation/);
+  assert.match(result.text, /location: \/docs#troubleshooting/);
+  assert.equal(result.entries[0].url, "https://example.test/docs#installation");
+  assert.equal(result.entries[0].responseHeaders.location, "/docs#troubleshooting");
+});

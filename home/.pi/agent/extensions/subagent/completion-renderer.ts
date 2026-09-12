@@ -6,7 +6,17 @@ import {
   type Component,
   type MarkdownTheme,
 } from "@earendil-works/pi-tui";
-import { sanitizeMarkdownOutput, sanitizeOutput } from "./output-content.ts";
+import { sanitizeOutput, sanitizeRenderedOutput } from "./output-content.ts";
+
+class SafeCompletionContainer extends Container {
+  override render(width: number): string[] {
+    return super.render(width).map(sanitizeRenderedOutput);
+  }
+}
+
+function metadataText(text: string): string {
+  return sanitizeOutput(text).replace(/\n/gu, " ");
+}
 
 export interface CompletionRenderMessage {
   content: unknown;
@@ -61,14 +71,14 @@ export function renderCompletionMessage(
   expandKey = "Ctrl+O",
 ): Component {
   const details = completionDetails(message.details);
-  const label = details?.semanticName ?? "subagent";
-  const role = details?.role ? ` [${details.role}]` : "";
+  const label = metadataText(details?.semanticName ?? "subagent");
+  const role = details?.role ? ` [${metadataText(details.role)}]` : "";
   const failed = details?.state === "failed" || details?.state === "crashed";
   const content = typeof message.content === "string" ? message.content : "Subagent finished";
   const output = details?.structured ? details.result : completionOutput(content);
   const error = details?.error === undefined ? undefined : sanitizeOutput(details.error);
   const safeOutput = sanitizeOutput(output ?? "");
-  const container = new Container();
+  const container = new SafeCompletionContainer();
 
   container.addChild(
     new Text(
@@ -99,15 +109,9 @@ export function renderCompletionMessage(
 
   container.addChild(new Spacer(1));
   container.addChild(
-    new Markdown(
-      sanitizeMarkdownOutput(output ?? "") || "(no output)",
-      options.outputPad,
-      0,
-      markdownTheme,
-      {
-        color: (text: string) => theme.fg("toolOutput", text),
-      },
-    ),
+    new Markdown(safeOutput || "(no output)", options.outputPad, 0, markdownTheme, {
+      color: (text: string) => theme.fg("toolOutput", text),
+    }),
   );
   if (error) {
     container.addChild(new Spacer(1));

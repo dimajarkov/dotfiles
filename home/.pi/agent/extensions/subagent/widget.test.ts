@@ -171,6 +171,36 @@ test("layout keeps parent context under the cap and exposes output hit bounds", 
   assert.match(lines[output.y]!, /done \(worker\).*● done \[output\]/);
 });
 
+test("keeps an active sibling visible ahead of completed descendant history", () => {
+  const rows = buildSubagentTree(
+    [
+      child("active-a", "root", "working"),
+      child("a-history-1", "active-a", "completed"),
+      child("a-history-2", "active-a", "completed"),
+      child("a-history-3", "active-a", "completed"),
+      child("a-history-4", "active-a", "completed"),
+      child("active-b", "root", "working"),
+    ],
+    "root",
+  );
+  const layout = getSubagentWidgetLayout(rows, 80, theme);
+  assert.deepEqual(
+    layout.visibleRows.map((row) => row.child.id),
+    ["active-a", "a-history-1", "a-history-2", "a-history-3", "active-b"],
+  );
+  assert.deepEqual(
+    layout.hiddenRows.map((row) => row.child.id),
+    ["a-history-4"],
+  );
+  assert.equal(layout.activeCount, 2);
+  assert.equal(layout.doneCount, 4);
+  assert.equal(layout.hiddenBlockedCount, 0);
+  assert.equal(layout.lines?.length, 8);
+  const rendered = renderSubagentWidget(rows, 80, theme).map(stripTerminalSequences);
+  assert.match(rendered.join("\n"), /active-b \(worker\).*● working/);
+  assert.match(rendered.join("\n"), /\+1 more · \/subagents/);
+});
+
 test("completed history remains visible, reports active and done counts, and offers the footer hint", () => {
   const rows = buildSubagentTree(
     [
