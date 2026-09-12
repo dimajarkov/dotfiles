@@ -72,6 +72,12 @@ export function sanitizeOutput(text: string): string {
   return result;
 }
 
+export function sanitizeMetadata(value: unknown): string {
+  return sanitizeOutput(typeof value === "string" ? value : "")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
 /** Keep only styling and safe hyperlinks from a native component's rendered output.
  * This boundary sees actual destinations after Markdown resolves references and
  * escapes, rather than attempting to recognize every source-level link syntax.

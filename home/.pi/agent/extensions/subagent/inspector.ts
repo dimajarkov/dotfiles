@@ -1,14 +1,14 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Container, SelectList, Text, matchesKey } from "@earendil-works/pi-tui";
 import { SubagentPromptView, promptText } from "./prompt-view.ts";
-import { renderOutputContent } from "./output-content.ts";
+import { renderOutputContent, sanitizeMetadata } from "./output-content.ts";
 import type { TreeRow } from "./widget.ts";
 
 const overlay = {
   overlay: true,
   overlayOptions: { width: "90%" as const, maxHeight: "90%" as const, margin: 0 },
 };
-const singleLine = (text: string) => promptText(text).replace(/\n/g, " ");
+const singleLine = (text: unknown) => sanitizeMetadata(text);
 const displayPath = (row: TreeRow) => row.displayPath;
 
 function outputLines(row: TreeRow, width: number): string[] {
@@ -49,7 +49,8 @@ export class SubagentInspector {
           ? rows
               .map(
                 (row) =>
-                  `${row.prefix}${row.child.semanticName} [${row.child.role}] ${row.child.state}`,
+                  `${promptText(row.prefix)}${singleLine(row.child.semanticName)} ` +
+                  `[${singleLine(row.child.role)}] ${singleLine(row.child.state)}`,
               )
               .join("\n")
           : "No subagents",
@@ -67,7 +68,10 @@ export class SubagentInspector {
         )
       : rows;
     if (!matches.length) {
-      ctx.ui.notify(query.trim() ? `No subagent matches ${query.trim()}` : "No subagents", "info");
+      ctx.ui.notify(
+        query.trim() ? `No subagent matches ${singleLine(query.trim())}` : "No subagents",
+        "info",
+      );
       return;
     }
     this.opened = true;
@@ -147,7 +151,10 @@ export class SubagentInspector {
               list = new SelectList(
                 rows.map((row) => ({
                   value: row.child.id,
-                  label: `${row.prefix}${singleLine(row.child.semanticName)} [${singleLine(row.child.role)}] ${row.child.state === "completed" ? "● done" : row.child.state}`,
+                  label:
+                    `${row.prefix}${singleLine(row.child.semanticName)} ` +
+                    `[${singleLine(row.child.role)}] ` +
+                    (row.child.state === "completed" ? "● done" : singleLine(row.child.state)),
                   description: singleLine(displayPath(row)),
                 })),
                 maxVisible,

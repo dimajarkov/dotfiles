@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { redactBrowserUrl, serializeNetworkEntries } from "../network-serialization.ts";
+import {
+  redactBrowserDiagnostic,
+  redactBrowserUrl,
+  serializeNetworkEntries,
+} from "../network-serialization.ts";
 
 test("network output preserves header presence without exposing credentials", () => {
   const result = serializeNetworkEntries(
@@ -282,6 +286,41 @@ test("redacts URL credentials from network failure diagnostics", () => {
     "request failed at https://dead.invalid/callback?access_token=%5BREDACTED%5D.",
   );
   assert.doesNotMatch(JSON.stringify(result), /failure-secret/);
+});
+
+test("redacts credential parameters from every diagnostic URL form", () => {
+  const diagnostic = [
+    "GET callback?access_token=bare-secret failed",
+    "GET ./callback?refreshToken=dot-secret failed",
+    "GET ../callback?code=parent-secret failed",
+    "GET /callback?token=root-secret failed",
+    "GET ?clientSecret=query-secret failed",
+    "GET #idToken=fragment-secret failed",
+    "GET //app.test/callback?signature=network-secret failed",
+    "GET https://app.test/callback?key=absolute-secret failed",
+    "GET (/callback??access_token=malformed-secret).",
+    "GET /public?view=harmless unchanged",
+  ].join("\n");
+
+  assert.equal(
+    redactBrowserDiagnostic(diagnostic),
+    [
+      "GET callback?access_token=%5BREDACTED%5D failed",
+      "GET ./callback?refreshToken=%5BREDACTED%5D failed",
+      "GET ../callback?code=%5BREDACTED%5D failed",
+      "GET /callback?token=%5BREDACTED%5D failed",
+      "GET ?clientSecret=%5BREDACTED%5D failed",
+      "GET #idToken=%5BREDACTED%5D failed",
+      "GET //app.test/callback?signature=%5BREDACTED%5D failed",
+      "GET https://app.test/callback?key=%5BREDACTED%5D failed",
+      "GET (/callback??access_token=%5BREDACTED%5D).",
+      "GET /public?view=harmless unchanged",
+    ].join("\n"),
+  );
+  assert.doesNotMatch(
+    redactBrowserDiagnostic(diagnostic),
+    /(?:bare|dot|parent|root|query|fragment|network|absolute|malformed)-secret/,
+  );
 });
 
 test("preserves URL forms while redacting malformed and credential-bearing values", () => {

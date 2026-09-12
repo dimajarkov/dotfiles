@@ -224,3 +224,31 @@ test("non-TUI uses a text tree fallback without opening a modal", async () => {
   await inspector.show(ctx, []);
   assert.equal(output, "No subagents");
 });
+
+test("non-TUI tree output sanitizes child metadata without changing records", async () => {
+  const inspector = new SubagentInspector();
+  const unsafeChildren = [
+    {
+      ...children[0]!,
+      semanticName: "parent\x1b]52;c;NAME-CONTROL\x07\nname",
+      role: "worker\x1b]52;c;ROLE-CONTROL\x07\nrole",
+    },
+  ];
+  const saved = structuredClone(unsafeChildren);
+  const unsafeRows = buildSubagentTree(unsafeChildren, "root");
+  let output = "";
+  const ctx = {
+    mode: "rpc",
+    ui: {
+      notify: (text: string) => {
+        output = text;
+      },
+    },
+  } as unknown as ExtensionContext;
+
+  await inspector.show(ctx, unsafeRows);
+
+  assert.equal(output, "└─ parent name [worker role] completed");
+  assert.doesNotMatch(output, /NAME-CONTROL|ROLE-CONTROL|\x1b\]52;/u);
+  assert.deepEqual(unsafeChildren, saved);
+});

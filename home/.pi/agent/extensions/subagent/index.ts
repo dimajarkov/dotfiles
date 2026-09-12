@@ -9,7 +9,6 @@ import {
   keyText,
 } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { withHerdrBlocked } from "../lib/herdr-blocked.ts";
 import {
@@ -25,12 +24,14 @@ import {
 import { renderCompletionMessage } from "./completion-renderer.ts";
 import { buildSubagentTree, renderSubagentWidgetLayout, type TreeRow } from "./widget.ts";
 import { SubagentInspector } from "./inspector.ts";
+import { sanitizeMetadata } from "./output-content.ts";
 import {
   SubagentOrchestrator,
   type ChildRecord,
   type CommandExecution,
   type HerdrTransport,
 } from "./orchestrator.ts";
+import { renderSubagentToolCall, renderSubagentToolResult } from "./tool-renderer.ts";
 
 const STATE_DIRECTORY = resolve(getAgentDir(), "herdr-subagents");
 const WIDGET_KEY = "herdr-subagents";
@@ -174,13 +175,19 @@ export default function herdrSubagents(pi: ExtensionAPI) {
             if (event.type !== "click" || event.button !== "left" || !layout) return undefined;
             const target = layout.targets.find((target) => target.y === event.y);
             if (target) {
-              const output = target.outputStart !== undefined && event.x >= target.outputStart && event.x < target.outputStart + "[output]".length;
-              void inspector.show(ctx, rows, output ? "output" : "prompt", "", target.row)
-                .catch((error) => ctx.ui.notify(String(error), "error"));
+              const output =
+                target.outputStart !== undefined &&
+                event.x >= target.outputStart &&
+                event.x < target.outputStart + "[output]".length;
+              void inspector
+                .show(ctx, rows, output ? "output" : "prompt", "", target.row)
+                .catch((error) => ctx.ui.notify(sanitizeMetadata(String(error)), "error"));
               return { handled: true };
             }
             if (event.y > (layout.targets.at(-1)?.y ?? -1)) {
-              void inspector.show(ctx, rows).catch((error) => ctx.ui.notify(String(error), "error"));
+              void inspector
+                .show(ctx, rows)
+                .catch((error) => ctx.ui.notify(sanitizeMetadata(String(error)), "error"));
               return { handled: true };
             }
             return undefined;
@@ -383,20 +390,11 @@ export default function herdrSubagents(pi: ExtensionAPI) {
     },
 
     renderCall(args, theme) {
-      const params = args as ToolParameters;
-      const target = params.name ? ` ${params.name}` : "";
-      const role = params.agent ? ` [${params.agent}]` : "";
-      return new Text(
-        `${theme.fg("toolTitle", theme.bold("subagent"))} ${theme.fg("accent", params.action)}${theme.fg("muted", `${target}${role}`)}`,
-        0,
-        0,
-      );
+      return renderSubagentToolCall(args, theme);
     },
 
     renderResult(result, _options, theme) {
-      const first = result.content[0];
-      const text = first?.type === "text" ? first.text : "";
-      return new Text(theme.fg("toolOutput", text), 0, 0);
+      return renderSubagentToolResult(result, theme);
     },
   });
 }

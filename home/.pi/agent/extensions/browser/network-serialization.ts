@@ -68,16 +68,14 @@ function decodeParameterName(name: string): string {
 
 function redactParameterText(value: string): { value: string; changed: boolean } {
   let changed = false;
-  const redacted = value
-    .split("&")
-    .map((parameter) => {
-      const equals = parameter.indexOf("=");
-      const name = equals === -1 ? parameter : parameter.slice(0, equals);
+  const redacted = value.replace(
+    /(^|[&?#])([^=&#?]+)(?:=([^&?#]*))?/gu,
+    (parameter, separator: string, name: string) => {
       if (!isSensitiveUrlParameter(decodeParameterName(name))) return parameter;
       changed = true;
-      return `${name}=${ENCODED_REDACTED}`;
-    })
-    .join("&");
+      return `${separator}${name}=${ENCODED_REDACTED}`;
+    },
+  );
   return { value: redacted, changed };
 }
 
@@ -119,9 +117,11 @@ function redactAuthorityCredentials(value: string): string {
 }
 
 function redactMatchedUrl(value: string): string {
+  const prefix = /^[([{]+/u.exec(value)?.[0] ?? "";
   const suffix = /[),.;:!?\]}]+$/u.exec(value)?.[0] ?? "";
-  const url = suffix ? value.slice(0, -suffix.length) : value;
-  return `${redactBrowserUrl(url)}${suffix}`;
+  const end = suffix ? -suffix.length : undefined;
+  const url = value.slice(prefix.length, end);
+  return `${prefix}${redactBrowserUrl(url)}${suffix}`;
 }
 
 export function redactBrowserUrl(value: string): string {
@@ -137,10 +137,7 @@ export function redactBrowserUrl(value: string): string {
 }
 
 export function redactBrowserDiagnostic(value: string): string {
-  return value.replace(
-    /(?:\b[a-z][a-z\d+.-]*:(?:\/\/)?|\/\/)[^\s<>"'`]+/giu,
-    redactMatchedUrl,
-  );
+  return value.replace(/[^\s<>"'`]+/gu, redactMatchedUrl);
 }
 
 function redactLinkHeader(value: string): string {
