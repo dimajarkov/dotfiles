@@ -15,18 +15,21 @@ async function scenario(
   const session = join(directory, "child.jsonl");
   const parentSession = join(directory, "parent.jsonl");
   writeFileSync(parentSession, "");
+  const savedSession = `${JSON.stringify({
+    type: "message",
+    id: "result-1",
+    parentId: null,
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "SAVED_FINDINGS" }],
+      stopReason: "stop",
+    },
+  })}\n`;
   writeFileSync(
     session,
-    `${JSON.stringify({
-      type: "message",
-      id: "result-1",
-      parentId: null,
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text: "SAVED_FINDINGS" }],
-        stopReason: "stop",
-      },
-    })}\n`,
+    markerInitially
+      ? savedSession
+      : `${JSON.stringify({ type: "session", version: 3, id: "session", cwd: directory })}\n`,
   );
   let nextChild = 0;
   let allocated = false;
@@ -190,7 +193,8 @@ async function scenario(
       spawnTargets: [],
     },
   });
-  const publishMarker = () =>
+  const publishMarker = () => {
+    writeFileSync(session, savedSession);
     writeFileSync(
       child.completionMarkerPath,
       JSON.stringify({
@@ -202,6 +206,7 @@ async function scenario(
         sessionPath: session,
       }),
     );
+  };
   if (markerInitially) publishMarker();
   calls.length = 0;
   return {
@@ -333,7 +338,9 @@ test("active cancellation observes a replacement before input and preserves prov
     (await s.orchestrator.inspect("parent", "parent", "owned")).surfaceState,
     "released",
   );
-  await assert.rejects(s.orchestrator.resume("parent", "parent", "owned"), /released.*message/);
+  const resumed = await s.orchestrator.resume("parent", "parent", "owned");
+  assert.equal(resumed.action, "reconciled");
+  assert.equal(resumed.child.surfaceState, "released");
   assert.deepEqual(
     s.calls,
     [],
@@ -361,22 +368,29 @@ test("recovery retries cleanup-pending without closing a replacement or losing i
 
 for (const agent of ["pi", "claude"]) {
   test(`follow-up and focus preserve a ${agent} replacement surface`, async (t) => {
-    const s = await scenario(t);
-    s.runtime.agent = agent;
-    s.runtime.session = "/tmp/new-occupant.jsonl";
+    const followUp = await scenario(t);
+    followUp.runtime.agent = agent;
+    followUp.runtime.session = "/tmp/new-occupant.jsonl";
     await assert.rejects(
-      s.orchestrator.message("parent", "parent", "owned", "PRIVATE_FOLLOW_UP"),
-      /session artifact changed/,
+      followUp.orchestrator.message("parent", "parent", "owned", "PRIVATE_FOLLOW_UP"),
+      /different session artifact/,
     );
-    await assert.rejects(
-      s.orchestrator.resume("parent", "parent", "owned"),
-      /session artifact changed/,
-    );
-    assert.equal(s.record().state, "completed");
-    assert.equal(s.record().result, "SAVED_FINDINGS");
-    assert.equal(s.record().surfaceState, "open");
-    assert.equal(s.delivered.length, 1);
-    assert.deepEqual(mutations(s.calls), []);
+    assert.equal(followUp.runtime.present, true);
+    assert.equal(followUp.delivered.length, 1);
+    assert.equal(followUp.delivered[0]?.result, "SAVED_FINDINGS");
+    assert.deepEqual(mutations(followUp.calls), []);
+
+    const focus = await scenario(t);
+    focus.runtime.agent = agent;
+    focus.runtime.session = "/tmp/new-occupant.jsonl";
+    const resumed = await focus.orchestrator.resume("parent", "parent", "owned");
+    assert.equal(resumed.action, "reconciled");
+    assert.equal(resumed.child.state, "completed");
+    assert.equal(resumed.child.result, "SAVED_FINDINGS");
+    assert.equal(resumed.child.surfaceState, "released");
+    assert.equal(focus.runtime.present, true);
+    assert.equal(focus.delivered.length, 1);
+    assert.deepEqual(mutations(focus.calls), []);
   });
 }
 
