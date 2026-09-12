@@ -72,42 +72,32 @@ export function sanitizeOutput(text: string): string {
   return result;
 }
 
-export function sanitizeMarkdownOutput(text: string): string {
-  return neutralizeUnsafeAutolinks(neutralizeUnsafeMarkdownLinks(sanitizeOutput(text)));
-}
-
-function neutralizeUnsafeMarkdownLinks(text: string): string {
-  MARKDOWN_LINK_START.lastIndex = 0;
+/** Keep only styling and safe hyperlinks from a native component's rendered output.
+ * This boundary sees actual destinations after Markdown resolves references and
+ * escapes, rather than attempting to recognize every source-level link syntax.
+ */
+export function sanitizeRenderedOutput(text: string): string {
+  // oxlint-disable-next-line no-control-regex -- Deliberately recognize the only allowed terminal sequences.
+  const sequences = /\x1b\[[0-9;:]*m|\x1b\]8;[^;\x1b\x07]*;([^\x1b\x07]*)(?:\x1b\\|\x07)/gu;
   let result = "";
   let position = 0;
-  let match: RegExpExecArray | null;
-  while ((match = MARKDOWN_LINK_START.exec(text)) !== null) {
-    const openingEnd = match.index + match[0].length;
-    let depth = 1;
-    let end = openingEnd;
-    for (; end < text.length; end++) {
-      const character = text[end];
-      if (character === "(") depth++;
-      if (character === ")" && --depth === 0) break;
+  for (const match of text.matchAll(sequences)) {
+    result += sanitizeOutput(text.slice(position, match.index));
+    const target = match[1];
+    if (target === undefined) {
+      result += match[0];
+    } else {
+      // Recreate OSC 8 without untrusted parameters, closing any existing link
+      // when an unsafe destination is encountered.
+      result += `\x1b]8;;${target && safeExplicitUrl(target) ? target : ""}\x1b\\`;
     }
-    if (depth !== 0) continue;
-    const target = markdownTarget(text.slice(openingEnd, end));
-    if (!safeExplicitUrl(target)) {
-      result += `${text.slice(position, match.index)}\\${text.slice(match.index, end + 1)}`;
-      position = end + 1;
-    }
-    MARKDOWN_LINK_START.lastIndex = end + 1;
+    position = match.index + match[0].length;
   }
-  return result + text.slice(position);
-}
-
-function neutralizeUnsafeAutolinks(text: string): string {
-  return text.replace(/<([A-Za-z][A-Za-z0-9+.-]*:[^<>\n]+)>/gu, (match, target: string) =>
-    safeExplicitUrl(target) ? match : `\\${match}`,
-  );
+  return result + sanitizeOutput(text.slice(position));
 }
 
 function safeExplicitUrl(target: string): boolean {
+  if (sanitizeOutput(target) !== target || /\s/u.test(target)) return false;
   try {
     const url = new URL(target);
     const protocol = url.protocol.toLowerCase();

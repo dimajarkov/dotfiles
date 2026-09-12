@@ -80,7 +80,7 @@ Only HTTP, HTTPS, and local file targets become links, and nothing opens until c
 
 `/subagents [name]` opens the prompt picker or a uniquely named agent's prompt in fullscreen and regular mode.
 `/subagent-output [name]` opens the corresponding output picker or response directly.
-In the picker, use arrows and Enter for the prompt or `o` for output.
+In either picker, use arrows to select an agent; Enter opens the mode requested by the command, `p` opens the prompt, and `o` opens output.
 In a detail modal, use arrows, Page Up/Down, or Home/End to navigate; `p` and `o` switch between prompt and output, and Escape closes it.
 The mouse wheel also scrolls the modal in fullscreen mode.
 The displayed prompt is the exact saved initial task, not a reconstructed system prompt or a concatenation of later steering messages.
@@ -91,6 +91,8 @@ Inspection is read-only and never resumes an agent, focuses its pane, or submits
 Completed children retain Pi session history while their owned terminal panes are cleaned up.
 Before acknowledging delivery, the extension saves the full completion in an outbox entry on the parent's active Pi session branch, then queues its model-visible follow-up.
 Exact final output and failure diagnostics remain separate fields so an empty failed response still shows its error.
+Completion messages retain native Markdown formatting, but terminal controls are removed and metadata stays on one line.
+The final rendered links, including Markdown reference links, are restricted to HTTP, HTTPS, and local files without changing saved response text.
 Lifecycle controls never wait for the parent model to consume that follow-up.
 Unconsumed outbox entries replay after restart or a cleared message queue; consumed completions are not replayed.
 `deliveredAt` means the completion was durably enqueued, not necessarily consumed by the parent model.

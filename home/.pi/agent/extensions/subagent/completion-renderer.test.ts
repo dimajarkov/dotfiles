@@ -157,6 +157,58 @@ test("structured missing output renders its failure once without legacy content 
   assert.equal((expanded.match(/Failure: provider exploded/gu) ?? []).length, 1);
 });
 
+test("completion rendering validates parsed reference and encoded link destinations", () => {
+  const result = [
+    "[run][danger] [danger][] [danger] [encoded](command&#58;unsafe)",
+    "[danger]: command:unsafe",
+    "[remote](file://server/share/private) [mail](mailto:person@example.com)",
+    "[safe][docs] [local][file]",
+    "[docs]: https://example.com/document",
+    "[file]: file:///tmp/local.md",
+  ].join("\n\n");
+  const rendered = renderCompletionMessage(
+    { content: result },
+    { expanded: true, outputPad: 1 },
+    theme,
+    markdownTheme,
+  )
+    .render(160)
+    .join("\n");
+  // oxlint-disable-next-line no-control-regex -- Inspect actual emitted hyperlink destinations.
+  const targets = [...rendered.matchAll(/\x1b\]8;;([^\x1b\x07]*)(?:\x1b\\|\x07)/gu)]
+    .map((match) => match[1])
+    .filter(Boolean);
+  assert.deepEqual(
+    new Set(targets),
+    new Set(["https://example.com/document", "file:///tmp/local.md"]),
+  );
+  assert.match(stripTerminalSequences(rendered), /run/);
+  assert.match(stripTerminalSequences(rendered), /encoded/);
+});
+
+test("completion metadata is safe single-line text without changing the saved message", () => {
+  const message = {
+    content: "saved output",
+    details: {
+      semanticName: "SAFE-NAME\x1b]52;c;METADATA-CONTROL\x07\nwrapped",
+      role: "worker\x1b]52;c;ROLE-CONTROL\x07\nrole",
+      state: "completed",
+    },
+  };
+  const saved = structuredClone(message);
+  for (const expanded of [false, true]) {
+    const lines = renderCompletionMessage(
+      message,
+      { expanded, outputPad: 1 },
+      theme,
+      markdownTheme,
+    ).render(120);
+    assert.ok(!lines.join("\n").includes("\x1b]52;"));
+    assert.match(stripTerminalSequences(lines[0]!), /✓ SAFE-NAME wrapped \[worker role\]/u);
+  }
+  assert.deepEqual(message, saved);
+});
+
 test("completion rendering removes terminal controls and neutralizes unsafe links", () => {
   const result =
     "before\x1b]52;c;terminal-secret\x07after [run](command:rm -rf /) <javascript:alert(1)> [docs](https://example.com)";

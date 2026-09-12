@@ -61,6 +61,20 @@ export default function widgetDemo(pi: ExtensionAPI) {
         },
       }),
     );
+    if (scenario === "history") {
+      return [
+        { ...children[0], semanticName: "HISTORY-PARENT" },
+        ...Array.from({ length: 4 }, (_, index) => ({
+          ...children[0],
+          id: `history-${index}`,
+          parentId: "fixture-0",
+          semanticName: `done-history-${index}`,
+          state: "completed" as const,
+          depth: 2,
+        })),
+        { ...children[1], semanticName: "ACTIVE-SIBLING", state: "working" },
+      ];
+    }
     children.push({
       ...children[0],
       id: "nested",
@@ -109,6 +123,28 @@ export default function widgetDemo(pi: ExtensionAPI) {
     description: "Test-only widget state",
     handler: async (args) => {
       scenario = args.trim();
+    },
+  });
+  pi.registerCommand("completion-safety", {
+    description: "Test-only untrusted completion rendering",
+    handler: async () => {
+      pi.sendMessage(
+        {
+          customType: "herdr-subagent-completion",
+          content: "Fixture completion",
+          display: true,
+          details: {
+            completionDataVersion: 1,
+            semanticName: "SAFE-NAME\x1b]52;c;METADATA-CONTROL\x07\nwrapped",
+            role: "worker\x1b]52;c;ROLE-CONTROL\x07",
+            state: "completed",
+            result:
+              "SAFETY-FIRST\n\n[unsafe reference][danger]\n\n[danger]: command:unsafe-fixture\n\n" +
+              "[safe reference][docs]\n\n[docs]: https://example.com/safe-reference\n\nSAFETY-LAST",
+          },
+        },
+        { triggerTurn: false },
+      );
     },
   });
   pi.on("session_shutdown", () => {
