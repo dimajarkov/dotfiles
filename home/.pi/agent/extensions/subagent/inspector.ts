@@ -1,7 +1,8 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Container, SelectList, Text, matchesKey } from "@earendil-works/pi-tui";
+import { sanitizeMetadata } from "../lib/terminal-safety.ts";
 import { SubagentPromptView, promptText } from "./prompt-view.ts";
-import { renderOutputContent, sanitizeMetadata } from "./output-content.ts";
+import { renderOutputContent } from "./output-content.ts";
 import type { TreeRow } from "./widget.ts";
 
 const overlay = {

@@ -1,3 +1,5 @@
+import { sanitizeOutput } from "../lib/terminal-safety.ts";
+
 export type NetworkEntry = {
   ts: number;
   method: string;
@@ -13,7 +15,9 @@ export type NetworkEntry = {
 const REDACTED = "[REDACTED]";
 const SENSITIVE_HEADER_NAMES = new Set([
   "authorization",
+  "authentication-info",
   "proxy-authorization",
+  "proxy-authentication-info",
   "apikey",
   "x-api-key",
   "x-auth-token",
@@ -66,10 +70,16 @@ function decodeParameterName(name: string): string {
   }
 }
 
-function redactParameterText(value: string): { value: string; changed: boolean } {
+function redactParameterText(
+  value: string,
+  includeInitial = true,
+): { value: string; changed: boolean } {
   let changed = false;
+  const pattern = includeInitial
+    ? /(^|[&?#;])([^=&#?;]+)(?:=([^&?#;]*))?/gu
+    : /(;)([^=&#?;/]+)(?:=([^&?#;/]*))?/gu;
   const redacted = value.replace(
-    /(^|[&?#])([^=&#?]+)(?:=([^&?#]*))?/gu,
+    pattern,
     (parameter, separator: string, name: string) => {
       if (!isSensitiveUrlParameter(decodeParameterName(name))) return parameter;
       changed = true;
@@ -125,19 +135,21 @@ function redactMatchedUrl(value: string): string {
 }
 
 export function redactBrowserUrl(value: string): string {
-  const fragmentStart = value.indexOf("#");
-  const beforeFragment = fragmentStart === -1 ? value : value.slice(0, fragmentStart);
-  const fragment = fragmentStart === -1 ? "" : value.slice(fragmentStart);
+  const safeValue = sanitizeOutput(value);
+  const fragmentStart = safeValue.indexOf("#");
+  const beforeFragment = fragmentStart === -1 ? safeValue : safeValue.slice(0, fragmentStart);
+  const fragment = fragmentStart === -1 ? "" : safeValue.slice(fragmentStart);
   const queryStart = beforeFragment.indexOf("?");
   const beforeQuery = queryStart === -1 ? beforeFragment : beforeFragment.slice(0, queryStart);
   const query = queryStart === -1 ? "" : beforeFragment.slice(queryStart + 1);
+  const redactedPath = redactParameterText(beforeQuery, false);
   const redactedQuery = redactParameterText(query);
-  const redacted = `${beforeQuery}${queryStart === -1 ? "" : `?${redactedQuery.value}`}${redactFragment(fragment)}`;
+  const redacted = `${redactedPath.value}${queryStart === -1 ? "" : `?${redactedQuery.value}`}${redactFragment(fragment)}`;
   return redactAuthorityCredentials(redacted);
 }
 
 export function redactBrowserDiagnostic(value: string): string {
-  return value.replace(/[^\s<>"'`]+/gu, redactMatchedUrl);
+  return sanitizeOutput(value).replace(/[^\s<>"'`]+/gu, redactMatchedUrl);
 }
 
 function redactLinkHeader(value: string): string {

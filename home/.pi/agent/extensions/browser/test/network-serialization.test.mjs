@@ -136,6 +136,31 @@ test("signature authentication headers are redacted in structured and rendered o
   assert.doesNotMatch(JSON.stringify(result), /proof-secret/);
 });
 
+test("authentication metadata headers are redacted at the shared boundary", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/data",
+        resourceType: "fetch",
+        responseHeaders: {
+          "Authentication-Info": 'nextnonce="authentication-secret"',
+          "Proxy-Authentication-Info": 'nextnonce="proxy-secret"',
+        },
+      },
+    ],
+    true,
+    new Set(["authentication-info", "proxy-authentication-info"]),
+  );
+
+  assert.match(result.text, /Authentication-Info: \[REDACTED\]/);
+  assert.match(result.text, /Proxy-Authentication-Info: \[REDACTED\]/);
+  assert.equal(result.entries[0].responseHeaders["Authentication-Info"], "[REDACTED]");
+  assert.equal(result.entries[0].responseHeaders["Proxy-Authentication-Info"], "[REDACTED]");
+  assert.doesNotMatch(JSON.stringify(result), /(?:authentication|proxy)-secret/);
+});
+
 test("redacts credentials from OAuth and route-query URL fragments in rendered details", () => {
   const result = serializeNetworkEntries(
     [
@@ -338,4 +363,55 @@ test("preserves URL forms while redacting malformed and credential-bearing value
     redactBrowserUrl("https://user:password@example.test/callback?state=1"),
     "https://%5BREDACTED%5D:%5BREDACTED%5D@example.test/callback?state=1",
   );
+});
+
+test("redacts semicolon query and matrix credentials while preserving harmless parameters", () => {
+  assert.equal(
+    redactBrowserUrl("/callback?next=1;access_token=query-secret&view=keep"),
+    "/callback?next=1;access_token=%5BREDACTED%5D&view=keep",
+  );
+  assert.equal(
+    redactBrowserUrl("/account;session_id=matrix-secret/view;token=path-secret?view=keep"),
+    "/account;session_id=%5BREDACTED%5D/view;token=%5BREDACTED%5D?view=keep",
+  );
+  assert.equal(
+    redactBrowserUrl("callback??next=1;clientSecret=malformed-secret"),
+    "callback??next=1;clientSecret=%5BREDACTED%5D",
+  );
+  assert.equal(
+    redactBrowserUrl("/callback#next=1;refreshToken=fragment-secret"),
+    "/callback#next=1;refreshToken=%5BREDACTED%5D",
+  );
+  assert.equal(
+    redactBrowserUrl("/public;view=compact?next=1;display=full#section;mode=wide"),
+    "/public;view=compact?next=1;display=full#section;mode=wide",
+  );
+});
+
+test("strips terminal controls from structured and rendered network fields", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/path\x1b]52;c;URL-CONTROL\x07",
+        status: 500,
+        statusText: "Remote\x1b]52;c;STATUS-CONTROL\x07 Error",
+        resourceType: "fetch",
+        requestHeaders: {
+          "X-Diagnostic": "before\x1b]52;c;HEADER-CONTROL\x07after",
+        },
+        failure: "failed\x1b]52;c;FAILURE-CONTROL\x07 safely",
+      },
+    ],
+    true,
+    new Set(["x-diagnostic"]),
+  );
+
+  assert.equal(result.entries[0].url, "https://example.test/path");
+  assert.equal(result.entries[0].statusText, "Remote Error");
+  assert.equal(result.entries[0].requestHeaders["X-Diagnostic"], "beforeafter");
+  assert.equal(result.entries[0].failure, "failed safely");
+  assert.doesNotMatch(JSON.stringify(result), /(?:URL|STATUS|HEADER|FAILURE)-CONTROL|\x1b\]52;/u);
+  assert.doesNotMatch(result.text, /\x1b\]52;/u);
 });

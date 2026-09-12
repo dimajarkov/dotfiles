@@ -121,6 +121,37 @@ test("renders failed empty output and its error as separate fields", () => {
   assert.match(expanded, /Failure: provider exploded/);
 });
 
+test("renders a nonempty failed output and its separate error exactly once", () => {
+  const message = {
+    content: "legacy text must not replace structured fields",
+    details: {
+      completionDataVersion: 1,
+      semanticName: "scout",
+      role: "researcher",
+      state: "failed",
+      result: "partial result",
+      error: "provider exploded",
+    },
+  };
+  const saved = structuredClone(message);
+
+  for (const expanded of [false, true]) {
+    const rendered = renderCompletionMessage(
+      message,
+      { expanded, outputPad: 1 },
+      theme,
+      markdownTheme,
+    )
+      .render(80)
+      .map(stripTerminalSequences)
+      .join("\n");
+    assert.match(rendered, /partial result/);
+    assert.equal((rendered.match(/Failure: provider exploded/gu) ?? []).length, 1);
+    assert.doesNotMatch(rendered, /legacy text/);
+  }
+  assert.deepEqual(message, saved);
+});
+
 test("structured missing output renders its failure once without legacy content fallback", () => {
   const message = {
     content: "Subagent scout crashed.\n\n(no output)\n\nFailure: provider exploded",
