@@ -260,6 +260,35 @@ test("JWT, OAuth assertion, and SAML credential aliases are redacted", () => {
   );
 });
 
+test("bearer proof aliases share credential redaction across headers and URLs", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/callback?bearer=url-proof&view=keep",
+        resourceType: "fetch",
+        requestHeaders: {
+          "X-Bearer": "header-proof",
+          VendorBearer: "compact-proof",
+        },
+      },
+    ],
+    true,
+    new Set(["x-bearer", "vendorbearer"]),
+  );
+
+  assert.equal(
+    result.entries[0].url,
+    "https://example.test/callback?bearer=%5BREDACTED%5D&view=keep",
+  );
+  assert.deepEqual(result.entries[0].requestHeaders, {
+    "X-Bearer": "[REDACTED]",
+    VendorBearer: "[REDACTED]",
+  });
+  assert.doesNotMatch(JSON.stringify(result), /(?:url|header|compact)-proof/);
+});
+
 test("PKCE, device grant, and OAuth verifier aliases are redacted", () => {
   const result = serializeNetworkEntries(
     [

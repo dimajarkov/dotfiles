@@ -1,5 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { isCredentialName } from "../lib/credential-safety.ts";
 
 export interface ResolvedAddress {
   address: string;
@@ -106,13 +107,26 @@ function isCredentialPathSegment(segment: string): boolean {
     .toLowerCase();
   const compact = normalized.replace(/[-_.~]/gu, "");
   return (
-    /(?:^|[-_.~])(?:access[-_]?key|access[-_]?token|api[-_]?key|client[-_]?secret|code[-_]?verifier|credential|device[-_]?code|github[-_]?pat|oauth[-_]?verifier|password|private[-_]?key|secret|session[-_]?id|signature\d*|signed|token)(?:$|[-_.~])/iu.test(
+    isCredentialName(segment) ||
+    /(?:^|[-_.~])(?:access[-_]?key|github[-_]?pat|private[-_]?key|signed)(?:$|[-_.~])/iu.test(
       normalized,
     ) ||
-    /(?:apikey|clientsecret|codeverifier|credentials?|devicecode|githubpat|oauthverifier|password|privatekey|secret|sessionid|signature\d*|token)$/u.test(
-      compact,
-    ) ||
+    /(?:accesskey|githubpat|privatekey|signed)$/u.test(compact) ||
     /^(?:gh[pousr]_|github_pat_|sk_(?:live|test)_|xox[aboprs]-)/u.test(normalized)
+  );
+}
+
+function isOpaqueCredentialProof(segment: string): boolean {
+  const normalized = segment.normalize("NFKC");
+  if (/^[A-Za-z\d_-]{8,}(?:\.[A-Za-z\d_-]{2,}){2}(?:\.[A-Za-z\d_-]{2,}){0,2}$/u.test(normalized)) {
+    return true;
+  }
+  return (
+    normalized.length >= 32 &&
+    /^[A-Za-z\d+/_~-]+={0,2}$/u.test(normalized) &&
+    /[a-z]/u.test(normalized) &&
+    /[A-Z]/u.test(normalized) &&
+    /\d/u.test(normalized)
   );
 }
 
@@ -120,7 +134,12 @@ function hasCredentialPath(pathname: string): boolean {
   const variants = decodedPathVariants(pathname);
   if (!variants) return true;
   return variants.some((variant) =>
-    variant.split(/[\\/]/u).some((segment) => segment && isCredentialPathSegment(segment)),
+    variant
+      .split(/[\\/]/u)
+      .some(
+        (segment) =>
+          segment && (isCredentialPathSegment(segment) || isOpaqueCredentialProof(segment)),
+      ),
   );
 }
 

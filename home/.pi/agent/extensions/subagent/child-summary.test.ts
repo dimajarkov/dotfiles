@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { summarizeChild } from "./child-summary.ts";
+import { resumeResultText, summarizeChild } from "./child-summary.ts";
 import type { ChildRecord } from "./orchestrator.ts";
 
 function record(): ChildRecord {
@@ -48,6 +48,21 @@ test("summarizes untrusted child metadata as one safe line without mutation", ()
     summary,
     "○ child ✗ forgedname [workerrole kind] working scope=scope forged model=model variant thinking=highlow tab spoof/paneid",
   );
-  assert.doesNotMatch(summary, /[\r\n\u202a-\u202e\u2066-\u2069]|\x1b\]52;/u);
+  for (const unsafe of ["\r", "\n", "\u202a", "\u202e", "\u2066", "\u2069", "\x1b]52;"]) {
+    assert.equal(summary.includes(unsafe), false);
+  }
   assert.deepEqual(child, saved);
+});
+
+test("resume result text distinguishes focus from terminal reconciliation", () => {
+  const child = record();
+  child.semanticName = "authentication";
+  child.paneId = "w1:p9";
+
+  assert.equal(resumeResultText({ action: "focused", child }), "Focused authentication in w1:p9");
+  child.state = "completed";
+  assert.equal(
+    resumeResultText({ action: "reconciled", child }),
+    "Already completed: authentication",
+  );
 });

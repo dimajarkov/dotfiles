@@ -16,7 +16,7 @@ import {
   type CommandExecution,
   type HerdrTransport,
 } from "./orchestrator.ts";
-import { writeCompletionSettlement } from "./completion-protocol.ts";
+import { completionSettlementAt, writeCompletionSettlement } from "./completion-protocol.ts";
 import { withRegistryLock } from "./registry-lock.ts";
 
 const temporaryDirectories: string[] = [];
@@ -497,8 +497,10 @@ test("resume uses explicit focus only when requested", async () => {
   });
 
   const child = await orchestrator.spawn(spawnRequest());
-  await orchestrator.resume("parent-session", "parent-session", child.id);
+  const resumed = await orchestrator.resume("parent-session", "parent-session", child.id);
 
+  assert.equal(resumed.action, "focused");
+  assert.equal(resumed.child.id, child.id);
   assert.deepEqual(transport.calls.at(-1), ["agent", "focus", child.herdrName]);
   assert.equal(
     transport.calls.filter((call) => call[0] === "agent" && call[1] === "focus").length,
@@ -1070,6 +1072,76 @@ test("authoritative completion survives cross-session lifecycle controls", async
     const child = foreign.list("parent-session")[0];
     assert.equal(child?.state, "completed", control);
     assert.equal(child?.result, `EXACT_${control.toUpperCase()}_RESULT`, control);
+    assert.equal(deliveries, 1, control);
+    assert.deepEqual(transport.calls, [], control);
+    assert.deepEqual(transport.ownershipReads, [], control);
+  }
+});
+
+test("terminal pending delivery precedes cross-session lifecycle validation", async () => {
+  for (const control of ["recover", "message", "cancel", "resume"] as const) {
+    const directory = temporaryDirectory();
+    const initial = new SubagentOrchestrator({
+      transport: new FakeHerdrTransport(successfulRootSpawnResponses()),
+      stateDirectory: directory,
+      environment: {
+        HERDR_ENV: "1",
+        HERDR_SESSION: "session-a",
+        HERDR_WORKSPACE_ID: "w1",
+        HERDR_PANE_ID: "w1:p1",
+      },
+      id: () => "child-1",
+      monitor: false,
+    });
+    await initial.spawn(spawnRequest());
+    const terminal = {
+      ...initial.list("parent-session")[0]!,
+      state: "completed" as const,
+      result: `EXACT_PENDING_${control.toUpperCase()}`,
+      deliveredAt: undefined,
+    };
+    writeFileSync(
+      join(directory, "parent-session", "child-1.json"),
+      `${JSON.stringify(terminal, null, 2)}\n`,
+    );
+
+    const transport = new FakeHerdrTransport([]);
+    let deliveries = 0;
+    const foreign = new SubagentOrchestrator({
+      transport,
+      stateDirectory: directory,
+      environment: {
+        HERDR_ENV: "1",
+        HERDR_SESSION: "session-b",
+        HERDR_WORKSPACE_ID: "w1",
+        HERDR_PANE_ID: "w1:p1",
+      },
+      monitor: false,
+      onCompletion: async () => {
+        deliveries += 1;
+        return true;
+      },
+    });
+
+    if (control === "recover") {
+      await foreign.recover("parent-session", "parent-session");
+    } else if (control === "message") {
+      await assert.rejects(
+        foreign.message("parent-session", "parent-session", "authentication", "follow up"),
+        /belongs to Herdr session session-a.*current session is session-b/,
+      );
+    } else if (control === "resume") {
+      const resumed = await foreign.resume("parent-session", "parent-session", "authentication");
+      assert.equal(resumed.action, "reconciled");
+      assert.equal(resumed.child.state, "completed");
+    } else {
+      const cancelled = await foreign.cancel("parent-session", "parent-session", "authentication");
+      assert.equal(cancelled.state, "completed");
+    }
+
+    const child = foreign.list("parent-session")[0];
+    assert.equal(child?.result, `EXACT_PENDING_${control.toUpperCase()}`, control);
+    assert.equal(typeof child?.deliveredAt, "number", control);
     assert.equal(deliveries, 1, control);
     assert.deepEqual(transport.calls, [], control);
     assert.deepEqual(transport.ownershipReads, [], control);
@@ -2180,6 +2252,78 @@ test("cancel does not cross a concluded settlement candidate", async () => {
   assert.equal(transport.calls.length, callsBeforeCancel);
 });
 
+test("cancel publishes a settlement candidate for a persisted conclusion before input", async () => {
+  const directory = temporaryDirectory();
+  const childSession = join(directory, "cancel-before-candidate.jsonl");
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({ type: "session", version: 3, id: "session", cwd: "/work/project" })}\n`,
+  );
+  const responses = successfulRootSpawnResponses();
+  const started = responses[2] as {
+    result: { agent: { agent_session: { value: string } } };
+  };
+  started.result.agent.agent_session.value = childSession;
+  const transport = new FakeHerdrTransport(responses);
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: directory,
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_SESSION: "session-a",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_PANE_ID: "w1:p1",
+    },
+    id: () => "child-1",
+    monitor: false,
+  });
+  const active = await orchestrator.spawn(spawnRequest());
+  writeCompletionSettlement(active.completionMarkerPath, {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "running",
+    sessionPath: childSession,
+  });
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({ type: "session", version: 3, id: "session", cwd: "/work/project" })}\n${JSON.stringify(
+      {
+        type: "message",
+        id: "assistant-before-candidate",
+        parentId: null,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "PERSISTED_BEFORE_AGENT_END" }],
+          stopReason: "stop",
+        },
+      },
+    )}\n`,
+  );
+  const callsBeforeCancel = transport.calls.length;
+
+  await assert.rejects(
+    orchestrator.cancel("parent-session", "parent-session", "authentication"),
+    /settlement is pending/,
+  );
+
+  assert.deepEqual(completionSettlementAt(active.completionMarkerPath), {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "candidate",
+    stopReason: "stop",
+    entryId: "assistant-before-candidate",
+    sessionPath: childSession,
+  });
+  const child = orchestrator.list("parent-session")[0];
+  assert.equal(child?.state, "working");
+  assert.equal(child?.result, undefined);
+  assert.equal(child?.error, undefined);
+  assert.equal(child?.deliveredAt, undefined);
+  assert.equal(transport.calls.length, callsBeforeCancel);
+});
+
 test("live message prompt failure stops the owned agent and cleans its pane", async () => {
   const responses = successfulRootSpawnResponses();
   responses.push(
@@ -3004,7 +3148,7 @@ test("inspect returns the durable terminal record after its surface is closed", 
   assert.deepEqual(transport.calls, []);
 });
 
-test("resume rejects a closed surface and directs the caller to message", async () => {
+test("resume reports terminal reconciliation without focusing a closed surface", async () => {
   const directory = temporaryDirectory();
   const childSession = join(directory, "closed-focus.jsonl");
   writeFileSync(
@@ -3062,10 +3206,10 @@ test("resume rejects a closed surface and directs the caller to message", async 
   await delivered;
   await waitUntil(() => orchestrator.list("parent-session")[0]?.surfaceState === "closed");
 
-  await assert.rejects(
-    orchestrator.resume("parent-session", "parent-session", "authentication"),
-    /surface is closed.*use message/i,
-  );
+  const resumed = await orchestrator.resume("parent-session", "parent-session", "authentication");
+
+  assert.equal(resumed.action, "reconciled");
+  assert.equal(resumed.child.state, "completed");
   assert.equal(transport.calls.length, 5);
 });
 

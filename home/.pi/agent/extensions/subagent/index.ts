@@ -1,13 +1,6 @@
 import { resolve } from "node:path";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
-import {
-  getAgentDir,
-  getMarkdownTheme,
-  keyText,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, getMarkdownTheme, keyText } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { withHerdrBlocked } from "../lib/herdr-blocked.ts";
@@ -18,17 +11,13 @@ import {
   resolveAgentSkills,
   type AgentScope,
 } from "./agents.ts";
-import {
-  COMPLETION_TYPE,
-  CompletionDelivery,
-} from "./completion-delivery.ts";
+import { COMPLETION_TYPE, CompletionDelivery } from "./completion-delivery.ts";
 import { renderCompletionMessage } from "./completion-renderer.ts";
-import { summarizeChild } from "./child-summary.ts";
+import { resumeResultText, summarizeChild } from "./child-summary.ts";
 import { buildSubagentTree, renderSubagentWidgetLayout, type TreeRow } from "./widget.ts";
 import { SubagentInspector } from "./inspector.ts";
 import {
   SubagentOrchestrator,
-  type ChildRecord,
   type CommandExecution,
   type HerdrTransport,
 } from "./orchestrator.ts";
@@ -71,11 +60,15 @@ const Parameters = Type.Object({
   action: ActionSchema,
   agent: Type.Optional(Type.String({ description: "Agent role for spawn" })),
   name: Type.Optional(
-    Type.String({ description: "Stable semantic child name for spawn or target name for controls" }),
+    Type.String({
+      description: "Stable semantic child name for spawn or target name for controls",
+    }),
   ),
   task: Type.Optional(Type.String({ description: "Task for spawn" })),
   workScope: Type.Optional(
-    Type.String({ description: "Shared workstream slug. Required for root spawns; inherited by descendants." }),
+    Type.String({
+      description: "Shared workstream slug. Required for root spawns; inherited by descendants.",
+    }),
   ),
   cwd: Type.Optional(Type.String({ description: "Explicit child working directory" })),
   message: Type.Optional(Type.String({ description: "Steering or follow-up message" })),
@@ -191,7 +184,8 @@ export default function herdrSubagents(pi: ExtensionAPI) {
     completionDelivery = new CompletionDelivery({
       getBranch: () => ctx.sessionManager.getBranch(),
       appendEntry: (customType, data) => pi.appendEntry(customType, data),
-      sendMessage: (message) => pi.sendMessage(message, { deliverAs: "followUp", triggerTurn: true }),
+      sendMessage: (message) =>
+        pi.sendMessage(message, { deliverAs: "followUp", triggerTurn: true }),
       signal: deliveryController.signal,
     });
     completionDelivery.replay();
@@ -288,7 +282,13 @@ export default function herdrSubagents(pi: ExtensionAPI) {
       }
       if (params.action === "message") {
         if (!params.message) throw new Error("message requires message text");
-        const child = await orchestrator.message(lineage, currentParentId(ctx), name, params.message, signal);
+        const child = await orchestrator.message(
+          lineage,
+          currentParentId(ctx),
+          name,
+          params.message,
+          signal,
+        );
         updateWidget(ctx);
         return textResult(`Message sent to ${sanitizeMetadata(child.semanticName)}`, { child });
       }
@@ -303,11 +303,11 @@ export default function herdrSubagents(pi: ExtensionAPI) {
         );
       }
       if (params.action === "resume") {
-        const child = await orchestrator.resume(lineage, currentParentId(ctx), name, signal);
-        return textResult(
-          `Focused ${sanitizeMetadata(child.semanticName)} in ${sanitizeMetadata(child.paneId)}`,
-          { child },
-        );
+        const resumed = await orchestrator.resume(lineage, currentParentId(ctx), name, signal);
+        return textResult(resumeResultText(resumed), {
+          child: resumed.child,
+          action: resumed.action,
+        });
       }
 
       if (!params.agent || !params.task) {
@@ -335,41 +335,45 @@ export default function herdrSubagents(pi: ExtensionAPI) {
         const approved = await withHerdrBlocked(
           (event) => pi.events.emit("herdr:blocked", event),
           `Approval: project agent ${sanitizeMetadata(agent.name)}`,
-          () => ctx.ui.confirm(
-            "Run project-local agent?",
-            `Agent: ${sanitizeMetadata(agent.name)}\nSource: ${sanitizeMetadata(agent.filePath)}`,
-          ),
+          () =>
+            ctx.ui.confirm(
+              "Run project-local agent?",
+              `Agent: ${sanitizeMetadata(agent.name)}\nSource: ${sanitizeMetadata(agent.filePath)}`,
+            ),
         );
         if (!approved) return textResult("Cancelled: project-local agent not approved");
       }
 
       const allowedWorkerTargets = new Set(["scout", "researcher", "planner", "reviewer"]);
-      const spawnTargets = agent.name === "worker"
-        ? agent.spawnTargets.filter((target) => allowedWorkerTargets.has(target))
-        : [];
+      const spawnTargets =
+        agent.name === "worker"
+          ? agent.spawnTargets.filter((target) => allowedWorkerTargets.has(target))
+          : [];
       const tools = agent.tools ? [...agent.tools] : [...pi.getActiveTools()];
       const withoutSubagent = tools.filter((tool) => tool !== "subagent");
-      const strictTools = spawnTargets.length > 0
-        ? [...new Set([...withoutSubagent, "subagent"])]
-        : withoutSubagent;
-      const child = await orchestrator.spawn({
-        name,
-        task: params.task,
-        cwd: resolve(ctx.cwd, params.cwd ?? ctx.cwd),
-        parentSessionId: ctx.sessionManager.getSessionId(),
-        parentSessionFile: ctx.sessionManager.getSessionFile(),
-        workScope: params.workScope,
-        agent: {
-          name: agent.name,
-          description: agent.description,
-          tools: strictTools,
-          model: agent.model ?? (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined),
-          thinking: agent.thinking ?? ctx.thinkingLevel,
-          systemPromptPath: materializeSystemPrompt(STATE_DIRECTORY, agent),
-          skillPaths: resolveAgentSkills(ctx.cwd, agent.skills),
-          spawnTargets,
+      const strictTools =
+        spawnTargets.length > 0 ? [...new Set([...withoutSubagent, "subagent"])] : withoutSubagent;
+      const child = await orchestrator.spawn(
+        {
+          name,
+          task: params.task,
+          cwd: resolve(ctx.cwd, params.cwd ?? ctx.cwd),
+          parentSessionId: ctx.sessionManager.getSessionId(),
+          parentSessionFile: ctx.sessionManager.getSessionFile(),
+          workScope: params.workScope,
+          agent: {
+            name: agent.name,
+            description: agent.description,
+            tools: strictTools,
+            model: agent.model ?? (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined),
+            thinking: agent.thinking ?? ctx.thinkingLevel,
+            systemPromptPath: materializeSystemPrompt(STATE_DIRECTORY, agent),
+            skillPaths: resolveAgentSkills(ctx.cwd, agent.skills),
+            spawnTargets,
+          },
         },
-      }, signal);
+        signal,
+      );
       updateWidget(ctx);
       return textResult(
         `Spawned asynchronously: ${summarizeChild(child)} as ${sanitizeMetadata(child.herdrName)}`,

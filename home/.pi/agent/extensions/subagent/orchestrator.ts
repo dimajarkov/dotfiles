@@ -123,6 +123,11 @@ export interface ChildRecord {
   revision?: number;
 }
 
+export interface ResumeResult {
+  action: "focused" | "reconciled";
+  child: ChildRecord;
+}
+
 interface JsonObject {
   [key: string]: unknown;
 }
@@ -474,7 +479,7 @@ export class SubagentOrchestrator {
   }
 
   async #recoverChild(rootId: string, ownerId: string, childId: string): Promise<void> {
-    const child = this.#findChild(rootId, ownerId, childId);
+    let child = this.#findChild(rootId, ownerId, childId);
     if (ACTIVE_STATES.has(child.state) || child.state === "stale") {
       const proven = await this.#reconcileProvenCompletion(
         child.rootId,
@@ -490,6 +495,17 @@ export class SubagentOrchestrator {
         }
         return;
       }
+    }
+    child = await this.#retryPendingTerminalDelivery(rootId, ownerId, child);
+    if (child.state === "completed" || child.state === "failed" || child.state === "crashed") {
+      if (
+        child.deliveredAt !== undefined &&
+        this.#isCurrentHerdrSession(child) &&
+        !isRetiredSurface(child)
+      ) {
+        await this.#cleanupSurface(child);
+      }
+      return;
     }
     this.#assertCurrentHerdrSession(child);
     if (child.surfaceState === "cleanup-pending") {
@@ -510,10 +526,6 @@ export class SubagentOrchestrator {
       !isRetiredSurface(child)
     ) {
       await this.#cleanupSurface(child);
-      return;
-    }
-    if (child.state === "completed" || child.state === "failed" || child.state === "crashed") {
-      if (await this.#deliver(child)) await this.#cleanupSurface(child);
       return;
     }
     if (!ACTIVE_STATES.has(child.state)) return;
@@ -653,11 +665,13 @@ export class SubagentOrchestrator {
         false,
       );
       if (proven) {
-        this.#assertCurrentHerdrSession(proven);
-        const prepared = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, proven);
+        child = await this.#retryPendingTerminalDelivery(rootId, ownerId, proven);
+        this.#assertCurrentHerdrSession(child);
+        const prepared = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, child);
         return this.#relaunchClosedChild(prepared, message, signal);
       }
     }
+    child = await this.#retryPendingTerminalDelivery(rootId, ownerId, child);
     this.#assertCurrentHerdrSession(child);
     if (CLEANUP_TERMINAL_STATES.has(child.state)) {
       child = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, child);
@@ -692,37 +706,10 @@ export class SubagentOrchestrator {
 
     const decision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
       child = this.#findChild(rootId, ownerId, child.id);
-      if (this.#hasCurrentCompletionProof(child)) return { completed: child } as const;
-      const settlement = completionSettlementAt(child.completionMarkerPath);
-      if (this.#hasCurrentSettlementCandidate(child)) return { settling: child } as const;
-      const runningFrontier =
-        settlement?.childId === child.id &&
-        settlement.generation === child.generation &&
-        settlement.phase === "running" &&
-        settlement.sessionPath === child.sessionPath
-          ? settlement.frontierEntryId
-          : child.startedAfterEntryId;
-      let startedAfterEntryId = runningFrontier;
-      if (child.sessionPath) {
-        try {
-          const result = finalAssistantResult(child.sessionPath);
-          if (result.entryId !== runningFrontier && isConcludedStopReason(result.stopReason)) {
-            writeCompletionSettlement(child.completionMarkerPath, {
-              version: 1,
-              childId: child.id,
-              generation: child.generation,
-              phase: "candidate",
-              stopReason: result.stopReason,
-              entryId: result.entryId,
-              sessionPath: child.sessionPath,
-            });
-            return { settling: child } as const;
-          }
-          startedAfterEntryId = result.entryId;
-        } catch {}
-      }
+      const preflight = this.#settlementPreflight(child);
+      if ("completed" in preflight || "settling" in preflight) return preflight;
       return {
-        claimed: this.#claimActiveChildMessage(child, startedAfterEntryId),
+        claimed: this.#claimActiveChildMessage(child, preflight.frontierEntryId),
       } as const;
     });
     if ("completed" in decision) {
@@ -765,6 +752,45 @@ export class SubagentOrchestrator {
       settlement.sessionPath === child.sessionPath &&
       isConcludedStopReason(settlement.stopReason)
     );
+  }
+
+  #settlementPreflight(
+    child: ChildRecord,
+    allowExistingResult = false,
+  ):
+    | { completed: ChildRecord }
+    | { settling: ChildRecord }
+    | { open: ChildRecord; frontierEntryId: string | undefined } {
+    if (this.#hasCurrentCompletionProof(child, allowExistingResult)) return { completed: child };
+    const settlement = completionSettlementAt(child.completionMarkerPath);
+    if (this.#hasCurrentSettlementCandidate(child)) return { settling: child };
+    const runningFrontier =
+      settlement?.childId === child.id &&
+      settlement.generation === child.generation &&
+      settlement.phase === "running" &&
+      settlement.sessionPath === child.sessionPath
+        ? settlement.frontierEntryId
+        : child.startedAfterEntryId;
+    let frontierEntryId = runningFrontier;
+    if (child.sessionPath) {
+      try {
+        const result = finalAssistantResult(child.sessionPath);
+        if (result.entryId !== runningFrontier && isConcludedStopReason(result.stopReason)) {
+          writeCompletionSettlement(child.completionMarkerPath, {
+            version: 1,
+            childId: child.id,
+            generation: child.generation,
+            phase: "candidate",
+            stopReason: result.stopReason,
+            entryId: result.entryId,
+            sessionPath: child.sessionPath,
+          });
+          return { settling: child };
+        }
+        frontierEntryId = result.entryId;
+      } catch {}
+    }
+    return { open: child, frontierEntryId };
   }
 
   #claimActiveChildMessage(
@@ -869,6 +895,22 @@ export class SubagentOrchestrator {
     return child;
   }
 
+  async #retryPendingTerminalDelivery(
+    rootId: string,
+    ownerId: string,
+    initialChild: ChildRecord,
+  ): Promise<ChildRecord> {
+    const child = initialChild;
+    if (
+      child.deliveredAt === undefined &&
+      (child.state === "completed" || child.state === "failed" || child.state === "crashed")
+    ) {
+      await this.#deliver(child);
+      return this.#findChild(rootId, ownerId, child.id);
+    }
+    return child;
+  }
+
   async cancel(
     rootId: string,
     ownerId: string,
@@ -897,11 +939,7 @@ export class SubagentOrchestrator {
     if (ACTIVE_STATES.has(child.state) || child.state === "stale") {
       const initialDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
         child = this.#findChild(rootId, ownerId, child.id);
-        if (this.#hasCurrentCompletionProof(child, allowExistingResult)) {
-          return { completed: child } as const;
-        }
-        if (this.#hasCurrentSettlementCandidate(child)) return { settling: child } as const;
-        return { open: child } as const;
+        return this.#settlementPreflight(child, allowExistingResult);
       });
       if ("completed" in initialDecision) {
         const completed = await this.#reconcileProvenCompletion(
@@ -929,6 +967,17 @@ export class SubagentOrchestrator {
       }
       child = initialDecision.open;
     }
+    child = await this.#retryPendingTerminalDelivery(rootId, ownerId, child);
+    if (child.state === "completed" || child.state === "failed" || child.state === "crashed") {
+      if (
+        child.deliveredAt !== undefined &&
+        this.#isCurrentHerdrSession(child) &&
+        !isRetiredSurface(child)
+      ) {
+        await this.#cleanupSurface(child);
+      }
+      return { ...this.#findChild(rootId, ownerId, child.id) };
+    }
     this.#assertCurrentHerdrSession(child);
     if (ACTIVE_STATES.has(child.state)) {
       try {
@@ -937,10 +986,8 @@ export class SubagentOrchestrator {
         if (!(error instanceof RuntimeIdentityError) && !isPositiveAgentAbsence(error)) throw error;
         const staleDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
           child = this.#findChild(rootId, ownerId, child.id);
-          if (this.#hasCurrentCompletionProof(child, true)) {
-            return { completed: child } as const;
-          }
-          if (this.#hasCurrentSettlementCandidate(child)) return { settling: child } as const;
+          const preflight = this.#settlementPreflight(child, true);
+          if ("completed" in preflight || "settling" in preflight) return preflight;
           child.state = "stale";
           child.error = errorMessage(error);
           child.updatedAt = this.#now();
@@ -975,8 +1022,8 @@ export class SubagentOrchestrator {
     if (child.state === "stale") {
       const staleDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
         child = this.#findChild(rootId, ownerId, child.id);
-        if (this.#hasCurrentCompletionProof(child, true)) return { completed: child } as const;
-        if (this.#hasCurrentSettlementCandidate(child)) return { settling: child } as const;
+        const preflight = this.#settlementPreflight(child, true);
+        if ("completed" in preflight || "settling" in preflight) return preflight;
         child.state = "cancelled";
         child.deliveredAt = this.#now();
         child.updatedAt = child.deliveredAt;
@@ -1016,8 +1063,8 @@ export class SubagentOrchestrator {
 
     const inputDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, async () => {
       child = this.#findChild(rootId, ownerId, child.id);
-      if (this.#hasCurrentCompletionProof(child)) return { completed: child } as const;
-      if (this.#hasCurrentSettlementCandidate(child)) return { settling: child } as const;
+      const preflight = this.#settlementPreflight(child);
+      if ("completed" in preflight || "settling" in preflight) return preflight;
       await this.#runJson(["agent", "send-keys", child.herdrName, "escape"], signal);
       return { cancelling: child } as const;
     });
@@ -1061,8 +1108,8 @@ export class SubagentOrchestrator {
 
     const completionDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
       child = this.#findChild(rootId, ownerId, child.id);
-      if (this.#hasCurrentCompletionProof(child)) return { completed: child } as const;
-      if (this.#hasCurrentSettlementCandidate(child)) return { settling: child } as const;
+      const preflight = this.#settlementPreflight(child);
+      if ("completed" in preflight || "settling" in preflight) return preflight;
       child.state = "cancelled";
       child.result = undefined;
       child.error = undefined;
@@ -1101,7 +1148,7 @@ export class SubagentOrchestrator {
     ownerId: string,
     target: string,
     signal?: AbortSignal,
-  ): Promise<ChildRecord> {
+  ): Promise<ResumeResult> {
     return this.#withChildOperation(rootId, ownerId, target, () =>
       this.#resumeUnlocked(rootId, ownerId, target, signal),
     );
@@ -1112,8 +1159,8 @@ export class SubagentOrchestrator {
     ownerId: string,
     target: string,
     signal?: AbortSignal,
-  ): Promise<ChildRecord> {
-    const child = this.#findChild(rootId, ownerId, target);
+  ): Promise<ResumeResult> {
+    let child = this.#findChild(rootId, ownerId, target);
     const proven =
       ACTIVE_STATES.has(child.state) || child.state === "stale"
         ? await this.#reconcileProvenCompletion(
@@ -1129,7 +1176,24 @@ export class SubagentOrchestrator {
       if (this.#isCurrentHerdrSession(proven) && !isRetiredSurface(proven)) {
         await this.#cleanupSurface(proven);
       }
-      return { ...this.#findChild(rootId, ownerId, proven.id) };
+      return {
+        action: "reconciled",
+        child: { ...this.#findChild(rootId, ownerId, proven.id) },
+      };
+    }
+    child = await this.#retryPendingTerminalDelivery(rootId, ownerId, child);
+    if (child.state === "completed" || child.state === "failed" || child.state === "crashed") {
+      if (
+        child.deliveredAt !== undefined &&
+        this.#isCurrentHerdrSession(child) &&
+        !isRetiredSurface(child)
+      ) {
+        await this.#cleanupSurface(child);
+      }
+      return {
+        action: "reconciled",
+        child: { ...this.#findChild(rootId, ownerId, child.id) },
+      };
     }
     this.#assertCurrentHerdrSession(child);
     if (isRetiredSurface(child)) {
@@ -1160,14 +1224,17 @@ export class SubagentOrchestrator {
         );
       }
       if (!isRetiredSurface(completed)) await this.#cleanupSurface(completed);
-      return { ...this.#findChild(rootId, ownerId, completed.id) };
+      return {
+        action: "reconciled",
+        child: { ...this.#findChild(rootId, ownerId, completed.id) },
+      };
     }
     if ("settling" in focusDecision) {
       throw new CompletionSettlementPendingError(
         `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
       );
     }
-    return { ...focusDecision.focused };
+    return { action: "focused", child: { ...focusDecision.focused } };
   }
 
   async spawn(request: SpawnRequest, signal?: AbortSignal): Promise<ChildRecord> {

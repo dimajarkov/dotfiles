@@ -1,4 +1,5 @@
 import { sanitizeOutput } from "../lib/terminal-safety.ts";
+import { isCredentialName } from "../lib/credential-safety.ts";
 
 export type NetworkEntry = {
   ts: number;
@@ -13,20 +14,6 @@ export type NetworkEntry = {
 };
 
 const REDACTED = "[REDACTED]";
-const SENSITIVE_HEADER_NAMES = new Set([
-  "authorization",
-  "authentication-info",
-  "proxy-authorization",
-  "proxy-authentication-info",
-  "apikey",
-  "x-api-key",
-  "x-auth-token",
-  "cookie",
-  "set-cookie",
-]);
-const SENSITIVE_COMPACT_NAMES = new Set(
-  [...SENSITIVE_HEADER_NAMES, "session-id"].map((name) => name.replace(/[-_]/g, "")),
-);
 const URL_BEARING_HEADER_NAMES = new Set([
   "content-location",
   "destination",
@@ -52,32 +39,9 @@ const SENSITIVE_URL_PARAMETER_NAMES = new Set([
   "phpsessid",
 ]);
 
-function isSensitiveName(name: string): boolean {
-  const normalized = name
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
-    .replace(/([a-z\d])([A-Z])/g, "$1-$2")
-    .toLowerCase();
-  const compact = normalized.replace(/[-_]/g, "");
-  return (
-    SENSITIVE_HEADER_NAMES.has(normalized) ||
-    SENSITIVE_COMPACT_NAMES.has(compact) ||
-    /(?:authorization|authentication(?:info)?)$/u.test(compact) ||
-    /(?:authorizationcode|codeverifier|devicecode|devicegrantcode|oauthverifier|pkceverifier|usercode)$/u.test(
-      compact,
-    ) ||
-    /(?:dpop|dpopproof)$/u.test(compact) ||
-    /(?:assertion|jwt|samlart|samlrequest|samlresponse)$/u.test(compact) ||
-    /(?:api(?:cation)?key|credentials?|password|secret|token|signature\d*)$/u.test(compact) ||
-    /(?:^|[-_])(?:access[-_]?token|api[-_]?key|credential|password|secret|token)(?:$|[-_])/i.test(
-      normalized,
-    ) ||
-    /(?:^|[-_])(?:hmac|signature)(?:$|[-_]|\d)/i.test(normalized)
-  );
-}
-
 function isSensitiveUrlParameter(name: string): boolean {
   const compact = name.toLowerCase().replace(/[-_]/gu, "");
-  return isSensitiveName(name) || SENSITIVE_URL_PARAMETER_NAMES.has(compact);
+  return isCredentialName(name) || SENSITIVE_URL_PARAMETER_NAMES.has(compact);
 }
 
 function decodeParameterName(name: string): string {
@@ -205,7 +169,7 @@ function redactRefreshHeader(value: string): string {
 
 function redactHeaderValue(name: string, value: string): string {
   const safeValue = sanitizeOutput(value);
-  if (isSensitiveName(name)) return REDACTED;
+  if (isCredentialName(name)) return REDACTED;
   const normalizedName = name.toLowerCase();
   if (normalizedName === "link") return redactLinkHeader(safeValue);
   if (normalizedName === "refresh") return redactRefreshHeader(safeValue);

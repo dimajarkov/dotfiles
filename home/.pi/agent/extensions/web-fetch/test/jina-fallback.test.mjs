@@ -66,6 +66,41 @@ test("path-secret URLs remain ineligible with explicit third-party authorization
   assert.equal(resolverCalls, 0);
 });
 
+test("authentication proof paths remain ineligible with explicit authorization", async () => {
+  let fallbackCalls = 0;
+  let resolverCalls = 0;
+  for (const url of [
+    "https://docs.github.com/en/jwt/eyJhbGciOiJIUzI1NiJ9.abc.xyz",
+    "https://docs.github.com/en/%256a%2577%2574/eyJhbGciOiJIUzI1NiJ9.abc.xyz",
+    "https://docs.github.com/en/dpop-proof/eyJ0eXAiOiJkcG9wK2p3dCJ9.abc.xyz",
+    "https://docs.github.com/en/SAMLResponse/PHNhbWxwOlJlc3BvbnNlIElEPSJzZWNyZXQiPjEyMzQ1Njc4OTA=",
+    "https://docs.github.com/en/bearer/aB3dE5fG7hJ9kL1mN3pQ5rS7tV9xY2zA",
+    "https://docs.github.com/en/client_assertion/eyJhbGciOiJSUzI1NiJ9.abc.xyz",
+    "https://docs.github.com/en/eyJhbGciOiJIUzI1NiJ9.abc.xyz",
+  ]) {
+    assert.equal(
+      await runEligibleJinaFallback(
+        url,
+        async () => {
+          fallbackCalls += 1;
+          return "unexpected";
+        },
+        {
+          allowThirdPartyFallback: true,
+          resolve: async () => {
+            resolverCalls += 1;
+            return [{ address: "13.107.42.14", family: 4 }];
+          },
+        },
+      ),
+      null,
+      url,
+    );
+  }
+  assert.equal(fallbackCalls, 0);
+  assert.equal(resolverCalls, 0);
+});
+
 test("DNS-private and mixed-resolution hosts fail closed", async () => {
   assert.equal(
     await eligibleJinaFallbackUrl("https://docs.github.com/en/get-started", async () => [

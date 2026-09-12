@@ -303,6 +303,8 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/supabase-keychain";
   home.file.".pi/agent/extensions/lib/herdr-blocked.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/lib/herdr-blocked.ts";
+  home.file.".pi/agent/extensions/lib/credential-safety.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/lib/credential-safety.ts";
   home.file.".pi/agent/extensions/lib/terminal-safety.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/lib/terminal-safety.ts";
   home.file.".pi/agent/extensions/subagent".source =
