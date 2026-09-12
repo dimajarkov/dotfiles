@@ -33,6 +33,7 @@ import { tmpdir } from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+  redactBrowserUrl,
   serializeNetworkEntries,
   type NetworkEntry,
 } from "./network-serialization.ts";
@@ -139,11 +140,12 @@ export default function browserExtension(pi: ExtensionAPI) {
 
     page.on("console", (msg: ConsoleMessage) => {
       const loc = msg.location();
+      const locationUrl = loc?.url ? redactBrowserUrl(loc.url) : undefined;
       pushBounded(consoleBuf, {
         ts: Date.now(),
         type: msg.type(),
         text: msg.text(),
-        location: loc?.url ? `${loc.url}:${loc.lineNumber}` : undefined,
+        location: locationUrl ? `${locationUrl}:${loc.lineNumber}` : undefined,
       });
     });
     page.on("pageerror", (err) => {
@@ -284,11 +286,10 @@ export default function browserExtension(pi: ExtensionAPI) {
           timeout: params.timeoutMs ?? 30_000,
         });
         const status = resp?.status();
+        const finalUrl = redactBrowserUrl(p.url());
         return {
-          content: [
-            { type: "text", text: `${status ?? "?"} ${p.url()}` },
-          ],
-          details: { status, finalUrl: p.url() },
+          content: [{ type: "text", text: `${status ?? "?"} ${finalUrl}` }],
+          details: { status, finalUrl },
         };
       });
     },
@@ -557,7 +558,7 @@ export default function browserExtension(pi: ExtensionAPI) {
       // Bare /browser — status.
       const toolState = enabled ? "enabled" : "disabled (run /browser on)";
       const procState =
-        page && !page.isClosed() ? `, open at ${page.url()}` : "";
+        page && !page.isClosed() ? `, open at ${redactBrowserUrl(page.url())}` : "";
       ctx.ui.notify(`browser tools: ${toolState}${procState}`, "info");
     },
   });
