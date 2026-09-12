@@ -106,16 +106,15 @@ If you clone it, review these before you run `bootstrap.sh`:
   All three have to match.
 - **CPU architecture**, `hostPlatform` in `configuration.nix` (see Prerequisites above).
 
-**Git identity:** this config deliberately does not set your git name or email.
-Git will stop your first commit and tell you to set them (`git config --global user.name "Your Name"` and `git config --global user.email you@example.com`).
-If you'd rather manage that declaratively, add this back to `home.nix` with your own identity:
+**Git identity:** `home.nix` sets my git name and email declaratively.
+Before applying this config, replace both values with your own identity or remove them and configure Git separately.
 
 ```nix
 programs.git = {
   enable = true;
-  settings.user = {
-    name = "Your Name";
-    email = "you@example.com";
+  settings = {
+    user.name = "Your Name";
+    user.email = "you@example.com";
   };
 };
 ```

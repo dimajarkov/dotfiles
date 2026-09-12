@@ -23,6 +23,19 @@ const SENSITIVE_HEADER_NAMES = new Set([
 const SENSITIVE_COMPACT_NAMES = new Set(
   [...SENSITIVE_HEADER_NAMES, "session-id"].map((name) => name.replace(/[-_]/g, "")),
 );
+const URL_BEARING_HEADER_NAMES = new Set([
+  "content-location",
+  "destination",
+  "location",
+  "origin",
+  "referer",
+  "referrer",
+  "source-map",
+  "x-original-url",
+  "x-rewrite-url",
+  "x-source-map",
+]);
+const ENCODED_REDACTED = encodeURIComponent(REDACTED);
 
 function isSensitiveName(name: string): boolean {
   const normalized = name
@@ -45,14 +58,27 @@ function isSensitiveUrlParameter(name: string): boolean {
   return isSensitiveName(name) || /^(?:code|key|sig|signature)$/i.test(name);
 }
 
-function redactParameters(params: URLSearchParams): boolean {
-  let changed = false;
-  for (const name of new Set(params.keys())) {
-    if (!isSensitiveUrlParameter(name)) continue;
-    params.set(name, REDACTED);
-    changed = true;
+function decodeParameterName(name: string): string {
+  try {
+    return decodeURIComponent(name.replace(/\+/g, " "));
+  } catch {
+    return name;
   }
-  return changed;
+}
+
+function redactParameterText(value: string): { value: string; changed: boolean } {
+  let changed = false;
+  const redacted = value
+    .split("&")
+    .map((parameter) => {
+      const equals = parameter.indexOf("=");
+      const name = equals === -1 ? parameter : parameter.slice(0, equals);
+      if (!isSensitiveUrlParameter(decodeParameterName(name))) return parameter;
+      changed = true;
+      return `${name}=${ENCODED_REDACTED}`;
+    })
+    .join("&");
+  return { value: redacted, changed };
 }
 
 function redactFragment(hash: string): string {
@@ -62,38 +88,54 @@ function redactFragment(hash: string): string {
   const fragments = hash.slice(1).split("#").map((fragment) => {
     const queryStart = fragment.indexOf("?");
     const parameterText = queryStart === -1 ? fragment : fragment.slice(queryStart + 1);
-    const params = new URLSearchParams(parameterText);
-    if (!redactParameters(params)) return fragment;
+    const redacted = redactParameterText(parameterText);
+    if (!redacted.changed) return fragment;
 
     changed = true;
     const prefix = queryStart === -1 ? "" : fragment.slice(0, queryStart + 1);
-    return `${prefix}${params.toString()}`;
+    return `${prefix}${redacted.value}`;
   });
 
   return changed ? `#${fragments.join("#")}` : hash;
 }
 
-function redactUrl(value: string): string {
-  try {
-    const absolute = /^[a-z][a-z\d+.-]*:/i.test(value);
-    const url = new URL(value, "https://redaction.invalid");
-    if (url.username) url.username = REDACTED;
-    if (url.password) url.password = REDACTED;
-    redactParameters(url.searchParams);
-    const fragment = redactFragment(url.hash);
-    if (absolute) {
-      url.hash = fragment;
-      return url.toString();
-    }
-    return `${url.pathname}${url.search}${fragment}`;
-  } catch {
-    return value;
-  }
+function redactAuthorityCredentials(value: string): string {
+  const prefix = /^(?:[a-z][a-z\d+.-]*:)?\/\//i.exec(value)?.[0];
+  if (!prefix) return value;
+
+  const authorityStart = prefix.length;
+  const authorityEndOffset = value.slice(authorityStart).search(/[/?#]/u);
+  const authorityEnd =
+    authorityEndOffset === -1 ? value.length : authorityStart + authorityEndOffset;
+  const authority = value.slice(authorityStart, authorityEnd);
+  const at = authority.lastIndexOf("@");
+  if (at === -1) return value;
+
+  const userInfo = authority.slice(0, at);
+  const replacement = userInfo.includes(":")
+    ? `${ENCODED_REDACTED}:${ENCODED_REDACTED}`
+    : ENCODED_REDACTED;
+  return `${value.slice(0, authorityStart)}${replacement}@${authority.slice(at + 1)}${value.slice(authorityEnd)}`;
+}
+
+export function redactBrowserUrl(value: string): string {
+  const fragmentStart = value.indexOf("#");
+  const beforeFragment = fragmentStart === -1 ? value : value.slice(0, fragmentStart);
+  const fragment = fragmentStart === -1 ? "" : value.slice(fragmentStart);
+  const queryStart = beforeFragment.indexOf("?");
+  const beforeQuery = queryStart === -1 ? beforeFragment : beforeFragment.slice(0, queryStart);
+  const query = queryStart === -1 ? "" : beforeFragment.slice(queryStart + 1);
+  const redactedQuery = redactParameterText(query);
+  const redacted = `${beforeQuery}${queryStart === -1 ? "" : `?${redactedQuery.value}`}${redactFragment(fragment)}`;
+  return redactAuthorityCredentials(redacted);
 }
 
 function redactHeaderValue(name: string, value: string): string {
   if (isSensitiveName(name)) return REDACTED;
-  return name.toLowerCase() === "location" ? redactUrl(value) : value;
+  if (URL_BEARING_HEADER_NAMES.has(name.toLowerCase())) {
+    return redactBrowserUrl(value);
+  }
+  return value;
 }
 
 function redactHeaders(headers?: Record<string, string>): Record<string, string> | undefined {
@@ -110,7 +152,7 @@ export function serializeNetworkEntries(
 ): { text: string; entries: NetworkEntry[] } {
   const safeEntries = entries.map((entry) => ({
     ...entry,
-    url: redactUrl(entry.url),
+    url: redactBrowserUrl(entry.url),
     requestHeaders: redactHeaders(entry.requestHeaders),
     responseHeaders: redactHeaders(entry.responseHeaders),
   }));

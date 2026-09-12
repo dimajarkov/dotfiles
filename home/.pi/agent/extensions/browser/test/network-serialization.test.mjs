@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { serializeNetworkEntries } from "../network-serialization.ts";
+import { redactBrowserUrl, serializeNetworkEntries } from "../network-serialization.ts";
 
 test("network output preserves header presence without exposing credentials", () => {
   const result = serializeNetworkEntries(
@@ -191,4 +191,54 @@ test("preserves harmless URL anchors while serializing network details", () => {
   assert.match(result.text, /location: \/docs#troubleshooting/);
   assert.equal(result.entries[0].url, "https://example.test/docs#installation");
   assert.equal(result.entries[0].responseHeaders.location, "/docs#troubleshooting");
+});
+
+test("redacts URL-bearing headers in structured and rendered network output", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/data",
+        resourceType: "fetch",
+        requestHeaders: {
+          Referer: "https://app.test/page?access_token=referer-secret&view=keep",
+        },
+        responseHeaders: {
+          "Content-Location": "next?refreshToken=content-secret&view=keep",
+        },
+      },
+    ],
+    true,
+    new Set(["referer", "content-location"]),
+  );
+
+  assert.match(result.text, /Referer: https:\/\/app\.test\/page\?access_token=%5BREDACTED%5D&view=keep/);
+  assert.match(result.text, /Content-Location: next\?refreshToken=%5BREDACTED%5D&view=keep/);
+  assert.equal(
+    result.entries[0].requestHeaders.Referer,
+    "https://app.test/page?access_token=%5BREDACTED%5D&view=keep",
+  );
+  assert.equal(
+    result.entries[0].responseHeaders["Content-Location"],
+    "next?refreshToken=%5BREDACTED%5D&view=keep",
+  );
+  assert.doesNotMatch(JSON.stringify(result), /(?:referer|content)-secret/);
+});
+
+test("preserves URL forms while redacting malformed and credential-bearing values", () => {
+  assert.equal(redactBrowserUrl("next?state=1"), "next?state=1");
+  assert.equal(
+    redactBrowserUrl("//auth.example/callback?state=1"),
+    "//auth.example/callback?state=1",
+  );
+  assert.equal(redactBrowserUrl("/callback?state=1"), "/callback?state=1");
+  assert.equal(
+    redactBrowserUrl("https://example.test:bad/callback?access_token=invalid-secret&state=1"),
+    "https://example.test:bad/callback?access_token=%5BREDACTED%5D&state=1",
+  );
+  assert.equal(
+    redactBrowserUrl("https://user:password@example.test/callback?state=1"),
+    "https://%5BREDACTED%5D:%5BREDACTED%5D@example.test/callback?state=1",
+  );
 });
