@@ -28,6 +28,9 @@ interface ScenarioOptions {
   stopReason?: "stop" | "error";
   errorMessage?: string;
   monitor?: boolean;
+  agentStatus?: "working" | "done";
+  markerInitially?: boolean;
+  markerOnGet?: boolean;
 }
 
 function scenario(options: ScenarioOptions = {}) {
@@ -51,18 +54,22 @@ function scenario(options: ScenarioOptions = {}) {
       },
     })}\n`,
   );
-  mkdirSync(join(directory, "parent"));
-  writeFileSync(
-    join(directory, "parent", "child-1.generation-1.complete"),
-    JSON.stringify({
-      version: 1,
-      childId: "child-1",
-      generation: 1,
-      stopReason,
-      entryId: "result-1",
-      sessionPath: session,
-    }),
-  );
+  const registry = join(directory, "parent");
+  const markerPath = join(registry, "child-1.generation-1.complete");
+  mkdirSync(registry);
+  const publishMarker = () =>
+    writeFileSync(
+      markerPath,
+      JSON.stringify({
+        version: 1,
+        childId: "child-1",
+        generation: 1,
+        stopReason,
+        entryId: "result-1",
+        sessionPath: session,
+      }),
+    );
+  if (options.markerInitially !== false) publishMarker();
   const branch: unknown[] = [];
   const queued: unknown[] = [];
   const events: string[] = [];
@@ -83,6 +90,7 @@ function scenario(options: ScenarioOptions = {}) {
     signal: controller.signal,
   });
   let generation = 0;
+  let markerPublishedOnGet = false;
   const orchestrator = new SubagentOrchestrator({
     stateDirectory: directory,
     environment: {
@@ -133,6 +141,11 @@ function scenario(options: ScenarioOptions = {}) {
           };
         } else if (args[0] === "agent") {
           if (args[1] === "prompt") events.push(`prompt:${generation}`);
+          if (args[1] === "get" && options.markerOnGet && !markerPublishedOnGet) {
+            markerPublishedOnGet = true;
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            publishMarker();
+          }
           if (args[1] === "wait" && generation > 1) {
             return new Promise((_resolve, reject) => {
               if (signal?.aborted) reject(new Error("aborted"));
@@ -146,7 +159,7 @@ function scenario(options: ScenarioOptions = {}) {
             agent: {
               name: "scout-scout-child1",
               pane_id: `w1:p${generation + 1}`,
-              agent_status: "done",
+              agent_status: options.agentStatus ?? "done",
               agent_session: { kind: "path", value: session },
             },
           };
@@ -307,6 +320,53 @@ test("message delivers a settled error once before prompting a fresh generation"
       result: "PARTIAL_RESULT",
       error: "CHILD_FAILURE",
     });
+    assert.deepEqual(
+      s.events.filter((event) => event.startsWith("delivery:")),
+      ["delivery:1"],
+    );
+    assert.ok(s.events.indexOf("delivery:1") < s.events.indexOf("prompt:2"));
+  } finally {
+    await s.close();
+  }
+});
+
+test("message reconciles current completion proof while Herdr still reports working", async () => {
+  const s = scenario({ monitor: false, agentStatus: "working" });
+  try {
+    await s.spawn();
+
+    const child = await within(
+      s.orchestrator.message("parent", "parent", "scout", "Continue after completion"),
+    );
+
+    assert.equal(child.generation, 2);
+    assert.equal(s.queued.length, 1);
+    assert.deepEqual(
+      s.events.filter((event) => event.startsWith("delivery:")),
+      ["delivery:1"],
+    );
+    assert.ok(s.events.indexOf("delivery:1") < s.events.indexOf("prompt:2"));
+  } finally {
+    await s.close();
+  }
+});
+
+test("message catches completion proof published during asynchronous preflight", async () => {
+  const s = scenario({
+    monitor: false,
+    agentStatus: "working",
+    markerInitially: false,
+    markerOnGet: true,
+  });
+  try {
+    await s.spawn();
+
+    const child = await within(
+      s.orchestrator.message("parent", "parent", "scout", "Continue after preflight"),
+    );
+
+    assert.equal(child.generation, 2);
+    assert.equal(s.queued.length, 1);
     assert.deepEqual(
       s.events.filter((event) => event.startsWith("delivery:")),
       ["delivery:1"],

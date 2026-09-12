@@ -35,7 +35,9 @@ function protocolHarness() {
     generation: 1,
     state: "working",
   });
-  let endHandler: ((event: { messages: unknown[] }, ctx: ExtensionContext) => Promise<void>) | undefined;
+  let endHandler:
+    | ((event: { messages: unknown[] }, ctx: ExtensionContext) => Promise<void>)
+    | undefined;
   let settledHandler: ((event: unknown, ctx: ExtensionContext) => Promise<void>) | undefined;
   let blockedHandler: ((event: { active: boolean }) => void) | undefined;
   const pi = {
@@ -89,12 +91,18 @@ function protocolHarness() {
 test("agent_end captures the latest outcome but only agent_settled completes the child", async () => {
   const harness = protocolHarness();
 
-  await harness.endHandler({
-    messages: [{ role: "assistant", content: [], stopReason: "error" }],
-  }, harness.ctx);
-  await harness.endHandler({
-    messages: [{ role: "assistant", content: [], stopReason: "stop" }],
-  }, harness.ctx);
+  await harness.endHandler(
+    {
+      messages: [{ role: "assistant", content: [], stopReason: "error" }],
+    },
+    harness.ctx,
+  );
+  await harness.endHandler(
+    {
+      messages: [{ role: "assistant", content: [], stopReason: "stop" }],
+    },
+    harness.ctx,
+  );
 
   assert.equal(existsSync(harness.markerPath), false);
   assert.equal(harness.shutdowns(), 0);
@@ -113,6 +121,30 @@ test("agent_end captures the latest outcome but only agent_settled completes the
   assert.equal(existsSync(harness.registry), true);
 });
 
+test("a claimed follow-up frontier suppresses the preceding settled outcome", async () => {
+  const harness = protocolHarness();
+
+  await harness.endHandler(
+    {
+      messages: [{ role: "assistant", content: [], stopReason: "stop" }],
+    },
+    harness.ctx,
+  );
+  record(harness.registry, {
+    id: "child-1",
+    rootId: "root-1",
+    parentId: "parent-1",
+    generation: 1,
+    state: "starting",
+    startedAfterEntryId: "assistant-entry-2",
+  });
+
+  await harness.settledHandler({}, harness.ctx);
+
+  assert.equal(existsSync(harness.markerPath), false);
+  assert.equal(harness.shutdowns(), 0);
+});
+
 test("aborted and blocked child runs retain their surfaces", async () => {
   for (const scenario of [
     { blocked: false, stopReason: "aborted" },
@@ -120,9 +152,12 @@ test("aborted and blocked child runs retain their surfaces", async () => {
   ]) {
     const harness = protocolHarness();
     harness.setBlocked(scenario.blocked);
-    await harness.endHandler({
-      messages: [{ role: "assistant", content: [], stopReason: scenario.stopReason }],
-    }, harness.ctx);
+    await harness.endHandler(
+      {
+        messages: [{ role: "assistant", content: [], stopReason: scenario.stopReason }],
+      },
+      harness.ctx,
+    );
     await harness.settledHandler({}, harness.ctx);
     assert.equal(existsSync(harness.markerPath), false);
     assert.equal(harness.shutdowns(), 0);
@@ -147,9 +182,12 @@ test("direct descendants suppress parent completion until delivered and cleaned"
       ...descendant,
     });
 
-    await harness.endHandler({
-      messages: [{ role: "assistant", content: [], stopReason: "stop" }],
-    }, harness.ctx);
+    await harness.endHandler(
+      {
+        messages: [{ role: "assistant", content: [], stopReason: "stop" }],
+      },
+      harness.ctx,
+    );
     await harness.settledHandler({}, harness.ctx);
 
     assert.equal(existsSync(harness.markerPath), false, JSON.stringify(descendant));
@@ -158,9 +196,13 @@ test("direct descendants suppress parent completion until delivered and cleaned"
 });
 
 test("delivered and cleaned terminal direct descendants permit parent completion", async () => {
-  for (const { state, surfaceState } of ["completed", "failed", "cancelled", "crashed", "stale"].flatMap(
-    (state) => ["closed", "released"].map((surfaceState) => ({ state, surfaceState })),
-  )) {
+  for (const { state, surfaceState } of [
+    "completed",
+    "failed",
+    "cancelled",
+    "crashed",
+    "stale",
+  ].flatMap((state) => ["closed", "released"].map((surfaceState) => ({ state, surfaceState })))) {
     const harness = protocolHarness();
     record(harness.registry, {
       id: "grandchild-1",
@@ -172,9 +214,12 @@ test("delivered and cleaned terminal direct descendants permit parent completion
       surfaceState,
     });
 
-    await harness.endHandler({
-      messages: [{ role: "assistant", content: [], stopReason: "stop" }],
-    }, harness.ctx);
+    await harness.endHandler(
+      {
+        messages: [{ role: "assistant", content: [], stopReason: "stop" }],
+      },
+      harness.ctx,
+    );
     await harness.settledHandler({}, harness.ctx);
 
     assert.equal(existsSync(harness.markerPath), true, state);
@@ -187,11 +232,22 @@ test("a durable but unconsumed completion prevents parent exit even when Pi repo
   let queued: unknown;
   const delivery = new CompletionDelivery({
     getBranch: () => h.branch,
-    appendEntry: (customType, data) => { h.branch.push({ type: "custom", customType, data }); },
-    sendMessage: (message) => { queued = { type: "custom_message", ...message }; },
+    appendEntry: (customType, data) => {
+      h.branch.push({ type: "custom", customType, data });
+    },
+    sendMessage: (message) => {
+      queued = { type: "custom_message", ...message };
+    },
     signal: new AbortController().signal,
   });
-  delivery.deliver({ id: "grandchild", generation: 1, semanticName: "scout", role: "scout", state: "completed", result: "DONE" });
+  delivery.deliver({
+    id: "grandchild",
+    generation: 1,
+    semanticName: "scout",
+    role: "scout",
+    state: "completed",
+    result: "DONE",
+  });
   await h.endHandler({ messages: [{ role: "assistant", stopReason: "stop" }] }, h.ctx);
   await h.settledHandler({}, h.ctx);
   assert.equal(h.shutdowns(), 0);
@@ -204,9 +260,12 @@ test("a durable but unconsumed completion prevents parent exit even when Pi repo
 test("error child completion records its settled outcome and shuts down", async () => {
   const harness = protocolHarness();
 
-  await harness.endHandler({
-    messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "boom" }],
-  }, harness.ctx);
+  await harness.endHandler(
+    {
+      messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "boom" }],
+    },
+    harness.ctx,
+  );
   await harness.settledHandler({}, harness.ctx);
 
   assert.equal(JSON.parse(readFileSync(harness.markerPath, "utf8")).stopReason, "error");
