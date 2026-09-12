@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { CompletionDelivery } from "./completion-delivery.ts";
+import { completionSettlementAt, writeCompletionSettlement } from "./completion-protocol.ts";
 import { SubagentOrchestrator, type CommandExecution } from "./orchestrator.ts";
 
 async function within<T>(promise: Promise<T>): Promise<T> {
@@ -182,7 +183,9 @@ function scenario(options: ScenarioOptions = {}) {
     queued,
     completionQueued,
     session,
+    markerPath,
     events,
+    publishMarker,
     spawn: () =>
       orchestrator.spawn({
         name: "scout",
@@ -423,6 +426,76 @@ test("message catches completion proof published during asynchronous preflight",
       ["delivery:1"],
     );
     assert.ok(s.events.indexOf("delivery:1") < s.events.indexOf("prompt:2"));
+  } finally {
+    await s.close();
+  }
+});
+
+test("message cannot cross a persisted conclusion before marker publication", async () => {
+  const exactResult = "PERSISTED_BEFORE_PUBLICATION \n\t";
+  const s = scenario({
+    result: exactResult,
+    monitor: false,
+    agentStatus: "working",
+    markerInitially: false,
+  });
+  try {
+    const spawned = await s.spawn();
+    const promptCount = s.events.filter((event) => event.startsWith("prompt:")).length;
+
+    await assert.rejects(
+      s.orchestrator.message("parent", "parent", "scout", "MUST_NOT_CROSS_RESULT"),
+      /settlement.*pending/i,
+    );
+
+    const pending = s.orchestrator.list("parent")[0];
+    assert.equal(pending?.generation, 1);
+    assert.equal(pending?.startedAfterEntryId, spawned.startedAfterEntryId);
+    assert.equal(s.events.filter((event) => event.startsWith("prompt:")).length, promptCount);
+    assert.deepEqual(completionSettlementAt(s.markerPath), {
+      version: 1,
+      childId: "child-1",
+      generation: 1,
+      phase: "candidate",
+      stopReason: "stop",
+      entryId: "result-1",
+      sessionPath: s.session,
+    });
+
+    s.publishMarker();
+    const [completed] = await s.orchestrator.recover("parent", "parent");
+    assert.equal(completed?.state, "completed");
+    assert.equal(completed?.result, exactResult);
+    assert.deepEqual(
+      s.events.filter((event) => event.startsWith("delivery:")),
+      ["delivery:1"],
+    );
+  } finally {
+    await s.close();
+  }
+});
+
+test("message can steer a running turn whose prior conclusion is the durable frontier", async () => {
+  const s = scenario({ monitor: false, agentStatus: "working", markerInitially: false });
+  try {
+    const spawned = await s.spawn();
+    writeCompletionSettlement(s.markerPath, {
+      version: 1,
+      childId: spawned.id,
+      generation: spawned.generation,
+      phase: "running",
+      sessionPath: s.session,
+      frontierEntryId: "result-1",
+    });
+    const promptCount = s.events.filter((event) => event.startsWith("prompt:")).length;
+
+    const steered = await s.orchestrator.message("parent", "parent", "scout", "STEER_ACTIVE_TURN");
+
+    assert.equal(steered.generation, 1);
+    assert.equal(steered.state, "working");
+    assert.equal(steered.startedAfterEntryId, "result-1");
+    assert.equal(s.events.filter((event) => event.startsWith("prompt:")).length, promptCount + 1);
+    assert.equal(s.queued.length, 0);
   } finally {
     await s.close();
   }

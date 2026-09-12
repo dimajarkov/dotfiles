@@ -16,6 +16,7 @@ import {
   type CommandExecution,
   type HerdrTransport,
 } from "./orchestrator.ts";
+import { writeCompletionSettlement } from "./completion-protocol.ts";
 import { withRegistryLock } from "./registry-lock.ts";
 
 const temporaryDirectories: string[] = [];
@@ -1159,7 +1160,7 @@ test("restart recovery classifies a missing live agent as stale", async () => {
   assert.equal(recovered.list("parent-session")[0]?.state, "stale");
 });
 
-test("recovery rejects a reported session path that differs from the immutable record", async () => {
+test("recovery delivers proven output before observing a replaced runtime", async () => {
   const directory = temporaryDirectory();
   const childSession = join(directory, "immutable-session.jsonl");
   writeFileSync(
@@ -1223,13 +1224,16 @@ test("recovery rejects a reported session path that differs from the immutable r
   await recovered.recover("parent-session", "parent-session");
 
   const child = recovered.list("parent-session")[0];
-  assert.equal(child?.state, "stale");
-  assert.match(child?.error ?? "", /session artifact changed/);
-  assert.equal(deliveries, 0);
-  assert.deepEqual(transport.calls, [["agent", "get", child?.herdrName ?? ""]]);
+  assert.equal(child?.state, "completed");
+  assert.equal(child?.result, "RECORDED_RESULT");
+  assert.equal(deliveries, 1);
+  assert.equal(
+    transport.calls.some((call) => call[0] === "agent" && call[1] === "get"),
+    false,
+  );
 });
 
-test("monitor rejects a reported pane that differs from the recorded owned pane", async () => {
+test("monitor delivers proven output before observing a replaced pane", async () => {
   const directory = temporaryDirectory();
   const childSession = join(directory, "monitor-pane-mismatch.jsonl");
   writeFileSync(
@@ -1283,11 +1287,13 @@ test("monitor rejects a reported pane that differs from the recorded owned pane"
   await new Promise<void>((resolve) => setTimeout(resolve, 25));
 
   const child = orchestrator.list("parent-session")[0];
-  assert.equal(child?.state, "stale");
-  assert.match(child?.error ?? "", /pane identity changed/);
-  assert.equal(deliveries, 0);
+  assert.equal(child?.state, "completed");
+  assert.equal(child?.result, "WRONG_RUNTIME_RESULT");
+  assert.equal(deliveries, 1);
   assert.equal(
-    transport.calls.some((call) => call[1] === "close"),
+    transport.calls.some(
+      (call) => call[0] === "agent" && (call[1] === "wait" || call[1] === "get"),
+    ),
     false,
   );
 });
@@ -1429,7 +1435,6 @@ test("inspect racing monitor completion cannot regress a same-generation termina
       },
     })}\n`,
   );
-  writeCompletionMarker(directory, "parent-session", "child-1");
   const responses = successfulRootSpawnResponses();
   const started = responses[2] as {
     result: { agent: { agent_session: { value: string } } };
@@ -1502,6 +1507,7 @@ test("inspect racing monitor completion cannot regress a same-generation termina
   });
   await orchestrator.spawn(spawnRequest());
   await new Promise<void>((resolve) => setImmediate(resolve));
+  writeCompletionMarker(directory, "parent-session", "child-1");
 
   const inspecting = orchestrator.inspect("parent-session", "parent-session", "authentication");
   await startedInspect;
@@ -2177,6 +2183,15 @@ test("message replaces an actively waiting monitor within the launched generatio
 
   await orchestrator.spawn(spawnRequest());
   await waitStarted;
+  const active = orchestrator.list("parent-session")[0]!;
+  writeCompletionSettlement(active.completionMarkerPath, {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "running",
+    sessionPath: childSession,
+    frontierEntryId: "old-assistant",
+  });
   await orchestrator.message("parent-session", "parent-session", "authentication", "New work");
   const completed = await delivered;
   assert.equal(waitCount, 2);
@@ -2224,6 +2239,15 @@ test("follow-up completion waits for a new assistant session entry", async () =>
     monitor: false,
   });
   await initial.spawn(spawnRequest());
+  const active = initial.list("parent-session")[0]!;
+  writeCompletionSettlement(active.completionMarkerPath, {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "running",
+    sessionPath: childSession,
+    frontierEntryId: "old-assistant",
+  });
 
   class DelayedSessionTransport extends FakeHerdrTransport {
     override async run(args: string[]): Promise<CommandExecution> {
@@ -2893,7 +2917,7 @@ test("resume rejects a closed surface and directs the caller to message", async 
     orchestrator.resume("parent-session", "parent-session", "authentication"),
     /surface is closed.*use message/i,
   );
-  assert.equal(transport.calls.length, 6);
+  assert.equal(transport.calls.length, 5);
 });
 
 test("successful detached root completion closes only its recorded pane after durable delivery", async () => {
@@ -3972,21 +3996,9 @@ test("failed surface close stays cleanup-pending and recovery retries it", async
     result: { agent: { agent_session: { value: string } } };
   };
   started.result.agent.agent_session.value = childSession;
-  responses.push(
-    {
-      id: "cli:agent:wait",
-      result: {
-        agent: {
-          pane_id: "w1:p9",
-          agent_status: "done",
-          agent_session: { kind: "path", value: childSession },
-        },
-      },
-    },
-    { id: "cli:pane:close", result: { type: "unused" } },
-  );
+  responses.push({ id: "cli:pane:close", result: { type: "unused" } });
   const transport = new FakeHerdrTransport(responses);
-  transport.responses[5] = { code: 1, stdout: "", stderr: "pane close failed" };
+  transport.responses[4] = { code: 1, stdout: "", stderr: "pane close failed" };
   let resolveDelivered!: () => void;
   const delivered = new Promise<void>((resolve) => {
     resolveDelivered = resolve;
@@ -4273,7 +4285,6 @@ test("agent wait transport failure reconciles the same runtime and continues mon
       },
     })}\n`,
   );
-  writeCompletionMarker(directory, "parent-session", "child-1");
   const responses = successfulRootSpawnResponses();
   const started = responses[2] as {
     result: { agent: { agent_session: { value: string } } };
@@ -4303,7 +4314,20 @@ test("agent wait transport failure reconciles the same runtime and continues mon
     },
     { id: "cli:pane:close", result: { type: "ok" } },
   );
-  const transport = new FakeHerdrTransport(responses);
+  let waitCount = 0;
+  class ReconciledWaitTransport extends FakeHerdrTransport {
+    override async run(args: string[], signal?: AbortSignal): Promise<CommandExecution> {
+      const response = await super.run(args, signal);
+      if (args[0] === "agent" && args[1] === "wait") {
+        waitCount += 1;
+        if (waitCount === 2) {
+          writeCompletionMarker(directory, "parent-session", "child-1");
+        }
+      }
+      return response;
+    }
+  }
+  const transport = new ReconciledWaitTransport(responses);
   transport.responses[4] = { code: 1, stdout: "", stderr: "wait socket reset" };
   let resolveDelivered!: (child: { state: string; result?: string }) => void;
   const delivered = new Promise<{ state: string; result?: string }>((resolve) => {
@@ -4369,7 +4393,7 @@ test("ambiguous wait and reconciliation failures mark stale without cleanup", as
   });
 
   await orchestrator.spawn(spawnRequest());
-  await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  await waitUntil(() => orchestrator.list("parent-session")[0]?.state === "stale");
 
   const child = orchestrator.list("parent-session")[0];
   assert.equal(child?.state, "stale");
@@ -4529,7 +4553,7 @@ test("detached delivery callback errors are absorbed and persisted", async () =>
   });
 
   await orchestrator.spawn(spawnRequest());
-  await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  await waitUntil(() => orchestrator.list("parent-session")[0]?.lifecycleError !== undefined);
 
   const child = orchestrator.list("parent-session")[0];
   assert.equal(child?.state, "completed");
@@ -4555,7 +4579,6 @@ test("detached monitor absorbs and persists a transient registry filesystem erro
       },
     })}\n`,
   );
-  writeCompletionMarker(directory, "parent-session", "child-1");
   const responses = successfulRootSpawnResponses();
   const started = responses[2] as {
     result: { agent: { agent_session: { value: string } } };
@@ -4575,6 +4598,7 @@ test("detached monitor absorbs and persists a transient registry filesystem erro
     override async run(args: string[]): Promise<CommandExecution> {
       const response = await super.run(args);
       if (args[0] === "agent" && args[1] === "wait") {
+        writeCompletionMarker(directory, "parent-session", "child-1");
         chmodSync(registry, 0o500);
         setTimeout(() => chmodSync(registry, 0o700), 30);
       }
@@ -5222,7 +5246,15 @@ test("stale cancellation preserves a proven prior completion after an interrupte
     id: () => "child-1",
     monitor: false,
   });
-  await initial.spawn({ ...spawnRequest(), workScope: "scope-tests" });
+  const active = await initial.spawn({ ...spawnRequest(), workScope: "scope-tests" });
+  writeCompletionSettlement(active.completionMarkerPath, {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "running",
+    sessionPath: childSession,
+    frontierEntryId: "c6c47482",
+  });
   await initial.message(
     "parent-session",
     "parent-session",

@@ -5,7 +5,12 @@ import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { SubagentOrchestrator, type ChildRecord, type CommandExecution } from "./orchestrator.ts";
 
-async function scenario(t: TestContext, workScope?: string, monitor = false) {
+async function scenario(
+  t: TestContext,
+  workScope?: string,
+  monitor = false,
+  markerInitially = true,
+) {
   const directory = mkdtempSync(join(tmpdir(), "subagent-ownership-"));
   const session = join(directory, "child.jsonl");
   const parentSession = join(directory, "parent.jsonl");
@@ -185,17 +190,19 @@ async function scenario(t: TestContext, workScope?: string, monitor = false) {
       spawnTargets: [],
     },
   });
-  writeFileSync(
-    child.completionMarkerPath,
-    JSON.stringify({
-      version: 1,
-      childId: child.id,
-      generation: child.generation,
-      stopReason: "stop",
-      entryId: "result-1",
-      sessionPath: session,
-    }),
-  );
+  const publishMarker = () =>
+    writeFileSync(
+      child.completionMarkerPath,
+      JSON.stringify({
+        version: 1,
+        childId: child.id,
+        generation: child.generation,
+        stopReason: "stop",
+        entryId: "result-1",
+        sessionPath: session,
+      }),
+    );
+  if (markerInitially) publishMarker();
   calls.length = 0;
   return {
     orchestrator,
@@ -205,6 +212,7 @@ async function scenario(t: TestContext, workScope?: string, monitor = false) {
     session,
     directory,
     pendingWaits,
+    publishMarker,
     registry: dirname(child.completionMarkerPath),
     record: () => orchestrator.list("parent")[0]!,
     cancel: () => orchestrator.cancel("parent", "parent", "owned"),
@@ -216,7 +224,7 @@ for (const operation of ["message", "cancel"]) {
     `a failed ${operation} preflight does not abandon completion monitoring`,
     { timeout: 5_000 },
     async (t) => {
-      const s = await scenario(t, undefined, true);
+      const s = await scenario(t, undefined, true, false);
       assert.equal(s.pendingWaits.size, 1);
       const before = s.record();
       s.runtime.lookupError = "temporary agent lookup failure";
@@ -229,6 +237,7 @@ for (const operation of ["message", "cancel"]) {
       assert.deepEqual(s.record(), before);
       assert.equal(s.pendingWaits.size, 1, "The live child still needs a completion observer");
       s.runtime.lookupError = undefined;
+      s.publishMarker();
       for (const finish of s.pendingWaits) finish();
       while (s.record().surfaceState !== "closed")
         await new Promise((resolve) => setTimeout(resolve, 10));
@@ -262,6 +271,43 @@ test("read-only inspect does not stop an outstanding completion monitor", async 
   assert.equal(s.record().result, "SAVED_FINDINGS");
   assert.equal(s.delivered.length, 1);
   assert.deepEqual(mutations(s.calls), [["pane", "close", "w1:p9"]]);
+});
+
+test("monitor reconciles proven completion before validating replaced runtime", async (t) => {
+  const s = await scenario(t, undefined, true);
+  assert.equal(s.pendingWaits.size, 1);
+  s.runtime.session = "/tmp/replacement.jsonl";
+
+  for (const finish of s.pendingWaits) finish();
+  for (let attempt = 0; attempt < 100 && s.record().state !== "completed"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  assert.equal(s.record().state, "completed");
+  assert.equal(s.record().result, "SAVED_FINDINGS");
+  assert.equal(s.delivered.length, 1);
+  assert.equal(
+    s.calls.some(([kind, action]) => kind === "agent" && action === "get"),
+    false,
+  );
+  assert.deepEqual(mutations(s.calls), []);
+});
+
+test("recovery reconciles proven completion before validating replaced runtime", async (t) => {
+  const s = await scenario(t);
+  s.runtime.session = "/tmp/replacement.jsonl";
+
+  await s.orchestrator.recover("parent", "parent");
+
+  assert.equal(s.record().state, "completed");
+  assert.equal(s.record().result, "SAVED_FINDINGS");
+  assert.equal(s.record().surfaceState, "released");
+  assert.equal(s.delivered.length, 1);
+  assert.equal(
+    s.calls.some(([kind, action]) => kind === "agent" && action === "get"),
+    false,
+  );
+  assert.deepEqual(mutations(s.calls), []);
 });
 
 test("active cancellation observes a replacement before input and preserves proven original findings", async (t) => {
@@ -314,11 +360,10 @@ test("recovery retries cleanup-pending without closing a replacement or losing i
 });
 
 for (const agent of ["pi", "claude"]) {
-  test(`follow-up and focus reject a ${agent} replacement before mutation`, async (t) => {
+  test(`follow-up and focus preserve a ${agent} replacement surface`, async (t) => {
     const s = await scenario(t);
     s.runtime.agent = agent;
     s.runtime.session = "/tmp/new-occupant.jsonl";
-    const before = s.record();
     await assert.rejects(
       s.orchestrator.message("parent", "parent", "owned", "PRIVATE_FOLLOW_UP"),
       /session artifact changed/,
@@ -327,7 +372,10 @@ for (const agent of ["pi", "claude"]) {
       s.orchestrator.resume("parent", "parent", "owned"),
       /session artifact changed/,
     );
-    assert.deepEqual(s.record(), before);
+    assert.equal(s.record().state, "completed");
+    assert.equal(s.record().result, "SAVED_FINDINGS");
+    assert.equal(s.record().surfaceState, "open");
+    assert.equal(s.delivered.length, 1);
     assert.deepEqual(mutations(s.calls), []);
   });
 }
