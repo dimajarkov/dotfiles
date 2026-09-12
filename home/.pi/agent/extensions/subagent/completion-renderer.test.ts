@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { stripTerminalSequences, visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
+import {
+  setCapabilityOverrides,
+  stripTerminalSequences,
+  visibleWidth,
+  type MarkdownTheme,
+} from "@earendil-works/pi-tui";
 import {
   completionOutput,
   renderCompletionMessage,
@@ -29,6 +34,8 @@ const theme: CompletionRenderTheme = {
   fg: (_color, text) => text,
   bold: (text) => text,
 };
+
+setCapabilityOverrides({ hyperlinks: true });
 
 test("removes only the completion status line from the markdown payload", () => {
   assert.equal(

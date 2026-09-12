@@ -62,8 +62,7 @@ export function sanitizeOutput(text: string): string {
       (codePoint >= 0x0e && codePoint <= 0x1f) ||
       (codePoint >= 0x7f && codePoint <= 0x9f);
     const isBidiFormat =
-      (codePoint >= 0x202a && codePoint <= 0x202e) ||
-      (codePoint >= 0x2066 && codePoint <= 0x2069);
+      (codePoint >= 0x202a && codePoint <= 0x202e) || (codePoint >= 0x2066 && codePoint <= 0x2069);
     if (!isControl && !isBidiFormat) result += character;
   }
   return result;
@@ -86,7 +85,7 @@ export function sanitizeRenderedOutput(text: string): string {
     if (target === undefined) {
       result += match[0];
     } else {
-      result += `\x1b]8;;${target && safeExplicitUrl(target) ? target : ""}\x1b\\`;
+      result += `\x1b]8;;${target && isSafeExplicitUrl(target) ? target : ""}\x1b\\`;
     }
     position = match.index + match[0].length;
   }
@@ -97,7 +96,7 @@ export function sanitizeRenderedLines(lines: readonly string[]): string[] {
   return lines.map(sanitizeRenderedOutput);
 }
 
-function safeExplicitUrl(target: string): boolean {
+export function isSafeExplicitUrl(target: string): boolean {
   if (sanitizeOutput(target) !== target || /\s/u.test(target)) return false;
   try {
     const url = new URL(target);

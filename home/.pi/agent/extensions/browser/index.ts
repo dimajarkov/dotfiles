@@ -32,28 +32,16 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { sanitizeMetadata } from "../lib/terminal-safety.ts";
+import { sanitizeMetadata, sanitizeOutput } from "../lib/terminal-safety.ts";
 import {
   redactBrowserDiagnostic,
   redactBrowserUrl,
   serializeNetworkEntries,
   type NetworkEntry,
 } from "./network-serialization.ts";
-import type {
-  BrowserContext,
-  ConsoleMessage,
-  Page,
-  Request,
-} from "playwright-core";
+import type { BrowserContext, ConsoleMessage, Page, Request } from "playwright-core";
 
-const DEFAULT_BROWSERS_DIR = join(
-  homedir(),
-  ".pi",
-  "agent",
-  "extensions",
-  "browser",
-  ".browsers",
-);
+const DEFAULT_BROWSERS_DIR = join(homedir(), ".pi", "agent", "extensions", "browser", ".browsers");
 process.env.PLAYWRIGHT_BROWSERS_PATH ??= DEFAULT_BROWSERS_DIR;
 
 type ConsoleEntry = {
@@ -125,8 +113,7 @@ export default function browserExtension(pi: ExtensionAPI) {
   const profileDir =
     process.env.PI_BROWSER_PROFILE ??
     join(homedir(), ".pi", "agent", "extensions", "browser", ".profile");
-  const browsersDir =
-    process.env.PLAYWRIGHT_BROWSERS_PATH ?? DEFAULT_BROWSERS_DIR;
+  const browsersDir = process.env.PLAYWRIGHT_BROWSERS_PATH ?? DEFAULT_BROWSERS_DIR;
   const headless = !process.env.PI_BROWSER_HEADFUL;
 
   async function ensurePage(): Promise<Page> {
@@ -303,7 +290,9 @@ export default function browserExtension(pi: ExtensionAPI) {
           );
           const finalUrl = redactBrowserUrl(p.url());
           return {
-            content: [{ type: "text", text: `navigation error: ${message}\nfinal URL: ${finalUrl}` }],
+            content: [
+              { type: "text", text: `navigation error: ${message}\nfinal URL: ${finalUrl}` },
+            ],
             details: { status: undefined, finalUrl, error: message },
             isError: true,
           };
@@ -347,7 +336,7 @@ export default function browserExtension(pi: ExtensionAPI) {
             typeof result === "string"
               ? result
               : (JSON.stringify(result, null, 2) ?? String(result));
-          return { content: [{ type: "text", text }], details: { result } };
+          return { content: [{ type: "text", text: sanitizeOutput(text) }], details: { result } };
         } catch (e) {
           const msg = redactBrowserDiagnostic(e instanceof Error ? e.message : String(e));
           // Keep the success/error result shape identical so the tool's
@@ -388,9 +377,7 @@ export default function browserExtension(pi: ExtensionAPI) {
         const limit = params.limit ?? 100;
         const filter = params.filter;
         const filtered = filter
-          ? consoleBuf.filter(
-              (e) => e.text.includes(filter) || (e.location ?? "").includes(filter),
-            )
+          ? consoleBuf.filter((e) => e.text.includes(filter) || (e.location ?? "").includes(filter))
           : consoleBuf.slice();
         const out = filtered.slice(-limit);
         if (params.clear ?? true) consoleBuf.length = 0;
@@ -538,8 +525,7 @@ export default function browserExtension(pi: ExtensionAPI) {
     name: "browser_close",
     label: "Browser Close",
     description: "Close the persistent browser context. Next browser_* call relaunches.",
-    promptSnippet:
-      "Tear down the headless browser (rarely needed; auto-cleans on session end)",
+    promptSnippet: "Tear down the headless browser (rarely needed; auto-cleans on session end)",
     parameters: Type.Object({}),
     async execute() {
       return serialize(async () => {
@@ -574,8 +560,7 @@ export default function browserExtension(pi: ExtensionAPI) {
       }
       // Bare /browser — status.
       const toolState = enabled ? "enabled" : "disabled (run /browser on)";
-      const procState =
-        page && !page.isClosed() ? `, open at ${redactBrowserUrl(page.url())}` : "";
+      const procState = page && !page.isClosed() ? `, open at ${redactBrowserUrl(page.url())}` : "";
       ctx.ui.notify(`browser tools: ${toolState}${procState}`, "info");
     },
   });
