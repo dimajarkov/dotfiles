@@ -91,6 +91,7 @@ export function registerChildCompletionProtocol(
       if (
         !child ||
         child.generation !== generation ||
+        child.state === "cancelled" ||
         child.startedAfterEntryId === outcome.entryId
       ) {
         return false;

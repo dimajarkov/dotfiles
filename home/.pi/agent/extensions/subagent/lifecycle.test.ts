@@ -141,6 +141,7 @@ function scenario(options: ScenarioOptions = {}) {
           };
         } else if (args[0] === "agent") {
           if (args[1] === "prompt") events.push(`prompt:${generation}`);
+          if (args[1] === "send-keys") events.push(`send-keys:${generation}`);
           if (args[1] === "get" && options.markerOnGet && !markerPublishedOnGet) {
             markerPublishedOnGet = true;
             await new Promise<void>((resolve) => setImmediate(resolve));
@@ -225,6 +226,56 @@ test("cancelling an already completed child returns promptly and preserves its q
     assert.equal(child.state, "completed");
     assert.equal(child.result, "SAVED_SCOUT_FINDINGS");
     assert.equal(child.surfaceState, "closed");
+    assert.equal(s.queued.length, 1);
+  } finally {
+    await s.close();
+  }
+});
+
+test("cancel reconciles proven failure before sending input or clearing exact output", async () => {
+  const result = "PARTIAL \n\t";
+  const s = scenario({
+    result,
+    stopReason: "error",
+    errorMessage: "EXACT_FAILURE",
+    monitor: false,
+  });
+  try {
+    await s.spawn();
+
+    const child = await within(s.orchestrator.cancel("parent", "parent", "scout"));
+
+    assert.equal(child.state, "failed");
+    assert.equal(child.result, result);
+    assert.equal(child.error, "EXACT_FAILURE");
+    assert.deepEqual(
+      s.events.filter((event) => event.startsWith("delivery:")),
+      ["delivery:1"],
+    );
+    assert.equal(
+      s.events.some((event) => event.startsWith("send-keys:")),
+      false,
+    );
+    assert.equal(s.queued.length, 1);
+  } finally {
+    await s.close();
+  }
+});
+
+test("recovery reconciles proven completion despite stale working status", async () => {
+  const s = scenario({ monitor: false, agentStatus: "working" });
+  try {
+    await s.spawn();
+
+    const [child] = await s.orchestrator.recover("parent", "parent");
+
+    assert.equal(child?.state, "completed");
+    assert.equal(child?.result, "SAVED_SCOUT_FINDINGS");
+    assert.equal(child?.surfaceState, "closed");
+    assert.deepEqual(
+      s.events.filter((event) => event.startsWith("delivery:")),
+      ["delivery:1"],
+    );
     assert.equal(s.queued.length, 1);
   } finally {
     await s.close();

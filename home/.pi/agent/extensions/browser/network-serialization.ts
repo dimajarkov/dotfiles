@@ -65,6 +65,7 @@ function isSensitiveName(name: string): boolean {
     /(?:authorizationcode|codeverifier|devicecode|devicegrantcode|oauthverifier|pkceverifier|usercode)$/u.test(
       compact,
     ) ||
+    /(?:dpop|dpopproof)$/u.test(compact) ||
     /(?:assertion|jwt|samlart|samlrequest|samlresponse)$/u.test(compact) ||
     /(?:api(?:cation)?key|credentials?|password|secret|token|signature\d*)$/u.test(compact) ||
     /(?:^|[-_])(?:access[-_]?token|api[-_]?key|credential|password|secret|token)(?:$|[-_])/i.test(
