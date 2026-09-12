@@ -145,6 +145,29 @@ test("a claimed follow-up frontier suppresses the preceding settled outcome", as
   assert.equal(harness.shutdowns(), 0);
 });
 
+test("a parent cancellation claim suppresses a late settled marker", async () => {
+  const harness = protocolHarness();
+
+  await harness.endHandler(
+    {
+      messages: [{ role: "assistant", content: [], stopReason: "stop" }],
+    },
+    harness.ctx,
+  );
+  record(harness.registry, {
+    id: "child-1",
+    rootId: "root-1",
+    parentId: "parent-1",
+    generation: 1,
+    state: "cancelled",
+  });
+
+  await harness.settledHandler({}, harness.ctx);
+
+  assert.equal(existsSync(harness.markerPath), false);
+  assert.equal(harness.shutdowns(), 0);
+});
+
 test("aborted and blocked child runs retain their surfaces", async () => {
   for (const scenario of [
     { blocked: false, stopReason: "aborted" },

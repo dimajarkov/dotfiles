@@ -311,6 +311,36 @@ test("PKCE, device grant, and OAuth verifier aliases are redacted", () => {
   );
 });
 
+test("DPoP authentication proof aliases are redacted without hiding the public nonce", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "POST",
+        url: "https://example.test/token?dpop=url-proof-secret&view=keep",
+        resourceType: "fetch",
+        requestHeaders: {
+          DPoP: "canonical-proof-secret",
+          "X-DPoP": "prefixed-proof-secret",
+          VendorDpopProof: "vendor-proof-secret",
+          "DPoP-Nonce": "public-nonce",
+        },
+      },
+    ],
+    true,
+    new Set(["dpop", "x-dpop", "vendordpopproof", "dpop-nonce"]),
+  );
+
+  assert.equal(result.entries[0].url, "https://example.test/token?dpop=%5BREDACTED%5D&view=keep");
+  assert.equal(result.entries[0].requestHeaders.DPoP, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["X-DPoP"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.VendorDpopProof, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["DPoP-Nonce"], "public-nonce");
+  assert.match(result.text, /DPoP: \[REDACTED\]/);
+  assert.match(result.text, /DPoP-Nonce: public-nonce/);
+  assert.doesNotMatch(JSON.stringify(result), /(?:url|canonical|prefixed|vendor)-proof-secret/);
+});
+
 test("redacts credentials from OAuth and route-query URL fragments in rendered details", () => {
   const result = serializeNetworkEntries(
     [

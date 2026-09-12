@@ -531,6 +531,7 @@ export class SubagentOrchestrator {
       const response = await this.#runJson(["agent", "get", child.herdrName]);
       const agent = objectAt(objectAt(response, "result"), "agent");
       const status = this.#validatedAgentStatus(child, agent);
+      if (await this.#reconcileProvenCompletion(child.rootId, child.parentId, child)) return;
       if (status === "working" || status === "blocked") {
         child.state = status;
         child.updatedAt = this.#now();
@@ -604,11 +605,11 @@ export class SubagentOrchestrator {
     }
     const agent = objectAt(objectAt(response, "result"), "agent");
     const status = this.#validatedAgentStatus(child, agent);
-    if (status === "blocked") child.state = "blocked";
-    else if (status === "working") child.state = "working";
-    child.updatedAt = this.#now();
-    this.#saveChild(child);
-    return { ...child };
+    const inspected = { ...child };
+    if (status === "blocked") inspected.state = "blocked";
+    else if (status === "working") inspected.state = "working";
+    inspected.updatedAt = this.#now();
+    return inspected;
   }
 
   async message(
@@ -643,29 +644,7 @@ export class SubagentOrchestrator {
       return this.#relaunchClosedChild(child, message, signal);
     }
     if (isRetiredSurface(child)) return this.#relaunchClosedChild(child, message, signal);
-    const completedBeforeStatus = await this.#relaunchProvenCompletionForFollowUp(
-      rootId,
-      ownerId,
-      child,
-      message,
-      signal,
-    );
-    if (completedBeforeStatus) return completedBeforeStatus;
-
-    let status: string;
-    try {
-      status = await this.#assertLiveChild(child, signal);
-    } catch (error) {
-      const completedAfterStatusFailure = await this.#relaunchProvenCompletionForFollowUp(
-        rootId,
-        ownerId,
-        child,
-        message,
-        signal,
-      );
-      if (completedAfterStatusFailure) return completedAfterStatusFailure;
-      throw error;
-    }
+    const status = await this.#assertLiveChild(child, signal);
     if (status === "idle" || status === "done") {
       await this.#completeFromSession(child, signal);
       child = this.#findChild(rootId, ownerId, child.id);
@@ -758,11 +737,23 @@ export class SubagentOrchestrator {
     message: string,
     signal?: AbortSignal,
   ): Promise<ChildRecord | undefined> {
-    if (!this.#hasCurrentCompletionProof(child)) return undefined;
-    await this.#completeFromSession(child, signal);
-    let completed = this.#findChild(rootId, ownerId, child.id);
+    let completed = await this.#reconcileProvenCompletion(rootId, ownerId, child, signal);
+    if (!completed) return undefined;
     completed = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, completed);
     return this.#relaunchClosedChild(completed, message, signal);
+  }
+
+  async #reconcileProvenCompletion(
+    rootId: string,
+    ownerId: string,
+    child: ChildRecord,
+    signal?: AbortSignal,
+    allowExistingResult = false,
+    cleanupSurface = true,
+  ): Promise<ChildRecord | undefined> {
+    if (!this.#hasCurrentCompletionProof(child)) return undefined;
+    await this.#completeFromSession(child, signal, allowExistingResult, cleanupSurface);
+    return this.#findChild(rootId, ownerId, child.id);
   }
 
   async #prepareTerminalChildForFollowUp(
@@ -836,13 +827,35 @@ export class SubagentOrchestrator {
         await this.#completeFromSession(child, signal, true, false);
       } catch (error) {
         if (!(error instanceof CompletionNotProvenError)) throw error;
-        child.state = "cancelled";
-        child.deliveredAt = this.#now();
-        child.updatedAt = child.deliveredAt;
-        if (child.paneId && !isRetiredSurface(child)) {
-          child.surfaceState = "cleanup-pending";
+        const staleDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+          child = this.#findChild(rootId, ownerId, child.id);
+          if (this.#hasCurrentCompletionProof(child)) return { completed: child } as const;
+          child.state = "cancelled";
+          child.deliveredAt = this.#now();
+          child.updatedAt = child.deliveredAt;
+          if (child.paneId && !isRetiredSurface(child)) {
+            child.surfaceState = "cleanup-pending";
+          }
+          this.#saveChild(child);
+          return { cancelled: child } as const;
+        });
+        if ("completed" in staleDecision) {
+          const completedAfterStalePreflight = await this.#reconcileProvenCompletion(
+            rootId,
+            ownerId,
+            staleDecision.completed,
+            signal,
+            true,
+            false,
+          );
+          if (!completedAfterStalePreflight) {
+            throw new CompletionNotProvenError(
+              `Child ${child.herdrName} completion proof disappeared during stale cancellation`,
+            );
+          }
+        } else {
+          child = staleDecision.cancelled;
         }
-        this.#saveChild(child);
       }
       child = this.#findChild(rootId, ownerId, child.id);
     }
@@ -850,7 +863,26 @@ export class SubagentOrchestrator {
       if (!isRetiredSurface(child)) await this.#cleanupSurface(child);
       return { ...this.#findChild(rootId, ownerId, child.id) };
     }
-    await this.#runJson(["agent", "send-keys", child.herdrName, "escape"], signal);
+
+    const inputDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, async () => {
+      child = this.#findChild(rootId, ownerId, child.id);
+      if (this.#hasCurrentCompletionProof(child)) return { completed: child } as const;
+      await this.#runJson(["agent", "send-keys", child.herdrName, "escape"], signal);
+      return { cancelling: child } as const;
+    });
+    if ("completed" in inputDecision) {
+      const completedBeforeInput = await this.#reconcileProvenCompletion(
+        rootId,
+        ownerId,
+        inputDecision.completed,
+        signal,
+      );
+      if (completedBeforeInput) return completedBeforeInput;
+      throw new CompletionNotProvenError(
+        `Child ${child.herdrName} completion proof disappeared during cancellation preflight`,
+      );
+    }
+    child = inputDecision.cancelling;
     const waited = await this.#runJson(
       [
         "agent",
@@ -870,15 +902,34 @@ export class SubagentOrchestrator {
     if (status !== "idle" && status !== "done") {
       throw new Error(`Subagent ${child.semanticName} did not settle after cancellation`);
     }
-    child.state = "cancelled";
-    child.result = undefined;
-    child.error = undefined;
-    child.deliveredAt = this.#now();
-    child.updatedAt = child.deliveredAt;
-    if (child.paneId && !isRetiredSurface(child)) {
-      child.surfaceState = "cleanup-pending";
+
+    const completionDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+      child = this.#findChild(rootId, ownerId, child.id);
+      if (this.#hasCurrentCompletionProof(child)) return { completed: child } as const;
+      child.state = "cancelled";
+      child.result = undefined;
+      child.error = undefined;
+      child.deliveredAt = this.#now();
+      child.updatedAt = child.deliveredAt;
+      if (child.paneId && !isRetiredSurface(child)) {
+        child.surfaceState = "cleanup-pending";
+      }
+      this.#saveChild(child);
+      return { cancelled: child } as const;
+    });
+    if ("completed" in completionDecision) {
+      const completedAfterInput = await this.#reconcileProvenCompletion(
+        rootId,
+        ownerId,
+        completionDecision.completed,
+        signal,
+      );
+      if (completedAfterInput) return completedAfterInput;
+      throw new CompletionNotProvenError(
+        `Child ${child.herdrName} completion proof disappeared after cancellation input`,
+      );
     }
-    this.#saveChild(child);
+    child = completionDecision.cancelled;
     await this.#cleanupSurface(child);
     return { ...this.#findChild(rootId, ownerId, child.id) };
   }
