@@ -465,7 +465,6 @@ export class SubagentOrchestrator {
   async recover(rootId: string, ownerId: string): Promise<ChildRecord[]> {
     const children = this.list(rootId).filter((child) => child.parentId === ownerId);
     for (const listedChild of children) {
-      this.#assertCurrentHerdrSession(listedChild);
       await this.#stopMonitor(listedChild.id);
       await this.#withChildRegistryLock(rootId, listedChild.id, () =>
         this.#recoverChild(rootId, ownerId, listedChild.id),
@@ -476,21 +475,23 @@ export class SubagentOrchestrator {
 
   async #recoverChild(rootId: string, ownerId: string, childId: string): Promise<void> {
     const child = this.#findChild(rootId, ownerId, childId);
-    this.#assertCurrentHerdrSession(child);
-    if (ACTIVE_STATES.has(child.state)) {
+    if (ACTIVE_STATES.has(child.state) || child.state === "stale") {
       const proven = await this.#reconcileProvenCompletion(
         child.rootId,
         child.parentId,
         child,
         undefined,
-        false,
+        child.state === "stale",
         false,
       );
       if (proven) {
-        if (!isRetiredSurface(proven)) await this.#cleanupSurface(proven);
+        if (this.#isCurrentHerdrSession(proven) && !isRetiredSurface(proven)) {
+          await this.#cleanupSurface(proven);
+        }
         return;
       }
     }
+    this.#assertCurrentHerdrSession(child);
     if (child.surfaceState === "cleanup-pending") {
       const interruptedCleanup = ACTIVE_STATES.has(child.state);
       await this.#cleanupSurface(child);
@@ -545,6 +546,20 @@ export class SubagentOrchestrator {
       child.updatedAt = this.#now();
       this.#saveChild(child);
     } catch (error) {
+      const proven = await this.#reconcileProvenCompletion(
+        child.rootId,
+        child.parentId,
+        child,
+        undefined,
+        child.state === "stale",
+        false,
+      );
+      if (proven) {
+        if (this.#isCurrentHerdrSession(proven) && !isRetiredSurface(proven)) {
+          await this.#cleanupSurface(proven);
+        }
+        return;
+      }
       if (!(error instanceof RuntimeIdentityError) && child.sessionPath) {
         try {
           await this.#completeFromSession(child);
@@ -626,10 +641,33 @@ export class SubagentOrchestrator {
     signal?: AbortSignal,
   ): Promise<ChildRecord> {
     let child = this.#findChild(rootId, ownerId, target);
-    this.#assertCurrentHerdrSession(child);
     await this.#stopMonitor(child.id);
     child = this.#findChild(rootId, ownerId, target);
-    if (ACTIVE_STATES.has(child.state)) {
+    if (ACTIVE_STATES.has(child.state) || child.state === "stale") {
+      const proven = await this.#reconcileProvenCompletion(
+        rootId,
+        ownerId,
+        child,
+        signal,
+        child.state === "stale",
+        false,
+      );
+      if (proven) {
+        this.#assertCurrentHerdrSession(proven);
+        const prepared = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, proven);
+        return this.#relaunchClosedChild(prepared, message, signal);
+      }
+    }
+    this.#assertCurrentHerdrSession(child);
+    if (CLEANUP_TERMINAL_STATES.has(child.state)) {
+      child = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, child);
+      return this.#relaunchClosedChild(child, message, signal);
+    }
+    if (isRetiredSurface(child)) return this.#relaunchClosedChild(child, message, signal);
+    let status: string;
+    try {
+      status = await this.#assertLiveChild(child, signal);
+    } catch (error) {
       const proven = await this.#reconcileProvenCompletion(
         rootId,
         ownerId,
@@ -638,18 +676,10 @@ export class SubagentOrchestrator {
         false,
         false,
       );
-      if (proven) {
-        await this.#assertLiveChild(proven, signal);
-        const prepared = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, proven);
-        return this.#relaunchClosedChild(prepared, message, signal);
-      }
+      if (!proven) throw error;
+      const prepared = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, proven);
+      return this.#relaunchClosedChild(prepared, message, signal);
     }
-    if (CLEANUP_TERMINAL_STATES.has(child.state)) {
-      child = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, child);
-      return this.#relaunchClosedChild(child, message, signal);
-    }
-    if (isRetiredSurface(child)) return this.#relaunchClosedChild(child, message, signal);
-    const status = await this.#assertLiveChild(child, signal);
     if (status === "idle" || status === "done") {
       await this.#completeFromSession(child, signal);
       child = this.#findChild(rootId, ownerId, child.id);
@@ -664,15 +694,7 @@ export class SubagentOrchestrator {
       child = this.#findChild(rootId, ownerId, child.id);
       if (this.#hasCurrentCompletionProof(child)) return { completed: child } as const;
       const settlement = completionSettlementAt(child.completionMarkerPath);
-      if (
-        settlement?.childId === child.id &&
-        settlement.generation === child.generation &&
-        settlement.phase === "candidate" &&
-        settlement.sessionPath === child.sessionPath &&
-        isConcludedStopReason(settlement.stopReason)
-      ) {
-        return { settling: child } as const;
-      }
+      if (this.#hasCurrentSettlementCandidate(child)) return { settling: child } as const;
       const runningFrontier =
         settlement?.childId === child.id &&
         settlement.generation === child.generation &&
@@ -731,6 +753,17 @@ export class SubagentOrchestrator {
       marker.generation === child.generation &&
       marker.sessionPath === child.sessionPath &&
       (allowExistingResult || marker.entryId !== child.startedAfterEntryId)
+    );
+  }
+
+  #hasCurrentSettlementCandidate(child: ChildRecord): boolean {
+    const settlement = completionSettlementAt(child.completionMarkerPath);
+    return (
+      settlement?.childId === child.id &&
+      settlement.generation === child.generation &&
+      settlement.phase === "candidate" &&
+      settlement.sessionPath === child.sessionPath &&
+      isConcludedStopReason(settlement.stopReason)
     );
   }
 
@@ -858,46 +891,64 @@ export class SubagentOrchestrator {
     signal?: AbortSignal,
   ): Promise<ChildRecord> {
     let child = this.#findChild(rootId, ownerId, target);
-    this.#assertCurrentHerdrSession(child);
     await this.#stopMonitor(child.id);
     child = this.#findChild(rootId, ownerId, target);
-    const proven = ACTIVE_STATES.has(child.state)
-      ? await this.#reconcileProvenCompletion(rootId, ownerId, child, signal, false, false)
-      : undefined;
-    if (proven) {
-      if (!isRetiredSurface(proven)) await this.#cleanupSurface(proven);
-      return { ...this.#findChild(rootId, ownerId, proven.id) };
+    const allowExistingResult = child.state === "stale";
+    if (ACTIVE_STATES.has(child.state) || child.state === "stale") {
+      const initialDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+        child = this.#findChild(rootId, ownerId, child.id);
+        if (this.#hasCurrentCompletionProof(child, allowExistingResult)) {
+          return { completed: child } as const;
+        }
+        if (this.#hasCurrentSettlementCandidate(child)) return { settling: child } as const;
+        return { open: child } as const;
+      });
+      if ("completed" in initialDecision) {
+        const completed = await this.#reconcileProvenCompletion(
+          rootId,
+          ownerId,
+          initialDecision.completed,
+          signal,
+          allowExistingResult,
+          false,
+        );
+        if (!completed) {
+          throw new CompletionNotProvenError(
+            `Child ${child.herdrName} completion proof disappeared during cancellation preflight`,
+          );
+        }
+        if (this.#isCurrentHerdrSession(completed) && !isRetiredSurface(completed)) {
+          await this.#cleanupSurface(completed);
+        }
+        return { ...this.#findChild(rootId, ownerId, completed.id) };
+      }
+      if ("settling" in initialDecision) {
+        throw new CompletionSettlementPendingError(
+          `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
+        );
+      }
+      child = initialDecision.open;
     }
+    this.#assertCurrentHerdrSession(child);
     if (ACTIVE_STATES.has(child.state)) {
       try {
         await this.#assertLiveChild(child, signal);
       } catch (error) {
         if (!(error instanceof RuntimeIdentityError) && !isPositiveAgentAbsence(error)) throw error;
-        child.state = "stale";
-        child.error = errorMessage(error);
-        child.updatedAt = this.#now();
-        this.#saveChild(child);
-      }
-    }
-    if (child.state === "stale") {
-      try {
-        await this.#completeFromSession(child, signal, true, false);
-      } catch (error) {
-        if (!(error instanceof CompletionNotProvenError)) throw error;
         const staleDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
           child = this.#findChild(rootId, ownerId, child.id);
-          if (this.#hasCurrentCompletionProof(child)) return { completed: child } as const;
-          child.state = "cancelled";
-          child.deliveredAt = this.#now();
-          child.updatedAt = child.deliveredAt;
-          if (child.paneId && !isRetiredSurface(child)) {
-            child.surfaceState = "cleanup-pending";
+          if (this.#hasCurrentCompletionProof(child, true)) {
+            return { completed: child } as const;
           }
+          if (this.#hasCurrentSettlementCandidate(child)) return { settling: child } as const;
+          child.state = "stale";
+          child.error = errorMessage(error);
+          child.updatedAt = this.#now();
           this.#saveChild(child);
-          return { cancelled: child } as const;
+          return { stale: child } as const;
         });
         if ("completed" in staleDecision) {
-          const completedAfterStalePreflight = await this.#reconcileProvenCompletion(
+          const completed = await this.#reconcileProvenCompletion(
             rootId,
             ownerId,
             staleDecision.completed,
@@ -905,14 +956,56 @@ export class SubagentOrchestrator {
             true,
             false,
           );
-          if (!completedAfterStalePreflight) {
+          if (!completed) {
             throw new CompletionNotProvenError(
               `Child ${child.herdrName} completion proof disappeared during stale cancellation`,
             );
           }
-        } else {
-          child = staleDecision.cancelled;
+          if (!isRetiredSurface(completed)) await this.#cleanupSurface(completed);
+          return { ...this.#findChild(rootId, ownerId, completed.id) };
         }
+        if ("settling" in staleDecision) {
+          throw new CompletionSettlementPendingError(
+            `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
+          );
+        }
+        child = staleDecision.stale;
+      }
+    }
+    if (child.state === "stale") {
+      const staleDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+        child = this.#findChild(rootId, ownerId, child.id);
+        if (this.#hasCurrentCompletionProof(child, true)) return { completed: child } as const;
+        if (this.#hasCurrentSettlementCandidate(child)) return { settling: child } as const;
+        child.state = "cancelled";
+        child.deliveredAt = this.#now();
+        child.updatedAt = child.deliveredAt;
+        if (child.paneId && !isRetiredSurface(child)) {
+          child.surfaceState = "cleanup-pending";
+        }
+        this.#saveChild(child);
+        return { cancelled: child } as const;
+      });
+      if ("completed" in staleDecision) {
+        const completedAfterStalePreflight = await this.#reconcileProvenCompletion(
+          rootId,
+          ownerId,
+          staleDecision.completed,
+          signal,
+          true,
+          false,
+        );
+        if (!completedAfterStalePreflight) {
+          throw new CompletionNotProvenError(
+            `Child ${child.herdrName} completion proof disappeared during stale cancellation`,
+          );
+        }
+      } else if ("settling" in staleDecision) {
+        throw new CompletionSettlementPendingError(
+          `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
+        );
+      } else {
+        child = staleDecision.cancelled;
       }
       child = this.#findChild(rootId, ownerId, child.id);
     }
@@ -924,6 +1017,7 @@ export class SubagentOrchestrator {
     const inputDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, async () => {
       child = this.#findChild(rootId, ownerId, child.id);
       if (this.#hasCurrentCompletionProof(child)) return { completed: child } as const;
+      if (this.#hasCurrentSettlementCandidate(child)) return { settling: child } as const;
       await this.#runJson(["agent", "send-keys", child.herdrName, "escape"], signal);
       return { cancelling: child } as const;
     });
@@ -937,6 +1031,11 @@ export class SubagentOrchestrator {
       if (completedBeforeInput) return completedBeforeInput;
       throw new CompletionNotProvenError(
         `Child ${child.herdrName} completion proof disappeared during cancellation preflight`,
+      );
+    }
+    if ("settling" in inputDecision) {
+      throw new CompletionSettlementPendingError(
+        `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
       );
     }
     child = inputDecision.cancelling;
@@ -963,6 +1062,7 @@ export class SubagentOrchestrator {
     const completionDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
       child = this.#findChild(rootId, ownerId, child.id);
       if (this.#hasCurrentCompletionProof(child)) return { completed: child } as const;
+      if (this.#hasCurrentSettlementCandidate(child)) return { settling: child } as const;
       child.state = "cancelled";
       child.result = undefined;
       child.error = undefined;
@@ -984,6 +1084,11 @@ export class SubagentOrchestrator {
       if (completedAfterInput) return completedAfterInput;
       throw new CompletionNotProvenError(
         `Child ${child.herdrName} completion proof disappeared after cancellation input`,
+      );
+    }
+    if ("settling" in completionDecision) {
+      throw new CompletionSettlementPendingError(
+        `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
       );
     }
     child = completionDecision.cancelled;
@@ -1009,22 +1114,60 @@ export class SubagentOrchestrator {
     signal?: AbortSignal,
   ): Promise<ChildRecord> {
     const child = this.#findChild(rootId, ownerId, target);
-    this.#assertCurrentHerdrSession(child);
-    const proven = ACTIVE_STATES.has(child.state)
-      ? await this.#reconcileProvenCompletion(rootId, ownerId, child, signal, false, false)
-      : undefined;
+    const proven =
+      ACTIVE_STATES.has(child.state) || child.state === "stale"
+        ? await this.#reconcileProvenCompletion(
+            rootId,
+            ownerId,
+            child,
+            signal,
+            child.state === "stale",
+            false,
+          )
+        : undefined;
     if (proven) {
-      if (!isRetiredSurface(proven)) await this.#cleanupSurface(proven);
+      if (this.#isCurrentHerdrSession(proven) && !isRetiredSurface(proven)) {
+        await this.#cleanupSurface(proven);
+      }
       return { ...this.#findChild(rootId, ownerId, proven.id) };
     }
+    this.#assertCurrentHerdrSession(child);
     if (isRetiredSurface(child)) {
       throw new Error(
         `Subagent ${child.semanticName} surface is ${child.surfaceState}; use message to reactivate it`,
       );
     }
-    await this.#assertLiveChild(child, signal);
-    await this.#runJson(["agent", "focus", child.herdrName], signal);
-    return { ...child };
+    const focusDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, async () => {
+      const current = this.#findChild(rootId, ownerId, child.id);
+      if (this.#hasCurrentCompletionProof(current)) return { completed: current } as const;
+      if (this.#hasCurrentSettlementCandidate(current)) return { settling: current } as const;
+      await this.#assertLiveChild(current, signal);
+      await this.#runJson(["agent", "focus", current.herdrName], signal);
+      return { focused: current } as const;
+    });
+    if ("completed" in focusDecision) {
+      const completed = await this.#reconcileProvenCompletion(
+        rootId,
+        ownerId,
+        focusDecision.completed,
+        signal,
+        false,
+        false,
+      );
+      if (!completed) {
+        throw new CompletionNotProvenError(
+          `Child ${child.herdrName} completion proof disappeared during resume preflight`,
+        );
+      }
+      if (!isRetiredSurface(completed)) await this.#cleanupSurface(completed);
+      return { ...this.#findChild(rootId, ownerId, completed.id) };
+    }
+    if ("settling" in focusDecision) {
+      throw new CompletionSettlementPendingError(
+        `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
+      );
+    }
+    return { ...focusDecision.focused };
   }
 
   async spawn(request: SpawnRequest, signal?: AbortSignal): Promise<ChildRecord> {
@@ -1576,6 +1719,10 @@ export class SubagentOrchestrator {
           `current session is ${currentSession}`,
       );
     }
+  }
+
+  #isCurrentHerdrSession(child: ChildRecord): boolean {
+    return child.herdrSession === currentHerdrSession(this.#environment);
   }
 
   #propagatedEnvironment(child: ChildRecord, master: MasterIdentity): string[] {
@@ -2369,7 +2516,9 @@ export class SubagentOrchestrator {
     child.error = result.stopReason === "error" ? result.errorMessage : undefined;
     child.updatedAt = this.#now();
     this.#saveChild(child);
-    if ((await this.#deliver(child)) && cleanupSurface) await this.#cleanupSurface(child);
+    if ((await this.#deliver(child)) && cleanupSurface && this.#isCurrentHerdrSession(child)) {
+      await this.#cleanupSurface(child);
+    }
   }
 
   async #deliver(child: ChildRecord): Promise<boolean> {

@@ -180,25 +180,34 @@ test("keeps an active sibling visible ahead of completed descendant history", ()
       child("a-history-3", "active-a", "completed"),
       child("a-history-4", "active-a", "completed"),
       child("active-b", "root", "working"),
+      child("h1", "root", "completed", { updatedAt: 10 }),
+      child("h2", "root", "completed", { updatedAt: 20 }),
+      child("h3", "root", "completed", { updatedAt: 30 }),
     ],
     "root",
   );
-  const layout = getSubagentWidgetLayout(rows, 80, theme);
-  assert.deepEqual(
-    layout.visibleRows.map((row) => row.child.id),
-    ["active-a", "a-history-1", "a-history-2", "a-history-3", "active-b"],
-  );
-  assert.deepEqual(
-    layout.hiddenRows.map((row) => row.child.id),
-    ["a-history-4"],
-  );
-  assert.equal(layout.activeCount, 2);
-  assert.equal(layout.doneCount, 4);
-  assert.equal(layout.hiddenBlockedCount, 0);
-  assert.equal(layout.lines?.length, 8);
-  const rendered = renderSubagentWidget(rows, 80, theme).map(stripTerminalSequences);
-  assert.match(rendered.join("\n"), /active-b \(worker\).*● working/);
-  assert.match(rendered.join("\n"), /\+1 more · \/subagents/);
+  for (const width of [36, 80]) {
+    const layout = getSubagentWidgetLayout(rows, width, theme);
+    assert.deepEqual(
+      layout.visibleRows.map((row) => row.child.id),
+      ["active-a", "active-b", "h3", "h2", "h1"],
+    );
+    assert.deepEqual(
+      layout.hiddenRows.map((row) => row.child.id),
+      ["a-history-1", "a-history-2", "a-history-3", "a-history-4"],
+    );
+    assert.equal(layout.activeCount, 2);
+    assert.equal(layout.doneCount, 7);
+    assert.equal(layout.hiddenBlockedCount, 0);
+    assert.equal(layout.lines?.length, 8);
+    const rendered = renderSubagentWidget(rows, width, theme).map(stripTerminalSequences);
+    const activeA = rendered.findIndex((line) => line.includes("active-a"));
+    const activeB = rendered.findIndex((line) => line.includes("active-b"));
+    const history = rendered.findIndex((line) => line.includes("h3"));
+    assert.ok(activeA > 0 && activeA < activeB && activeB < history);
+    assert.doesNotMatch(rendered.join("\n"), /a-history-/);
+    assert.match(rendered.join("\n"), /\+4 more · \/subagents/);
+  }
 });
 
 test("completed history remains visible, reports active and done counts, and offers the footer hint", () => {

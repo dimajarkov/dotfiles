@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  eligibleJinaFallbackUrl,
-  runEligibleJinaFallback,
-} from "../jina-fallback.ts";
+import { eligibleJinaFallbackUrl, runEligibleJinaFallback } from "../jina-fallback.ts";
 
 test("private, credential-bearing, and signed URLs never reach Jina", async () => {
   let fallbackCalls = 0;
@@ -40,22 +37,31 @@ test("private, credential-bearing, and signed URLs never reach Jina", async () =
 test("path-secret URLs remain ineligible with explicit third-party authorization", async () => {
   let fallbackCalls = 0;
   let resolverCalls = 0;
-  const result = await runEligibleJinaFallback(
-    "https://hooks.slack.com/services/T/B/SECRET",
-    async () => {
-      fallbackCalls += 1;
-      return "unexpected";
-    },
-    {
-      allowThirdPartyFallback: true,
-      resolve: async () => {
-        resolverCalls += 1;
-        return [{ address: "13.107.42.14", family: 4 }];
-      },
-    },
-  );
-
-  assert.equal(result, null);
+  for (const url of [
+    "https://docs.github.com/en/github_pat_secret",
+    "https://docs.github.com/en/github_pat_%2573ecret",
+    "https://docs.github.com/en%2Faccess_token%2Fvalue",
+    "https://docs.github.com/en/malformed%escape",
+  ]) {
+    assert.equal(
+      await runEligibleJinaFallback(
+        url,
+        async () => {
+          fallbackCalls += 1;
+          return "unexpected";
+        },
+        {
+          allowThirdPartyFallback: true,
+          resolve: async () => {
+            resolverCalls += 1;
+            return [{ address: "13.107.42.14", family: 4 }];
+          },
+        },
+      ),
+      null,
+      url,
+    );
+  }
   assert.equal(fallbackCalls, 0);
   assert.equal(resolverCalls, 0);
 });

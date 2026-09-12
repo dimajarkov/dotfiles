@@ -114,14 +114,20 @@ export function writeCompletionSettlement(
 }
 
 function registryRecords(directory: string): JsonObject[] {
+  let entries: string[];
   try {
-    return readdirSync(directory)
-      .filter((entry) => entry.endsWith(".json"))
-      .map((entry) => JSON.parse(readFileSync(join(directory, entry), "utf8")) as unknown)
-      .filter(isObject);
+    entries = readdirSync(directory).filter((entry) => entry.endsWith(".json"));
   } catch {
     return [];
   }
+  return entries.flatMap((entry) => {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(join(directory, entry), "utf8"));
+      return isObject(parsed) ? [parsed] : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 export function registerChildCompletionProtocol(
