@@ -1,6 +1,7 @@
-import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { atomicWriteText } from "./atomic-file.ts";
 import { hasPendingCompletions } from "./completion-delivery.ts";
 
 interface JsonObject {
@@ -28,16 +29,6 @@ function registryRecords(directory: string): JsonObject[] {
   } catch {
     return [];
   }
-}
-
-function atomicWrite(path: string, value: JsonObject): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  writeFileSync(temporaryPath, `${JSON.stringify(value)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  renameSync(temporaryPath, path);
 }
 
 export function registerChildCompletionProtocol(
@@ -92,14 +83,15 @@ export function registerChildCompletionProtocol(
       return;
     }
 
-    atomicWrite(markerPath, {
+    const completion = {
       version: 1,
       childId,
       generation,
       stopReason: lastOutcome.stopReason,
       entryId: lastOutcome.entryId,
       sessionPath: lastOutcome.sessionPath,
-    });
+    };
+    atomicWriteText(markerPath, `${JSON.stringify(completion)}\n`);
     ctx.shutdown();
   });
 }

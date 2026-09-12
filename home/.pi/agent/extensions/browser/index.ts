@@ -33,6 +33,7 @@ import { tmpdir } from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+  redactBrowserDiagnostic,
   redactBrowserUrl,
   serializeNetworkEntries,
   type NetworkEntry,
@@ -106,7 +107,10 @@ function pushBounded<T>(buf: T[], entry: T): void {
  */
 let opQueue: Promise<unknown> = Promise.resolve();
 function serialize<T>(fn: () => Promise<T>): Promise<T> {
-  const next = opQueue.then(fn, fn);
+  const next = opQueue.then(fn, fn).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(redactBrowserDiagnostic(message));
+  });
   opQueue = next.catch(() => {});
   return next;
 }
@@ -144,7 +148,7 @@ export default function browserExtension(pi: ExtensionAPI) {
       pushBounded(consoleBuf, {
         ts: Date.now(),
         type: msg.type(),
-        text: msg.text(),
+        text: redactBrowserDiagnostic(msg.text()),
         location: locationUrl ? `${locationUrl}:${loc.lineNumber}` : undefined,
       });
     });
@@ -152,7 +156,7 @@ export default function browserExtension(pi: ExtensionAPI) {
       pushBounded(consoleBuf, {
         ts: Date.now(),
         type: "pageerror",
-        text: `${err.name}: ${err.message}`,
+        text: redactBrowserDiagnostic(`${err.name}: ${err.message}`),
       });
     });
     page.on("requestfinished", async (req: Request) => {
@@ -281,16 +285,28 @@ export default function browserExtension(pi: ExtensionAPI) {
     async execute(_id, params) {
       return serialize(async () => {
         const p = await ensurePage();
-        const resp = await p.goto(params.url, {
-          waitUntil: params.waitUntil ?? "domcontentloaded",
-          timeout: params.timeoutMs ?? 30_000,
-        });
-        const status = resp?.status();
-        const finalUrl = redactBrowserUrl(p.url());
-        return {
-          content: [{ type: "text", text: `${status ?? "?"} ${finalUrl}` }],
-          details: { status, finalUrl },
-        };
+        try {
+          const resp = await p.goto(params.url, {
+            waitUntil: params.waitUntil ?? "domcontentloaded",
+            timeout: params.timeoutMs ?? 30_000,
+          });
+          const status = resp?.status();
+          const finalUrl = redactBrowserUrl(p.url());
+          return {
+            content: [{ type: "text", text: `${status ?? "?"} ${finalUrl}` }],
+            details: { status, finalUrl },
+          };
+        } catch (error) {
+          const message = redactBrowserDiagnostic(
+            error instanceof Error ? error.message : String(error),
+          );
+          const finalUrl = redactBrowserUrl(p.url());
+          return {
+            content: [{ type: "text", text: `navigation error: ${message}\nfinal URL: ${finalUrl}` }],
+            details: { status: undefined, finalUrl, error: message },
+            isError: true,
+          };
+        }
       });
     },
   });
@@ -332,7 +348,7 @@ export default function browserExtension(pi: ExtensionAPI) {
               : (JSON.stringify(result, null, 2) ?? String(result));
           return { content: [{ type: "text", text }], details: { result } };
         } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
+          const msg = redactBrowserDiagnostic(e instanceof Error ? e.message : String(e));
           // Keep the success/error result shape identical so the tool's
           // inferred return type stays a single union member — the error
           // text already lives in `content[].text`, no need to duplicate it

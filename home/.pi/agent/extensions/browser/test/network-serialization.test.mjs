@@ -226,6 +226,64 @@ test("redacts URL-bearing headers in structured and rendered network output", ()
   assert.doesNotMatch(JSON.stringify(result), /(?:referer|content)-secret/);
 });
 
+test("redacts every URI in composite URL-bearing headers without changing their syntax", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/data",
+        resourceType: "fetch",
+        responseHeaders: {
+          Link: '<https://cdn.example/a?access_token=first-secret>; rel="next", </b?code=second-secret>; rel="alternate"',
+          Refresh: '5; URL = "https://app.example/callback?refreshToken=refresh-secret&state=keep"',
+          "WWW-Authenticate":
+            'Bearer authorization_uri="https://login.example/authorize?clientSecret=auth-secret"',
+        },
+      },
+    ],
+    true,
+    new Set(["link", "refresh", "www-authenticate"]),
+  );
+
+  assert.equal(
+    result.entries[0].responseHeaders.Link,
+    '<https://cdn.example/a?access_token=%5BREDACTED%5D>; rel="next", </b?code=%5BREDACTED%5D>; rel="alternate"',
+  );
+  assert.equal(
+    result.entries[0].responseHeaders.Refresh,
+    '5; URL = "https://app.example/callback?refreshToken=%5BREDACTED%5D&state=keep"',
+  );
+  assert.equal(
+    result.entries[0].responseHeaders["WWW-Authenticate"],
+    'Bearer authorization_uri="https://login.example/authorize?clientSecret=%5BREDACTED%5D"',
+  );
+  assert.doesNotMatch(JSON.stringify(result), /(?:first|second|refresh|auth)-secret/);
+});
+
+test("redacts URL credentials from network failure diagnostics", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/data",
+        resourceType: "fetch",
+        failure:
+          "request failed at https://dead.invalid/callback?access_token=failure-secret.",
+      },
+    ],
+    false,
+    new Set(),
+  );
+
+  assert.equal(
+    result.entries[0].failure,
+    "request failed at https://dead.invalid/callback?access_token=%5BREDACTED%5D.",
+  );
+  assert.doesNotMatch(JSON.stringify(result), /failure-secret/);
+});
+
 test("preserves URL forms while redacting malformed and credential-bearing values", () => {
   assert.equal(redactBrowserUrl("next?state=1"), "next?state=1");
   assert.equal(
