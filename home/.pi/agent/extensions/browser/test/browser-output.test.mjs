@@ -38,19 +38,20 @@ test("passive browser URL outputs redact credentials", async () => {
   let currentUrl =
     "https://app.test/callback?access_token=goto-secret#refresh_token=fragment-secret";
   let navigationError;
+  const evaluationResult = "page output\x1b]52;c;EVAL-CONTROL\x07 after";
   const page = {
     isClosed: () => false,
     on: (event, handler) => pageHandlers.set(event, handler),
     click: async () => {
-      throw Object.assign(
-        new Error("click failed at https://app.test/button?code=click-secret"),
-        { cause: new Error("cause https://app.test/?token=cause-secret") },
-      );
+      throw Object.assign(new Error("click failed at https://app.test/button?code=click-secret"), {
+        cause: new Error("cause https://app.test/?token=cause-secret"),
+      });
     },
     goto: async () => {
       if (navigationError) throw navigationError;
       return { status: () => 302 };
     },
+    evaluate: async () => evaluationResult,
     url: () => currentUrl,
   };
   const context = {
@@ -78,6 +79,13 @@ test("passive browser URL outputs redact credentials", async () => {
     "https://app.test/callback?access_token=%5BREDACTED%5D#refresh_token=%5BREDACTED%5D",
   );
   assert.doesNotMatch(JSON.stringify(gotoResult), /(?:goto|fragment)-secret/);
+
+  const evalResult = await tools.get("browser_eval").execute("call", {
+    expression: "document.body.textContent",
+  });
+  assert.equal(evalResult.content[0].text, "page output after");
+  assert.equal(evalResult.details.result, evaluationResult);
+  assert.doesNotMatch(evalResult.content[0].text, /EVAL-CONTROL|\x1b\]52;/u);
 
   pageHandlers.get("console")({
     location: () => ({

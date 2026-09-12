@@ -87,6 +87,37 @@ test("local Markdown links open assets rather than treating anchors as filename 
   );
 });
 
+test("resolves escaped Markdown destinations without changing their literal display", () => {
+  const output = [
+    "[escaped](./report\\(final\\).md)",
+    "[angle](<./angle\\(final\\).md>)",
+    "[closing](./closing\\).md)",
+    "[even](./even\\\\(nested).md)",
+    "[hash](./report\\#draft.md#heading)",
+    "[query](./report\\?draft.md?download=1)",
+    "[line](./report\\(final\\).ts:42:7)",
+    "[remote](https://example.com/report\\(final\\).md)",
+    "[unsafe](command\\:danger)",
+  ].join("\n");
+  const rendered = renderOutputContent(output, "/tmp/child", 160).join("\n");
+
+  assert.equal(stripTerminalSequences(rendered), output);
+  assert.ok(
+    rendered.includes(`${OSC8_OPEN}file:///tmp/child/report(final).md${OSC8_CLOSE}escaped`),
+  );
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/angle(final).md${OSC8_CLOSE}angle`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/closing).md${OSC8_CLOSE}closing`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/even%5C(nested).md${OSC8_CLOSE}even`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/report%23draft.md${OSC8_CLOSE}hash`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/report%3Fdraft.md${OSC8_CLOSE}query`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/report(final).ts${OSC8_CLOSE}line`));
+  assert.ok(
+    rendered.includes(`${OSC8_OPEN}https://example.com/report(final).md${OSC8_CLOSE}remote`),
+  );
+  assert.ok(!rendered.includes(`${OSC8_OPEN}command:danger`));
+  assert.ok(!rendered.includes(`${OSC8_CLOSE}unsafe`));
+});
+
 test("local line references open files while preserving exact labels", () => {
   const output = [
     "review.ts:42",

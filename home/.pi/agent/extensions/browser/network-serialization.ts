@@ -40,6 +40,17 @@ const URL_BEARING_HEADER_NAMES = new Set([
   "x-source-map",
 ]);
 const ENCODED_REDACTED = encodeURIComponent(REDACTED);
+const SENSITIVE_URL_PARAMETER_NAMES = new Set([
+  "code",
+  "key",
+  "sig",
+  "signature",
+  "session",
+  "sessionid",
+  "sid",
+  "jsessionid",
+  "phpsessid",
+]);
 
 function isSensitiveName(name: string): boolean {
   const normalized = name
@@ -50,6 +61,7 @@ function isSensitiveName(name: string): boolean {
   return (
     SENSITIVE_HEADER_NAMES.has(normalized) ||
     SENSITIVE_COMPACT_NAMES.has(compact) ||
+    /(?:authorization|authentication(?:info)?)$/u.test(compact) ||
     /(?:api(?:cation)?key|credentials?|password|secret|token|signature\d*)$/u.test(compact) ||
     /(?:^|[-_])(?:access[-_]?token|api[-_]?key|credential|password|secret|token)(?:$|[-_])/i.test(
       normalized,
@@ -59,7 +71,8 @@ function isSensitiveName(name: string): boolean {
 }
 
 function isSensitiveUrlParameter(name: string): boolean {
-  return isSensitiveName(name) || /^(?:code|key|sig|signature)$/i.test(name);
+  const compact = name.toLowerCase().replace(/[-_]/gu, "");
+  return isSensitiveName(name) || SENSITIVE_URL_PARAMETER_NAMES.has(compact);
 }
 
 function decodeParameterName(name: string): string {
@@ -78,14 +91,11 @@ function redactParameterText(
   const pattern = includeInitial
     ? /(^|[&?#;])([^=&#?;]+)(?:=([^&?#;]*))?/gu
     : /(;)([^=&#?;/]+)(?:=([^&?#;/]*))?/gu;
-  const redacted = value.replace(
-    pattern,
-    (parameter, separator: string, name: string) => {
-      if (!isSensitiveUrlParameter(decodeParameterName(name))) return parameter;
-      changed = true;
-      return `${separator}${name}=${ENCODED_REDACTED}`;
-    },
-  );
+  const redacted = value.replace(pattern, (parameter, separator: string, name: string) => {
+    if (!isSensitiveUrlParameter(decodeParameterName(name))) return parameter;
+    changed = true;
+    return `${separator}${name}=${ENCODED_REDACTED}`;
+  });
   return { value: redacted, changed };
 }
 
@@ -93,16 +103,19 @@ function redactFragment(hash: string): string {
   if (!hash) return hash;
 
   let changed = false;
-  const fragments = hash.slice(1).split("#").map((fragment) => {
-    const queryStart = fragment.indexOf("?");
-    const parameterText = queryStart === -1 ? fragment : fragment.slice(queryStart + 1);
-    const redacted = redactParameterText(parameterText);
-    if (!redacted.changed) return fragment;
+  const fragments = hash
+    .slice(1)
+    .split("#")
+    .map((fragment) => {
+      const queryStart = fragment.indexOf("?");
+      const parameterText = queryStart === -1 ? fragment : fragment.slice(queryStart + 1);
+      const redacted = redactParameterText(parameterText);
+      if (!redacted.changed) return fragment;
 
-    changed = true;
-    const prefix = queryStart === -1 ? "" : fragment.slice(0, queryStart + 1);
-    return `${prefix}${redacted.value}`;
-  });
+      changed = true;
+      const prefix = queryStart === -1 ? "" : fragment.slice(0, queryStart + 1);
+      return `${prefix}${redacted.value}`;
+    });
 
   return changed ? `#${fragments.join("#")}` : hash;
 }
@@ -216,9 +229,7 @@ export function serializeNetworkEntries(
       : { statusText: redactBrowserDiagnostic(entry.statusText) }),
     requestHeaders: redactHeaders(entry.requestHeaders),
     responseHeaders: redactHeaders(entry.responseHeaders),
-    ...(entry.failure === undefined
-      ? {}
-      : { failure: redactBrowserDiagnostic(entry.failure) }),
+    ...(entry.failure === undefined ? {} : { failure: redactBrowserDiagnostic(entry.failure) }),
   }));
   const lines: string[] = [];
 

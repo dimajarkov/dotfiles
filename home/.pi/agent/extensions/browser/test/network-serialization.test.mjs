@@ -161,6 +161,60 @@ test("authentication metadata headers are redacted at the shared boundary", () =
   assert.doesNotMatch(JSON.stringify(result), /(?:authentication|proxy)-secret/);
 });
 
+test("prefixed authorization and authentication headers are redacted", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/data",
+        resourceType: "fetch",
+        requestHeaders: {
+          "X-Authorization": "Bearer prefixed-authorization-secret",
+          "Upstream-Authentication": "prefixed-authentication-secret",
+          "Vendor-Authentication-Info": "prefixed-authentication-info-secret",
+        },
+      },
+    ],
+    true,
+    new Set(["x-authorization", "upstream-authentication", "vendor-authentication-info"]),
+  );
+
+  assert.equal(result.entries[0].requestHeaders["X-Authorization"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["Upstream-Authentication"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["Vendor-Authentication-Info"], "[REDACTED]");
+  assert.doesNotMatch(JSON.stringify(result), /prefixed-.*-secret/);
+});
+
+test("session credential aliases are redacted in URLs and URL-bearing headers", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/data?session=session-secret&sid=sid-secret&view=keep",
+        resourceType: "fetch",
+        responseHeaders: {
+          Location:
+            "/callback?jsessionid=java-session-secret&phpsessid=php-session-secret&state=keep",
+        },
+      },
+    ],
+    true,
+    new Set(["location"]),
+  );
+
+  assert.equal(
+    result.entries[0].url,
+    "https://example.test/data?session=%5BREDACTED%5D&sid=%5BREDACTED%5D&view=keep",
+  );
+  assert.equal(
+    result.entries[0].responseHeaders.Location,
+    "/callback?jsessionid=%5BREDACTED%5D&phpsessid=%5BREDACTED%5D&state=keep",
+  );
+  assert.doesNotMatch(JSON.stringify(result), /(?:session|sid|java-session|php-session)-secret/);
+});
+
 test("redacts credentials from OAuth and route-query URL fragments in rendered details", () => {
   const result = serializeNetworkEntries(
     [
@@ -242,7 +296,10 @@ test("redacts URL-bearing headers in structured and rendered network output", ()
     new Set(["referer", "content-location"]),
   );
 
-  assert.match(result.text, /Referer: https:\/\/app\.test\/page\?access_token=%5BREDACTED%5D&view=keep/);
+  assert.match(
+    result.text,
+    /Referer: https:\/\/app\.test\/page\?access_token=%5BREDACTED%5D&view=keep/,
+  );
   assert.match(result.text, /Content-Location: next\?refreshToken=%5BREDACTED%5D&view=keep/);
   assert.equal(
     result.entries[0].requestHeaders.Referer,
@@ -298,8 +355,7 @@ test("redacts URL credentials from network failure diagnostics", () => {
         method: "GET",
         url: "https://example.test/data",
         resourceType: "fetch",
-        failure:
-          "request failed at https://dead.invalid/callback?access_token=failure-secret.",
+        failure: "request failed at https://dead.invalid/callback?access_token=failure-secret.",
       },
     ],
     false,
