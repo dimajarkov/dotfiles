@@ -11,6 +11,26 @@ interface JsonObject {
 
 const TERMINAL_STATES = new Set(["completed", "failed", "cancelled", "crashed", "stale"]);
 
+export interface CompletionMarker {
+  version: 1;
+  childId: string;
+  generation: number;
+  stopReason: string;
+  entryId: string;
+  sessionPath: string;
+}
+
+export type CompletionSettlement =
+  | {
+      version: 1;
+      childId: string;
+      generation: number;
+      phase: "running";
+      sessionPath: string;
+      frontierEntryId?: string;
+    }
+  | (CompletionMarker & { phase: "candidate" });
+
 function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -19,6 +39,78 @@ function positiveInteger(value: string | undefined): number | undefined {
   if (value === undefined || !/^[1-9]\d*$/.test(value)) return undefined;
   const parsed = Number.parseInt(value, 10);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+export function isConcludedStopReason(stopReason: string | undefined): stopReason is string {
+  return (
+    stopReason !== undefined &&
+    stopReason !== "aborted" &&
+    stopReason !== "pending" &&
+    stopReason !== "toolUse"
+  );
+}
+
+export function completionSettlementPath(markerPath: string): string {
+  return `${markerPath}.settlement`;
+}
+
+export function completionMarkerAt(path: string): CompletionMarker | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (
+      !isObject(parsed) ||
+      parsed.version !== 1 ||
+      typeof parsed.childId !== "string" ||
+      !Number.isSafeInteger(parsed.generation) ||
+      typeof parsed.stopReason !== "string" ||
+      typeof parsed.entryId !== "string" ||
+      typeof parsed.sessionPath !== "string" ||
+      !isConcludedStopReason(parsed.stopReason)
+    ) {
+      return undefined;
+    }
+    return parsed as unknown as CompletionMarker;
+  } catch {
+    return undefined;
+  }
+}
+
+export function completionSettlementAt(markerPath: string): CompletionSettlement | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(completionSettlementPath(markerPath), "utf8"));
+    if (
+      !isObject(parsed) ||
+      parsed.version !== 1 ||
+      typeof parsed.childId !== "string" ||
+      !Number.isSafeInteger(parsed.generation) ||
+      typeof parsed.sessionPath !== "string"
+    ) {
+      return undefined;
+    }
+    if (
+      parsed.phase === "running" &&
+      (parsed.frontierEntryId === undefined || typeof parsed.frontierEntryId === "string")
+    ) {
+      return parsed as unknown as CompletionSettlement;
+    }
+    if (
+      parsed.phase === "candidate" &&
+      typeof parsed.stopReason === "string" &&
+      typeof parsed.entryId === "string"
+    ) {
+      return parsed as unknown as CompletionSettlement;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeCompletionSettlement(
+  markerPath: string,
+  settlement: CompletionSettlement,
+): void {
+  atomicWriteText(completionSettlementPath(markerPath), `${JSON.stringify(settlement)}\n`);
 }
 
 function registryRecords(directory: string): JsonObject[] {
@@ -54,6 +146,39 @@ export function registerChildCompletionProtocol(
     if (isObject(event) && typeof event.active === "boolean") blocked = event.active;
   });
 
+  pi.on("before_agent_start", async (_event, ctx) => {
+    await withRegistryLock(`${markerPath}.lock`, () => {
+      const records = registryRecords(registry);
+      const child = records.find((record) => record.id === childId);
+      const sessionPath = ctx.sessionManager.getSessionFile();
+      if (
+        !child ||
+        child.generation !== generation ||
+        child.state === "cancelled" ||
+        !sessionPath
+      ) {
+        return;
+      }
+      const settlement = completionSettlementAt(markerPath);
+      const frontierEntryId =
+        settlement?.childId === childId &&
+        settlement.generation === generation &&
+        settlement.phase === "candidate"
+          ? settlement.entryId
+          : typeof child.startedAfterEntryId === "string"
+            ? child.startedAfterEntryId
+            : undefined;
+      writeCompletionSettlement(markerPath, {
+        version: 1,
+        childId,
+        generation,
+        phase: "running",
+        sessionPath,
+        frontierEntryId,
+      });
+    });
+  });
+
   pi.on("agent_end", async (event, ctx) => {
     const finalAssistant = [...event.messages]
       .reverse()
@@ -64,11 +189,25 @@ export function registerChildCompletionProtocol(
       finalAssistant?.stopReason && entryId && sessionPath
         ? { stopReason: finalAssistant.stopReason, entryId, sessionPath }
         : undefined;
+    const outcome = lastOutcome;
+    if (!outcome) return;
+    await withRegistryLock(`${markerPath}.lock`, () => {
+      const records = registryRecords(registry);
+      const child = records.find((record) => record.id === childId);
+      if (!child || child.generation !== generation || child.state === "cancelled") return;
+      writeCompletionSettlement(markerPath, {
+        version: 1,
+        childId,
+        generation,
+        phase: "candidate",
+        ...outcome,
+      });
+    });
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
     const outcome = lastOutcome;
-    if (!outcome || outcome.stopReason === "aborted") return;
+    if (!outcome || !isConcludedStopReason(outcome.stopReason)) return;
     if (
       blocked ||
       ctx.hasPendingMessages() ||
@@ -88,11 +227,17 @@ export function registerChildCompletionProtocol(
 
       const records = registryRecords(registry);
       const child = records.find((record) => record.id === childId);
+      const settlement = completionSettlementAt(markerPath);
       if (
         !child ||
         child.generation !== generation ||
         child.state === "cancelled" ||
-        child.startedAfterEntryId === outcome.entryId
+        settlement?.childId !== childId ||
+        settlement.generation !== generation ||
+        settlement.phase !== "candidate" ||
+        settlement.entryId !== outcome.entryId ||
+        settlement.stopReason !== outcome.stopReason ||
+        settlement.sessionPath !== outcome.sessionPath
       ) {
         return false;
       }
@@ -108,7 +253,7 @@ export function registerChildCompletionProtocol(
         return false;
       }
 
-      const completion = {
+      const completion: CompletionMarker = {
         version: 1,
         childId,
         generation,

@@ -3,6 +3,12 @@ import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { atomicWriteText } from "./atomic-file.ts";
+import {
+  completionMarkerAt,
+  completionSettlementAt,
+  isConcludedStopReason,
+  writeCompletionSettlement,
+} from "./completion-protocol.ts";
 import { withRegistryLock } from "./registry-lock.ts";
 
 export interface CommandExecution {
@@ -303,6 +309,7 @@ function sessionPathFromAgent(agent: JsonObject): string | undefined {
 }
 
 class CompletionNotProvenError extends Error {}
+class CompletionSettlementPendingError extends Error {}
 class RuntimeIdentityError extends Error {}
 class SurfaceOwnershipLostError extends RuntimeIdentityError {}
 class SurfaceOwnershipUnprovenError extends RuntimeIdentityError {}
@@ -336,37 +343,6 @@ function validateWorkScope(value: string | undefined): string | undefined {
     );
   }
   return value;
-}
-
-interface CompletionMarker {
-  version: 1;
-  childId: string;
-  generation: number;
-  stopReason: string;
-  entryId: string;
-  sessionPath: string;
-}
-
-function completionMarkerAt(path: string): CompletionMarker | undefined {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (
-      !isObject(parsed) ||
-      parsed.version !== 1 ||
-      typeof parsed.childId !== "string" ||
-      !Number.isSafeInteger(parsed.generation) ||
-      typeof parsed.stopReason !== "string" ||
-      typeof parsed.entryId !== "string" ||
-      typeof parsed.sessionPath !== "string" ||
-      parsed.stopReason === "aborted" ||
-      parsed.stopReason === "pending"
-    ) {
-      return undefined;
-    }
-    return parsed as unknown as CompletionMarker;
-  } catch {
-    return undefined;
-  }
 }
 
 async function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
@@ -501,6 +477,20 @@ export class SubagentOrchestrator {
   async #recoverChild(rootId: string, ownerId: string, childId: string): Promise<void> {
     const child = this.#findChild(rootId, ownerId, childId);
     this.#assertCurrentHerdrSession(child);
+    if (ACTIVE_STATES.has(child.state)) {
+      const proven = await this.#reconcileProvenCompletion(
+        child.rootId,
+        child.parentId,
+        child,
+        undefined,
+        false,
+        false,
+      );
+      if (proven) {
+        if (!isRetiredSurface(proven)) await this.#cleanupSurface(proven);
+        return;
+      }
+    }
     if (child.surfaceState === "cleanup-pending") {
       const interruptedCleanup = ACTIVE_STATES.has(child.state);
       await this.#cleanupSurface(child);
@@ -639,6 +629,21 @@ export class SubagentOrchestrator {
     this.#assertCurrentHerdrSession(child);
     await this.#stopMonitor(child.id);
     child = this.#findChild(rootId, ownerId, target);
+    if (ACTIVE_STATES.has(child.state)) {
+      const proven = await this.#reconcileProvenCompletion(
+        rootId,
+        ownerId,
+        child,
+        signal,
+        false,
+        false,
+      );
+      if (proven) {
+        await this.#assertLiveChild(proven, signal);
+        const prepared = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, proven);
+        return this.#relaunchClosedChild(prepared, message, signal);
+      }
+    }
     if (CLEANUP_TERMINAL_STATES.has(child.state)) {
       child = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, child);
       return this.#relaunchClosedChild(child, message, signal);
@@ -658,7 +663,45 @@ export class SubagentOrchestrator {
     const decision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
       child = this.#findChild(rootId, ownerId, child.id);
       if (this.#hasCurrentCompletionProof(child)) return { completed: child } as const;
-      return { claimed: this.#claimActiveChildMessage(child) } as const;
+      const settlement = completionSettlementAt(child.completionMarkerPath);
+      if (
+        settlement?.childId === child.id &&
+        settlement.generation === child.generation &&
+        settlement.phase === "candidate" &&
+        settlement.sessionPath === child.sessionPath &&
+        isConcludedStopReason(settlement.stopReason)
+      ) {
+        return { settling: child } as const;
+      }
+      const runningFrontier =
+        settlement?.childId === child.id &&
+        settlement.generation === child.generation &&
+        settlement.phase === "running" &&
+        settlement.sessionPath === child.sessionPath
+          ? settlement.frontierEntryId
+          : child.startedAfterEntryId;
+      let startedAfterEntryId = runningFrontier;
+      if (child.sessionPath) {
+        try {
+          const result = finalAssistantResult(child.sessionPath);
+          if (result.entryId !== runningFrontier && isConcludedStopReason(result.stopReason)) {
+            writeCompletionSettlement(child.completionMarkerPath, {
+              version: 1,
+              childId: child.id,
+              generation: child.generation,
+              phase: "candidate",
+              stopReason: result.stopReason,
+              entryId: result.entryId,
+              sessionPath: child.sessionPath,
+            });
+            return { settling: child } as const;
+          }
+          startedAfterEntryId = result.entryId;
+        } catch {}
+      }
+      return {
+        claimed: this.#claimActiveChildMessage(child, startedAfterEntryId),
+      } as const;
     });
     if ("completed" in decision) {
       const completedDuringPreflight = await this.#relaunchProvenCompletionForFollowUp(
@@ -673,22 +716,29 @@ export class SubagentOrchestrator {
         `Child ${child.herdrName} completion proof disappeared during follow-up preflight`,
       );
     }
+    if ("settling" in decision) {
+      throw new CompletionSettlementPendingError(
+        `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
+      );
+    }
     return this.#promptClaimedChild(decision.claimed, message, signal);
   }
 
-  #hasCurrentCompletionProof(child: ChildRecord): boolean {
+  #hasCurrentCompletionProof(child: ChildRecord, allowExistingResult = false): boolean {
     const marker = completionMarkerAt(child.completionMarkerPath);
-    return marker?.childId === child.id && marker.generation === child.generation;
+    return (
+      marker?.childId === child.id &&
+      marker.generation === child.generation &&
+      marker.sessionPath === child.sessionPath &&
+      (allowExistingResult || marker.entryId !== child.startedAfterEntryId)
+    );
   }
 
-  #claimActiveChildMessage(child: ChildRecord): ChildRecord {
-    if (child.sessionPath) {
-      try {
-        child.startedAfterEntryId = finalAssistantResult(child.sessionPath).entryId;
-      } catch {
-        child.startedAfterEntryId = undefined;
-      }
-    }
+  #claimActiveChildMessage(
+    child: ChildRecord,
+    startedAfterEntryId: string | undefined,
+  ): ChildRecord {
+    child.startedAfterEntryId = startedAfterEntryId;
     child.state = "starting";
     child.result = undefined;
     child.error = undefined;
@@ -751,7 +801,7 @@ export class SubagentOrchestrator {
     allowExistingResult = false,
     cleanupSurface = true,
   ): Promise<ChildRecord | undefined> {
-    if (!this.#hasCurrentCompletionProof(child)) return undefined;
+    if (!this.#hasCurrentCompletionProof(child, allowExistingResult)) return undefined;
     await this.#completeFromSession(child, signal, allowExistingResult, cleanupSurface);
     return this.#findChild(rootId, ownerId, child.id);
   }
@@ -811,6 +861,13 @@ export class SubagentOrchestrator {
     this.#assertCurrentHerdrSession(child);
     await this.#stopMonitor(child.id);
     child = this.#findChild(rootId, ownerId, target);
+    const proven = ACTIVE_STATES.has(child.state)
+      ? await this.#reconcileProvenCompletion(rootId, ownerId, child, signal, false, false)
+      : undefined;
+    if (proven) {
+      if (!isRetiredSurface(proven)) await this.#cleanupSurface(proven);
+      return { ...this.#findChild(rootId, ownerId, proven.id) };
+    }
     if (ACTIVE_STATES.has(child.state)) {
       try {
         await this.#assertLiveChild(child, signal);
@@ -953,6 +1010,13 @@ export class SubagentOrchestrator {
   ): Promise<ChildRecord> {
     const child = this.#findChild(rootId, ownerId, target);
     this.#assertCurrentHerdrSession(child);
+    const proven = ACTIVE_STATES.has(child.state)
+      ? await this.#reconcileProvenCompletion(rootId, ownerId, child, signal, false, false)
+      : undefined;
+    if (proven) {
+      if (!isRetiredSurface(proven)) await this.#cleanupSurface(proven);
+      return { ...this.#findChild(rootId, ownerId, proven.id) };
+    }
     if (isRetiredSurface(child)) {
       throw new Error(
         `Subagent ${child.semanticName} surface is ${child.surfaceState}; use message to reactivate it`,
@@ -2082,6 +2146,7 @@ export class SubagentOrchestrator {
     try {
       let waitUntilUnblocked = child.state === "blocked";
       while (true) {
+        if (await this.#monitorCompleteFromSession(child, controller.signal)) return;
         let reported: JsonObject;
         try {
           reported = await this.#runJson(
@@ -2097,6 +2162,7 @@ export class SubagentOrchestrator {
           );
         } catch (waitError) {
           if (this.#disposed || controller.signal.aborted) return;
+          if (await this.#monitorCompleteFromSession(child, controller.signal, true)) return;
           try {
             reported = await this.#runJson(["agent", "get", child.herdrName], controller.signal);
           } catch (reconcileError) {
@@ -2115,6 +2181,7 @@ export class SubagentOrchestrator {
         if (this.#disposed || controller.signal.aborted) return;
         const current = this.#findChild(child.rootId, child.parentId, child.id);
         if (current.generation !== child.generation) return;
+        if (await this.#monitorCompleteFromSession(child, controller.signal)) return;
         const agent = objectAt(objectAt(reported, "result"), "agent");
         let status: string;
         try {
@@ -2156,17 +2223,24 @@ export class SubagentOrchestrator {
     }
   }
 
-  async #monitorCompleteFromSession(child: ChildRecord, signal: AbortSignal): Promise<boolean> {
+  async #monitorCompleteFromSession(
+    child: ChildRecord,
+    signal: AbortSignal,
+    waitForProof = false,
+  ): Promise<boolean> {
+    if (!waitForProof && !this.#hasCurrentCompletionProof(child)) return false;
     return this.#withChildRegistryLock(child.rootId, child.id, async () => {
       const current = this.#findChild(child.rootId, child.parentId, child.id);
-      if (
-        current.generation !== child.generation ||
-        current.revision !== child.revision ||
-        !ACTIVE_STATES.has(current.state)
-      )
-        return false;
-      await this.#completeFromSession(child, signal);
-      return true;
+      if (current.generation !== child.generation) return false;
+      if (!ACTIVE_STATES.has(current.state)) return true;
+      if (!waitForProof && !this.#hasCurrentCompletionProof(current)) return false;
+      try {
+        await this.#completeFromSession(current, signal);
+        return true;
+      } catch (error) {
+        if (error instanceof CompletionNotProvenError) return false;
+        throw error;
+      }
     });
   }
 
@@ -2175,12 +2249,7 @@ export class SubagentOrchestrator {
       const current = this.#findChild(child.rootId, child.parentId, child.id);
       if (current.generation !== child.generation || !ACTIVE_STATES.has(current.state)) return;
 
-      try {
-        if (await this.#monitorCompleteFromSession(child, signal)) return;
-        return;
-      } catch (error) {
-        if (!(error instanceof CompletionNotProvenError)) throw error;
-      }
+      if (await this.#monitorCompleteFromSession(child, signal, true)) return;
       signal.throwIfAborted();
 
       let reported: JsonObject;
@@ -2196,8 +2265,7 @@ export class SubagentOrchestrator {
         }
 
         try {
-          if (await this.#monitorCompleteFromSession(child, signal)) return;
-          return;
+          if (await this.#monitorCompleteFromSession(child, signal, true)) return;
         } catch (completionError) {
           if (!(completionError instanceof CompletionNotProvenError)) throw completionError;
         }

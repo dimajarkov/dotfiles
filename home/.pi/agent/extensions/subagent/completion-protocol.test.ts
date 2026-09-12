@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { registerChildCompletionProtocol } from "./completion-protocol.ts";
+import { completionSettlementAt, registerChildCompletionProtocol } from "./completion-protocol.ts";
 import { CompletionDelivery } from "./completion-delivery.ts";
 
 const temporaryDirectories: string[] = [];
@@ -39,6 +39,7 @@ function protocolHarness() {
     | ((event: { messages: unknown[] }, ctx: ExtensionContext) => Promise<void>)
     | undefined;
   let settledHandler: ((event: unknown, ctx: ExtensionContext) => Promise<void>) | undefined;
+  let beforeHandler: ((event: unknown, ctx: ExtensionContext) => Promise<void>) | undefined;
   let blockedHandler: ((event: { active: boolean }) => void) | undefined;
   const pi = {
     events: {
@@ -47,6 +48,7 @@ function protocolHarness() {
       },
     },
     on(event: string, candidate: typeof endHandler | typeof settledHandler) {
+      if (event === "before_agent_start") beforeHandler = candidate as typeof beforeHandler;
       if (event === "agent_end") endHandler = candidate as typeof endHandler;
       if (event === "agent_settled") settledHandler = candidate as typeof settledHandler;
     },
@@ -59,6 +61,7 @@ function protocolHarness() {
   });
   assert.ok(endHandler);
   assert.ok(settledHandler);
+  assert.ok(beforeHandler);
   let shutdowns = 0;
   const branch: unknown[] = [];
   const ctx = {
@@ -79,6 +82,7 @@ function protocolHarness() {
     branch,
     endHandler,
     settledHandler,
+    beforeHandler,
     ctx,
     setBlocked(active: boolean) {
       assert.ok(blockedHandler);
@@ -106,6 +110,15 @@ test("agent_end captures the latest outcome but only agent_settled completes the
 
   assert.equal(existsSync(harness.markerPath), false);
   assert.equal(harness.shutdowns(), 0);
+  assert.deepEqual(completionSettlementAt(harness.markerPath), {
+    version: 1,
+    childId: "child-1",
+    generation: 1,
+    phase: "candidate",
+    stopReason: "stop",
+    entryId: "assistant-entry-2",
+    sessionPath: "/tmp/child-session.jsonl",
+  });
 
   await harness.settledHandler({}, harness.ctx);
 
@@ -121,7 +134,7 @@ test("agent_end captures the latest outcome but only agent_settled completes the
   assert.equal(existsSync(harness.registry), true);
 });
 
-test("a claimed follow-up frontier suppresses the preceding settled outcome", async () => {
+test("a claimed follow-up frontier cannot suppress a durable settlement candidate", async () => {
   const harness = protocolHarness();
 
   await harness.endHandler(
@@ -141,6 +154,30 @@ test("a claimed follow-up frontier suppresses the preceding settled outcome", as
 
   await harness.settledHandler({}, harness.ctx);
 
+  assert.equal(existsSync(harness.markerPath), true);
+  assert.equal(harness.shutdowns(), 1);
+});
+
+test("a new agent turn supersedes an unpublished settlement candidate", async () => {
+  const harness = protocolHarness();
+
+  await harness.endHandler(
+    {
+      messages: [{ role: "assistant", content: [], stopReason: "stop" }],
+    },
+    harness.ctx,
+  );
+  await harness.beforeHandler({}, harness.ctx);
+  await harness.settledHandler({}, harness.ctx);
+
+  assert.deepEqual(completionSettlementAt(harness.markerPath), {
+    version: 1,
+    childId: "child-1",
+    generation: 1,
+    phase: "running",
+    sessionPath: "/tmp/child-session.jsonl",
+    frontierEntryId: "assistant-entry-2",
+  });
   assert.equal(existsSync(harness.markerPath), false);
   assert.equal(harness.shutdowns(), 0);
 });
