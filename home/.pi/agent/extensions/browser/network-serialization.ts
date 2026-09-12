@@ -62,6 +62,9 @@ function isSensitiveName(name: string): boolean {
     SENSITIVE_HEADER_NAMES.has(normalized) ||
     SENSITIVE_COMPACT_NAMES.has(compact) ||
     /(?:authorization|authentication(?:info)?)$/u.test(compact) ||
+    /(?:authorizationcode|codeverifier|devicecode|devicegrantcode|oauthverifier|pkceverifier|usercode)$/u.test(
+      compact,
+    ) ||
     /(?:assertion|jwt|samlart|samlrequest|samlresponse)$/u.test(compact) ||
     /(?:api(?:cation)?key|credentials?|password|secret|token|signature\d*)$/u.test(compact) ||
     /(?:^|[-_])(?:access[-_]?token|api[-_]?key|credential|password|secret|token)(?:$|[-_])/i.test(
@@ -200,14 +203,15 @@ function redactRefreshHeader(value: string): string {
 }
 
 function redactHeaderValue(name: string, value: string): string {
+  const safeValue = sanitizeOutput(value);
   if (isSensitiveName(name)) return REDACTED;
   const normalizedName = name.toLowerCase();
-  if (normalizedName === "link") return redactLinkHeader(value);
-  if (normalizedName === "refresh") return redactRefreshHeader(value);
+  if (normalizedName === "link") return redactLinkHeader(safeValue);
+  if (normalizedName === "refresh") return redactRefreshHeader(safeValue);
   if (URL_BEARING_HEADER_NAMES.has(normalizedName)) {
-    return redactBrowserUrl(value);
+    return redactBrowserUrl(safeValue);
   }
-  return redactBrowserDiagnostic(value);
+  return redactBrowserDiagnostic(safeValue);
 }
 
 function redactHeaders(headers?: Record<string, string>): Record<string, string> | undefined {

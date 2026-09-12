@@ -260,6 +260,57 @@ test("JWT, OAuth assertion, and SAML credential aliases are redacted", () => {
   );
 });
 
+test("PKCE, device grant, and OAuth verifier aliases are redacted", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "POST",
+        url: "https://example.test/token?code_verifier=pkce-secret&pkceVerifier=pkce-alias-secret&deviceCode=device-secret&device_grant_code=grant-secret&user_code=user-secret&oauthVerifier=oauth-secret&view=keep",
+        resourceType: "fetch",
+        requestHeaders: {
+          "X-Code-Verifier": "header-pkce-secret",
+          PKCEVerifier: "header-pkce-alias-secret",
+          DeviceCode: "header-device-secret",
+          "X-Device-Grant-Code": "header-grant-secret",
+          AuthorizationCode: "header-authorization-secret",
+          OAuthVerifier: "header-oauth-secret",
+          "X-User-Code": "header-user-secret",
+          "X-Status-Code": "200",
+        },
+      },
+    ],
+    true,
+    new Set([
+      "x-code-verifier",
+      "pkceverifier",
+      "devicecode",
+      "x-device-grant-code",
+      "authorizationcode",
+      "oauthverifier",
+      "x-user-code",
+      "x-status-code",
+    ]),
+  );
+
+  assert.equal(
+    result.entries[0].url,
+    "https://example.test/token?code_verifier=%5BREDACTED%5D&pkceVerifier=%5BREDACTED%5D&deviceCode=%5BREDACTED%5D&device_grant_code=%5BREDACTED%5D&user_code=%5BREDACTED%5D&oauthVerifier=%5BREDACTED%5D&view=keep",
+  );
+  assert.equal(result.entries[0].requestHeaders["X-Code-Verifier"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.PKCEVerifier, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.DeviceCode, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["X-Device-Grant-Code"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.AuthorizationCode, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.OAuthVerifier, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["X-User-Code"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["X-Status-Code"], "200");
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /(?:pkce(?:-alias)?|device|grant|authorization|user|oauth)-secret/,
+  );
+});
+
 test("redacts credentials from OAuth and route-query URL fragments in rendered details", () => {
   const result = serializeNetworkEntries(
     [
@@ -390,6 +441,50 @@ test("redacts every URI in composite URL-bearing headers without changing their 
     'Bearer authorization_uri="https://login.example/authorize?clientSecret=%5BREDACTED%5D"',
   );
   assert.doesNotMatch(JSON.stringify(result), /(?:first|second|refresh|auth)-secret/);
+});
+
+test("sanitizes composite header bytes before format-specific redaction", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/no-url",
+        resourceType: "document",
+        responseHeaders: { Refresh: "5; \x1b]52;c;NO-URL\x07reload" },
+      },
+      {
+        ts: 2,
+        method: "GET",
+        url: "https://example.test/unquoted",
+        resourceType: "document",
+        responseHeaders: {
+          Refresh: "\x1b[31m0; url=/callback?code=unquoted-secret \x1b[0m",
+        },
+      },
+      {
+        ts: 3,
+        method: "GET",
+        url: "https://example.test/quoted",
+        resourceType: "document",
+        responseHeaders: {
+          Refresh: '2; \x1b]52;c;PREFIX\x07url="/callback?code=quoted-secret"\x1b[2Jsuffix',
+          Link: "\x1b[31m</asset?code=link-secret>; rel=next\x1b[0m",
+        },
+      },
+    ],
+    true,
+    new Set(["refresh", "link"]),
+  );
+
+  assert.equal(result.entries[0].responseHeaders.Refresh, "5; reload");
+  assert.equal(result.entries[1].responseHeaders.Refresh, "0; url=/callback?code=%5BREDACTED%5D ");
+  assert.equal(
+    result.entries[2].responseHeaders.Refresh,
+    '2; url="/callback?code=%5BREDACTED%5D"suffix',
+  );
+  assert.equal(result.entries[2].responseHeaders.Link, "</asset?code=%5BREDACTED%5D>; rel=next");
+  assert.doesNotMatch(JSON.stringify(result), /\x1b|NO-URL|PREFIX|(?:unquoted|quoted|link)-secret/);
 });
 
 test("redacts URL credentials from network failure diagnostics", () => {

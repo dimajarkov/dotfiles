@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { atomicWriteText } from "./atomic-file.ts";
 import { hasPendingCompletions } from "./completion-delivery.ts";
+import { withRegistryLock } from "./registry-lock.ts";
 
 interface JsonObject {
   [key: string]: unknown;
@@ -42,11 +43,13 @@ export function registerChildCompletionProtocol(
   if (!childId || generation === undefined || !registry || !markerPath) return;
 
   let blocked = false;
-  let lastOutcome: {
-    stopReason: string;
-    entryId: string;
-    sessionPath: string;
-  } | undefined;
+  let lastOutcome:
+    | {
+        stopReason: string;
+        entryId: string;
+        sessionPath: string;
+      }
+    | undefined;
   pi.events.on("herdr:blocked", (event) => {
     if (isObject(event) && typeof event.active === "boolean") blocked = event.active;
   });
@@ -57,42 +60,65 @@ export function registerChildCompletionProtocol(
       .find((message) => message.role === "assistant");
     const entryId = ctx.sessionManager.getLeafId();
     const sessionPath = ctx.sessionManager.getSessionFile();
-    lastOutcome = finalAssistant?.stopReason && entryId && sessionPath
-      ? { stopReason: finalAssistant.stopReason, entryId, sessionPath }
-      : undefined;
+    lastOutcome =
+      finalAssistant?.stopReason && entryId && sessionPath
+        ? { stopReason: finalAssistant.stopReason, entryId, sessionPath }
+        : undefined;
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
-    if (!lastOutcome || lastOutcome.stopReason === "aborted") return;
-    if (blocked || ctx.hasPendingMessages() || hasPendingCompletions(ctx.sessionManager.getBranch())) return;
-
-    const records = registryRecords(registry);
-    const child = records.find((record) => record.id === childId);
-    if (!child || child.generation !== generation) return;
+    const outcome = lastOutcome;
+    if (!outcome || outcome.stopReason === "aborted") return;
     if (
-      records.some(
-        (record) =>
-          record.parentId === childId &&
-          (
-            !TERMINAL_STATES.has(String(record.state)) ||
-            typeof record.deliveredAt !== "number" ||
-            (record.surfaceState !== "closed" && record.surfaceState !== "released")
-          ),
-      )
-    ) {
+      blocked ||
+      ctx.hasPendingMessages() ||
+      hasPendingCompletions(ctx.sessionManager.getBranch())
+    )
       return;
-    }
 
-    const completion = {
-      version: 1,
-      childId,
-      generation,
-      stopReason: lastOutcome.stopReason,
-      entryId: lastOutcome.entryId,
-      sessionPath: lastOutcome.sessionPath,
-    };
-    atomicWriteText(markerPath, `${JSON.stringify(completion)}\n`);
-    ctx.shutdown();
+    const published = await withRegistryLock(`${markerPath}.lock`, () => {
+      if (
+        lastOutcome !== outcome ||
+        blocked ||
+        ctx.hasPendingMessages() ||
+        hasPendingCompletions(ctx.sessionManager.getBranch())
+      ) {
+        return false;
+      }
+
+      const records = registryRecords(registry);
+      const child = records.find((record) => record.id === childId);
+      if (
+        !child ||
+        child.generation !== generation ||
+        child.startedAfterEntryId === outcome.entryId
+      ) {
+        return false;
+      }
+      if (
+        records.some(
+          (record) =>
+            record.parentId === childId &&
+            (!TERMINAL_STATES.has(String(record.state)) ||
+              typeof record.deliveredAt !== "number" ||
+              (record.surfaceState !== "closed" && record.surfaceState !== "released")),
+        )
+      ) {
+        return false;
+      }
+
+      const completion = {
+        version: 1,
+        childId,
+        generation,
+        stopReason: outcome.stopReason,
+        entryId: outcome.entryId,
+        sessionPath: outcome.sessionPath,
+      };
+      atomicWriteText(markerPath, `${JSON.stringify(completion)}\n`);
+      return true;
+    });
+    if (published) ctx.shutdown();
   });
 }
 
