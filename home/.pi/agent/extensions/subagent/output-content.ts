@@ -3,13 +3,21 @@ import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   hyperlink,
-  stripTerminalSequences,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import {
+  sanitizeOutput,
+  sanitizeRenderedOutput,
+} from "../lib/terminal-safety.ts";
 
-const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "file:"]);
+export {
+  sanitizeMetadata,
+  sanitizeOutput,
+  sanitizeRenderedOutput,
+} from "../lib/terminal-safety.ts";
+
 const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
 const LOCAL_FILE_EXTENSION = /\.[A-Za-z0-9][A-Za-z0-9_-]{0,15}(?::\d+(?::\d+)?)?(?:[#?].*)?$/u;
 const MARKDOWN_LINK_START = /\[([^\]\n]+)\]\(/gu;
@@ -47,76 +55,6 @@ export function renderOutputContent(text: string, cwd: string, width: number): s
       visibleWidth(wrapped) <= safeWidth ? wrapped : truncateToWidth(wrapped, safeWidth, ""),
     );
   });
-}
-
-export function sanitizeOutput(text: string): string {
-  // Pi's helper removes CSI, OSC (including OSC 52), and APC sequences. Remove
-  // any remaining C0/C1 controls as well so malformed escapes cannot reach the
-  // generated OSC 8 links or the terminal.
-  const normalized = stripTerminalSequences(text)
-    .replace(/\r\n?/gu, "\n")
-    .replace(/\u2028|\u2029/gu, "\n")
-    .replace(/\t/gu, "    ");
-  let result = "";
-  for (const character of normalized) {
-    const codePoint = character.codePointAt(0)!;
-    const isControl =
-      codePoint <= 0x08 ||
-      (codePoint >= 0x0b && codePoint <= 0x0c) ||
-      (codePoint >= 0x0e && codePoint <= 0x1f) ||
-      (codePoint >= 0x7f && codePoint <= 0x9f);
-    const isBidiFormat =
-      (codePoint >= 0x202a && codePoint <= 0x202e) || (codePoint >= 0x2066 && codePoint <= 0x2069);
-    if (!isControl && !isBidiFormat) result += character;
-  }
-  return result;
-}
-
-export function sanitizeMetadata(value: unknown): string {
-  return sanitizeOutput(typeof value === "string" ? value : "")
-    .replace(/\s+/gu, " ")
-    .trim();
-}
-
-/** Keep only styling and safe hyperlinks from a native component's rendered output.
- * This boundary sees actual destinations after Markdown resolves references and
- * escapes, rather than attempting to recognize every source-level link syntax.
- */
-export function sanitizeRenderedOutput(text: string): string {
-  // oxlint-disable-next-line no-control-regex -- Deliberately recognize the only allowed terminal sequences.
-  const sequences = /\x1b\[[0-9;:]*m|\x1b\]8;[^;\x1b\x07]*;([^\x1b\x07]*)(?:\x1b\\|\x07)/gu;
-  let result = "";
-  let position = 0;
-  for (const match of text.matchAll(sequences)) {
-    result += sanitizeOutput(text.slice(position, match.index));
-    const target = match[1];
-    if (target === undefined) {
-      result += match[0];
-    } else {
-      // Recreate OSC 8 without untrusted parameters, closing any existing link
-      // when an unsafe destination is encountered.
-      result += `\x1b]8;;${target && safeExplicitUrl(target) ? target : ""}\x1b\\`;
-    }
-    position = match.index + match[0].length;
-  }
-  return result + sanitizeOutput(text.slice(position));
-}
-
-function safeExplicitUrl(target: string): boolean {
-  if (sanitizeOutput(target) !== target || /\s/u.test(target)) return false;
-  try {
-    const url = new URL(target);
-    const protocol = url.protocol.toLowerCase();
-    return (
-      SAFE_URL_PROTOCOLS.has(protocol) &&
-      (protocol !== "file:" ||
-        ((url.hostname === "" || url.hostname.toLowerCase() === "localhost") &&
-          url.username === "" &&
-          url.password === ""))
-    );
-  } catch {
-    return false;
-  }
 }
 
 function linkifyLine(line: string, cwd: string): string {

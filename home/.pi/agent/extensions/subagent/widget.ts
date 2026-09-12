@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { sanitizeMetadata } from "../lib/terminal-safety.ts";
 import type { ChildRecord } from "./orchestrator.ts";
 
 /** A child together with its rendered position in the subagent tree. */
@@ -43,10 +44,6 @@ function replaceControlCharacters(value: string): string {
       return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f) ? " " : character;
     })
     .join("");
-}
-
-function singleLine(value: string): string {
-  return replaceControlCharacters(stripTerminalSequences(value)).replace(/\s+/gu, " ").trim();
 }
 
 function safePrefix(value: string): string {
@@ -95,7 +92,7 @@ export function buildSubagentTree(
       if (lineage.has(child.id)) continue;
 
       const childPath = [...path, child.id];
-      const childDisplayPath = [...displayPath, singleLine(child.semanticName)];
+      const childDisplayPath = [...displayPath, sanitizeMetadata(child.semanticName)];
       const childLineage = new Set(lineage);
       childLineage.add(child.id);
       const descendants = evaluateChildren(
@@ -373,9 +370,9 @@ function renderRow(
   const prefix = theme.fg("borderMuted", safePrefix(row.prefix));
   const name = theme.fg(
     isActive(child) ? "text" : "muted",
-    theme.bold(singleLine(child.semanticName)),
+    theme.bold(sanitizeMetadata(child.semanticName)),
   );
-  const role = theme.fg("dim", ` (${singleLine(child.role)})`);
+  const role = theme.fg("dim", ` (${sanitizeMetadata(child.role)})`);
   const label = prefix + name + role;
   let content: string;
   if (contentWidth <= 0 || trailingWidth >= contentWidth) {

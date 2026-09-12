@@ -6,7 +6,11 @@ import {
   type Component,
   type MarkdownTheme,
 } from "@earendil-works/pi-tui";
-import { sanitizeMetadata, sanitizeOutput, sanitizeRenderedOutput } from "./output-content.ts";
+import {
+  sanitizeMetadata,
+  sanitizeOutput,
+  sanitizeRenderedOutput,
+} from "../lib/terminal-safety.ts";
 
 class SafeCompletionContainer extends Container {
   override render(width: number): string[] {
@@ -85,12 +89,14 @@ export function renderCompletionMessage(
   );
   if (!options.expanded) {
     const lines = safeOutput ? safeOutput.split(/\r?\n/) : [];
-    const preview =
-      lines.find((line) => line.trim())?.trim() || (error ? `Failure: ${error}` : "(no output)");
+    const preview = lines.find((line) => line.trim())?.trim() || "(no output)";
     const lineCount = lines.length || 1;
     const suffix = lineCount === 1 ? "" : ` · ${lineCount} lines`;
 
     container.addChild(new Text(theme.fg("dim", `  ⎿  ${preview}${suffix}`), options.outputPad, 0));
+    if (error) {
+      container.addChild(new Text(theme.fg("error", `  Failure: ${error}`), options.outputPad, 0));
+    }
     if (lineCount > 1) {
       container.addChild(
         new Text(

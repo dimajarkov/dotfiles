@@ -32,6 +32,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { sanitizeMetadata } from "../lib/terminal-safety.ts";
 import {
   redactBrowserDiagnostic,
   redactBrowserUrl,
@@ -480,7 +481,7 @@ export default function browserExtension(pi: ExtensionAPI) {
         const p = await ensurePage();
         await p.fill(params.selector, params.value);
         return {
-          content: [{ type: "text", text: `filled ${params.selector}` }],
+          content: [{ type: "text", text: `filled ${sanitizeMetadata(params.selector)}` }],
           details: {},
         };
       });
@@ -502,7 +503,7 @@ export default function browserExtension(pi: ExtensionAPI) {
         const p = await ensurePage();
         await p.click(params.selector);
         return {
-          content: [{ type: "text", text: `clicked ${params.selector}` }],
+          content: [{ type: "text", text: `clicked ${sanitizeMetadata(params.selector)}` }],
           details: {},
         };
       });

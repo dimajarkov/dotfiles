@@ -267,8 +267,8 @@ test("sanitizes Unicode and terminal input while staying within every narrow wid
   const rows = buildSubagentTree(
     [
       child("weird", "root", "completed", {
-        semanticName: "研究👩‍💻 cafe\u0301\n\t\x1b[2Jinjected",
-        role: "\x1b]8;;https://example.com\x07reviewer\x1b]8;;\x07\r\nrole",
+        semanticName: "研究👩‍💻 cafe\u0301\u202einvisible\n\t\x1b[2Jinjected",
+        role: "\x1b]8;;https://example.com\x07reviewer\x1b]8;;\x07\u2066role\u2069\r\nkind",
         result: "done",
       }),
     ],
@@ -281,11 +281,12 @@ test("sanitizes Unicode and terminal input while staying within every narrow wid
       assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
       assert.doesNotMatch(line, /[\r\n\t]/);
       assert.ok(!line.includes("\x1b[2J") && !line.includes("\x1b]8;"));
+      assert.doesNotMatch(line, /[\u202a-\u202e\u2066-\u2069]/u);
       if (width >= 4) assert.equal(visibleWidth(line), width);
     }
   }
   const plain = renderSubagentWidget(rows, 120, styledTheme).map(stripTerminalSequences).join("\n");
-  assert.match(plain, /研究👩‍💻 café injected \(reviewer role\)/);
+  assert.match(plain, /研究👩‍💻 caféinvisible injected \(reviewerrole kind\)/);
   assert.match(plain, /● done \[output\]/);
 });
 

@@ -1,5 +1,9 @@
 import { Text } from "@earendil-works/pi-tui";
-import { sanitizeMetadata, sanitizeOutput, sanitizeRenderedOutput } from "./output-content.ts";
+import {
+  sanitizeMetadata,
+  sanitizeOutput,
+  sanitizeRenderedLines,
+} from "../lib/terminal-safety.ts";
 
 export interface SubagentToolRenderTheme {
   fg(color: string, text: string): string;
@@ -8,7 +12,7 @@ export interface SubagentToolRenderTheme {
 
 class SafeToolText extends Text {
   override render(width: number): string[] {
-    return super.render(width).map(sanitizeRenderedOutput);
+    return sanitizeRenderedLines(super.render(width));
   }
 }
 

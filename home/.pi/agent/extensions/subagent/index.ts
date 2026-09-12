@@ -11,6 +11,7 @@ import {
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { withHerdrBlocked } from "../lib/herdr-blocked.ts";
+import { sanitizeMetadata } from "../lib/terminal-safety.ts";
 import {
   discoverAgents,
   materializeSystemPrompt,
@@ -22,9 +23,9 @@ import {
   CompletionDelivery,
 } from "./completion-delivery.ts";
 import { renderCompletionMessage } from "./completion-renderer.ts";
+import { summarizeChild } from "./child-summary.ts";
 import { buildSubagentTree, renderSubagentWidgetLayout, type TreeRow } from "./widget.ts";
 import { SubagentInspector } from "./inspector.ts";
-import { sanitizeMetadata } from "./output-content.ts";
 import {
   SubagentOrchestrator,
   type ChildRecord,
@@ -98,24 +99,6 @@ function rootId(ctx: ExtensionContext): string {
 
 function currentParentId(ctx: ExtensionContext): string {
   return process.env.HERDR_SUBAGENT_AGENT_ID ?? ctx.sessionManager.getSessionId();
-}
-
-function stateSymbol(state: ChildRecord["state"]): string {
-  if (state === "completed") return "✓";
-  if (state === "failed" || state === "crashed") return "✗";
-  if (state === "blocked") return "!";
-  if (state === "cancelled") return "×";
-  return "○";
-}
-
-function summary(child: ChildRecord): string {
-  const location = child.tabId && child.paneId ? `${child.tabId}/${child.paneId}` : "starting";
-  const scope = child.workScope ? ` scope=${child.workScope}` : " unscoped";
-  const resolvedModel = child.model ?? child.launchLoadout?.model;
-  const resolvedThinking = child.thinking ?? child.launchLoadout?.thinking;
-  const model = resolvedModel ? ` model=${resolvedModel}` : "";
-  const thinking = resolvedThinking ? ` thinking=${resolvedThinking}` : "";
-  return `${stateSymbol(child.state)} ${child.semanticName} [${child.role}] ${child.state}${scope}${model}${thinking} ${location}`;
 }
 
 function textResult(text: string, details?: unknown) {
@@ -291,7 +274,7 @@ export default function herdrSubagents(pi: ExtensionAPI) {
           .list(lineage)
           .filter((child) => child.parentId === currentParentId(ctx));
         return textResult(
-          children.length > 0 ? children.map(summary).join("\n") : "No subagents",
+          children.length > 0 ? children.map(summarizeChild).join("\n") : "No subagents",
           { children },
         );
       }
@@ -301,25 +284,30 @@ export default function herdrSubagents(pi: ExtensionAPI) {
 
       if (params.action === "inspect") {
         const child = await orchestrator.inspect(lineage, currentParentId(ctx), name, signal);
-        return textResult(summary(child), { child });
+        return textResult(summarizeChild(child), { child });
       }
       if (params.action === "message") {
         if (!params.message) throw new Error("message requires message text");
         const child = await orchestrator.message(lineage, currentParentId(ctx), name, params.message, signal);
         updateWidget(ctx);
-        return textResult(`Message sent to ${child.semanticName}`, { child });
+        return textResult(`Message sent to ${sanitizeMetadata(child.semanticName)}`, { child });
       }
       if (params.action === "cancel") {
         const child = await orchestrator.cancel(lineage, currentParentId(ctx), name, signal);
         updateWidget(ctx);
         return textResult(
-          child.state === "cancelled" ? `Cancelled ${child.semanticName}` : `Already ${child.state}: ${child.semanticName}`,
+          child.state === "cancelled"
+            ? `Cancelled ${sanitizeMetadata(child.semanticName)}`
+            : `Already ${sanitizeMetadata(child.state)}: ${sanitizeMetadata(child.semanticName)}`,
           { child },
         );
       }
       if (params.action === "resume") {
         const child = await orchestrator.resume(lineage, currentParentId(ctx), name, signal);
-        return textResult(`Focused ${child.semanticName} in ${child.paneId}`, { child });
+        return textResult(
+          `Focused ${sanitizeMetadata(child.semanticName)} in ${sanitizeMetadata(child.paneId)}`,
+          { child },
+        );
       }
 
       if (!params.agent || !params.task) {
@@ -337,7 +325,7 @@ export default function herdrSubagents(pi: ExtensionAPI) {
       const agent = discovery.agents.find((candidate) => candidate.name === params.agent);
       if (!agent) {
         throw new Error(
-          `Unknown agent role ${params.agent}. Available: ${discovery.agents.map((candidate) => candidate.name).join(", ") || "none"}`,
+          `Unknown agent role ${sanitizeMetadata(params.agent)}. Available: ${discovery.agents.map((candidate) => sanitizeMetadata(candidate.name)).join(", ") || "none"}`,
         );
       }
       if (agent.source === "project") {
@@ -346,10 +334,10 @@ export default function herdrSubagents(pi: ExtensionAPI) {
         }
         const approved = await withHerdrBlocked(
           (event) => pi.events.emit("herdr:blocked", event),
-          `Approval: project agent ${agent.name}`,
+          `Approval: project agent ${sanitizeMetadata(agent.name)}`,
           () => ctx.ui.confirm(
             "Run project-local agent?",
-            `Agent: ${agent.name}\nSource: ${agent.filePath}`,
+            `Agent: ${sanitizeMetadata(agent.name)}\nSource: ${sanitizeMetadata(agent.filePath)}`,
           ),
         );
         if (!approved) return textResult("Cancelled: project-local agent not approved");
@@ -384,7 +372,7 @@ export default function herdrSubagents(pi: ExtensionAPI) {
       }, signal);
       updateWidget(ctx);
       return textResult(
-        `Spawned asynchronously: ${summary(child)} as ${child.herdrName}`,
+        `Spawned asynchronously: ${summarizeChild(child)} as ${sanitizeMetadata(child.herdrName)}`,
         { child },
       );
     },
