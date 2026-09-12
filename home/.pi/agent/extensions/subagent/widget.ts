@@ -248,8 +248,9 @@ function selectVisibleRowIndexes(rows: readonly TreeRow[]): number[] {
   for (let index = 0; index < rows.length; index += 1) {
     if (priorityIndexes.has(index)) select(index);
   }
+  const lastPriorityIndex = Math.max(-1, ...priorityIndexes);
   for (let index = 0; index < rows.length; index += 1) {
-    if (!priorityIndexes.has(index)) select(index);
+    if (!priorityIndexes.has(index) && index > lastPriorityIndex) select(index);
   }
   for (let index = 0; index < rows.length; index += 1) {
     if (selectedIndexes.has(index)) visible.push(index);

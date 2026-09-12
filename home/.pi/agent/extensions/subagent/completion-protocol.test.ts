@@ -134,6 +134,33 @@ test("agent_end captures the latest outcome but only agent_settled completes the
   assert.equal(existsSync(harness.registry), true);
 });
 
+test("a malformed sibling record cannot suppress settlement or completion", async () => {
+  const harness = protocolHarness();
+  writeFileSync(join(harness.registry, "malformed-sibling.json"), "{not-json\n");
+
+  await harness.endHandler(
+    {
+      messages: [{ role: "assistant", content: [], stopReason: "stop" }],
+    },
+    harness.ctx,
+  );
+
+  assert.deepEqual(completionSettlementAt(harness.markerPath), {
+    version: 1,
+    childId: "child-1",
+    generation: 1,
+    phase: "candidate",
+    stopReason: "stop",
+    entryId: "assistant-entry-2",
+    sessionPath: "/tmp/child-session.jsonl",
+  });
+
+  await harness.settledHandler({}, harness.ctx);
+
+  assert.equal(existsSync(harness.markerPath), true);
+  assert.equal(harness.shutdowns(), 1);
+});
+
 test("a claimed follow-up frontier cannot suppress a durable settlement candidate", async () => {
   const harness = protocolHarness();
 
