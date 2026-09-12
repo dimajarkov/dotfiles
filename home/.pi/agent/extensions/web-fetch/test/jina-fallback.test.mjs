@@ -24,9 +24,37 @@ test("private, credential-bearing, and signed URLs never reach Jina", async () =
     "https://example.com/download?X-Amz-Signature=secret",
     "file:///private/etc/hosts",
   ]) {
-    assert.equal(await runEligibleJinaFallback(url, fallback, resolve), null);
+    assert.equal(
+      await runEligibleJinaFallback(url, fallback, {
+        allowThirdPartyFallback: true,
+        resolve,
+      }),
+      null,
+    );
   }
 
+  assert.equal(fallbackCalls, 0);
+  assert.equal(resolverCalls, 0);
+});
+
+test("third-party fallback defaults off for path-secret URLs", async () => {
+  let fallbackCalls = 0;
+  let resolverCalls = 0;
+  const result = await runEligibleJinaFallback(
+    "https://hooks.slack.com/services/T/B/SECRET",
+    async () => {
+      fallbackCalls += 1;
+      return "unexpected";
+    },
+    {
+      resolve: async () => {
+        resolverCalls += 1;
+        return [{ address: "13.107.42.14", family: 4 }];
+      },
+    },
+  );
+
+  assert.equal(result, null);
   assert.equal(fallbackCalls, 0);
   assert.equal(resolverCalls, 0);
 });
@@ -55,10 +83,13 @@ test("clean public URLs may use the fallback", async () => {
       calls.push(url);
       return "reader output";
     },
-    async () => [
-      { address: "93.184.216.34", family: 4 },
-      { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
-    ],
+    {
+      allowThirdPartyFallback: true,
+      resolve: async () => [
+        { address: "93.184.216.34", family: 4 },
+        { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
+      ],
+    },
   );
 
   assert.equal(result, "reader output");

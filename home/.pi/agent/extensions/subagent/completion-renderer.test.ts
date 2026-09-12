@@ -83,3 +83,33 @@ test("collapses completion output with the native expand hint", () => {
   assert.match(plain, /Press ⌘\+O for full output/);
   assert.doesNotMatch(plain, /- one/);
 });
+
+test("renders failed empty output and its error as separate fields", () => {
+  const message = {
+    content: "Subagent scout failed.\n\n\n\nFailure: provider exploded",
+    details: {
+      semanticName: "scout",
+      role: "researcher",
+      state: "failed",
+      result: "",
+      error: "provider exploded",
+    },
+  };
+  const collapsed = renderCompletionMessage(
+    message,
+    { expanded: false, outputPad: 1 },
+    theme,
+    markdownTheme,
+  ).render(60).map(stripTerminalSequences).join("\n");
+  const expanded = renderCompletionMessage(
+    message,
+    { expanded: true, outputPad: 1 },
+    theme,
+    markdownTheme,
+  ).render(60).map(stripTerminalSequences).join("\n");
+
+  assert.match(collapsed, /✗ scout \[researcher\]/);
+  assert.match(collapsed, /Failure: provider exploded/);
+  assert.match(expanded, /\(no output\)/);
+  assert.match(expanded, /Failure: provider exploded/);
+});

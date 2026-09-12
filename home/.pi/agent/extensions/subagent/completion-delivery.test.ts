@@ -8,7 +8,11 @@ const child = {
 };
 
 function parent(branch: unknown[] = []) {
-  const queued: Array<{ customType: string; content: string; details: { runId: string } }> = [];
+  const queued: Array<{
+    customType: string;
+    content: string;
+    details: { runId: string; result?: string; error?: string };
+  }> = [];
   const controller = new AbortController();
   const options = {
     getBranch: () => branch,
@@ -111,6 +115,27 @@ test("a failed send retains the original result for retry", () => {
   p.delivery.replay();
   assert.equal(p.queued.length, 1);
   assert.match(p.queued[0].content, /DONE/);
+});
+
+test("failed empty output carries result and error separately", () => {
+  const p = parent();
+  assert.equal(
+    p.delivery.deliver({
+      ...child,
+      state: "failed",
+      result: "",
+      error: "provider exploded",
+    }),
+    true,
+  );
+
+  assert.equal(p.queued[0].details.result, "");
+  assert.equal(p.queued[0].details.error, "provider exploded");
+  assert.match(p.queued[0].content, /Failure: provider exploded/);
+  const restarted = parent(JSON.parse(JSON.stringify(p.branch)));
+  restarted.delivery.replay();
+  assert.equal(restarted.queued[0].details.result, "");
+  assert.equal(restarted.queued[0].details.error, "provider exploded");
 });
 
 test("settling after a cleared volatile queue can replay its durable outbox", () => {

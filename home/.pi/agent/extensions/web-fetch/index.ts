@@ -496,6 +496,7 @@ async function extractViaHttp(
 
 async function fetchAndExtract(
 	url: string,
+	allowThirdPartyFallback: boolean,
 	signal?: AbortSignal,
 ): Promise<FetchResult> {
 	if (signal?.aborted) {
@@ -521,7 +522,7 @@ async function fetchAndExtract(
 	}
 
 	const jinaResult = await runEligibleJinaFallback(url, (eligibleUrl) =>
-		extractWithJinaReader(eligibleUrl, signal));
+		extractWithJinaReader(eligibleUrl, signal), { allowThirdPartyFallback });
 	if (jinaResult) return jinaResult;
 	if (signal?.aborted)
 		return { url, title: "", content: "", error: "Aborted" };
@@ -539,16 +540,24 @@ export default function (pi: ExtensionAPI) {
 		name: "web_fetch",
 		label: "Web Fetch",
 		description:
-			"Fetch a web page and extract readable content as clean markdown. Uses Readability + Turndown for high-quality HTML→markdown conversion. Handles PDFs, plain text, and falls back to Jina Reader for JS-rendered pages.",
+			"Fetch a web page and extract readable content as clean markdown. Uses Readability + Turndown for high-quality HTML→markdown conversion. Handles PDFs and plain text. Jina Reader is available only with explicit user authorization for the exact public URL.",
 		promptSnippet:
 			"Fetch a URL and extract readable content as markdown. Supports HTML pages, PDFs, and plain text.",
 
 		parameters: Type.Object({
 			url: Type.String({ description: "URL to fetch" }),
+			allowThirdPartyFallback: Type.Optional(Type.Boolean({
+				description:
+					"Set true only when the user explicitly authorized sending this exact public URL to Jina Reader",
+			})),
 		}),
 
 		async execute(_toolCallId, params, signal) {
-			const result = await fetchAndExtract(params.url, signal);
+			const result = await fetchAndExtract(
+				params.url,
+				params.allowThirdPartyFallback === true,
+				signal,
+			);
 
 			if (result.error) {
 				throw new Error(`${params.url}: ${result.error}`);

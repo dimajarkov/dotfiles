@@ -8,6 +8,11 @@ export interface ResolvedAddress {
 
 export type ResolveAddresses = (hostname: string) => Promise<readonly ResolvedAddress[]>;
 
+export interface JinaFallbackOptions {
+	allowThirdPartyFallback?: boolean;
+	resolve?: ResolveAddresses;
+}
+
 const LOCAL_HOST_SUFFIXES = [
 	".home",
 	".internal",
@@ -113,8 +118,9 @@ export async function eligibleJinaFallbackUrl(
 export async function runEligibleJinaFallback<T>(
 	url: string,
 	fallback: (eligibleUrl: string) => Promise<T>,
-	resolve?: ResolveAddresses,
+	options: JinaFallbackOptions = {},
 ): Promise<T | null> {
-	const eligibleUrl = await eligibleJinaFallbackUrl(url, resolve);
+	if (options.allowThirdPartyFallback !== true) return null;
+	const eligibleUrl = await eligibleJinaFallbackUrl(url, options.resolve);
 	return eligibleUrl ? fallback(eligibleUrl) : null;
 }

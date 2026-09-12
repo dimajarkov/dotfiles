@@ -31,6 +31,8 @@ interface CompletionMessage {
     thinking?: string;
     paneId?: string;
     sessionPath?: string;
+    result?: string;
+    error?: string;
   };
 }
 
@@ -60,7 +62,7 @@ function isCompletionMessage(value: unknown): value is CompletionMessage {
     typeof value.content !== "string" || typeof value.display !== "boolean" || !isObject(value.details)) return false;
   const details = value.details;
   return ["childId", "runId", "semanticName", "role", "state"].every((key) => typeof details[key] === "string") &&
-    ["workScope", "model", "thinking", "paneId", "sessionPath"].every((key) =>
+    ["workScope", "model", "thinking", "paneId", "sessionPath", "result", "error"].every((key) =>
       details[key] === undefined || typeof details[key] === "string");
 }
 
@@ -98,14 +100,16 @@ export class CompletionDelivery {
 
     let message = outboxMessages(branch).find((candidate) => candidate.details.runId === runId);
     if (!message) {
+      const output = child.result ?? "(no output)";
+      const failure = child.error === undefined ? "" : `\n\nFailure: ${child.error}`;
       message = {
         customType: COMPLETION_TYPE,
-        content: `Subagent ${child.semanticName} ${child.state}.\n\n` + (child.result ?? child.error ?? "(no output)"),
+        content: `Subagent ${child.semanticName} ${child.state}.\n\n${output}${failure}`,
         display: true,
         details: {
           childId: child.id, runId, semanticName: child.semanticName, role: child.role, state: child.state,
           workScope: child.workScope, model: child.model, thinking: child.thinking,
-          paneId: child.paneId, sessionPath: child.sessionPath,
+          paneId: child.paneId, sessionPath: child.sessionPath, result: child.result, error: child.error,
         },
       };
       // Pi's follow-up queue is volatile and cannot drain during an active tool.

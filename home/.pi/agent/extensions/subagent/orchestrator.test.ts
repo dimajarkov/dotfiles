@@ -315,7 +315,7 @@ test("spawns always split horizontally regardless of pane dimensions", async (t)
   }
 });
 
-test("restores the focused master zoom after splitting without issuing a focus command", async () => {
+test("zoomed master spawns never issue focus-changing zoom restoration", async () => {
   const lifecycle = successfulRootSpawnResponses();
   const transport = new FakeHerdrTransport([
     {
@@ -346,7 +346,6 @@ test("restores the focused master zoom after splitting without issuing a focus c
         },
       },
     },
-    { id: "cli:pane:zoom", result: { type: "pane_zoom" } },
     ...lifecycle.slice(1),
   ]);
   const orchestrator = new SubagentOrchestrator({
@@ -368,15 +367,11 @@ test("restores the focused master zoom after splitting without issuing a focus c
     .filter((call) => !(call[0] === "pane" && call[1] === "layout"))
     .map((call) => call.slice(0, 2)), [
       ["pane", "split"],
-      ["pane", "zoom"],
       ["pane", "rename"],
       ["agent", "start"],
       ["agent", "prompt"],
     ]);
-  assert.deepEqual(
-    transport.calls.find((call) => call[0] === "pane" && call[1] === "zoom"),
-    ["pane", "zoom", "--pane", "w1:p1", "--on"],
-  );
+  assert.equal(transport.calls.some((call) => call[0] === "pane" && call[1] === "zoom"), false);
   assert.equal(transport.calls.some((call) => call[0] === "agent" && call[1] === "focus"), false);
 });
 
@@ -429,7 +424,7 @@ test("does not restore a background zoomed tab and steal unrelated focus", async
   await orchestrator.spawn(spawnRequest());
 
   assert.equal(transport.calls.some((call) => call[0] === "pane" && call[1] === "zoom"), false);
-  assert.ok(transport.ownershipReads.some((call) => call[0] === "pane" && call[1] === "get" && call[2] === "w1:p1"));
+  assert.equal(transport.calls.some((call) => call[0] === "agent" && call[1] === "focus"), false);
 });
 
 test("resume uses explicit focus only when requested", async () => {

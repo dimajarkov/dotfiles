@@ -11,7 +11,8 @@ import {
 
 const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "file:"]);
 const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
-const LOCAL_FILE_EXTENSION = /\.[A-Za-z0-9][A-Za-z0-9_-]{0,15}(?:[#?].*)?$/u;
+const LOCAL_FILE_EXTENSION =
+  /\.[A-Za-z0-9][A-Za-z0-9_-]{0,15}(?::\d+(?::\d+)?)?(?:[#?].*)?$/u;
 const MARKDOWN_LINK_START = /\[([^\]\n]+)\]\(/gu;
 const INLINE_CODE = /`([^`\n]+)`/gu;
 const BARE_URL = /(?<![A-Za-z0-9+./:-])(?:https?|file):\/\/[^\s<>"'`]+/giu;
@@ -251,6 +252,7 @@ function hrefForTarget(rawTarget: string, cwd: string, markdownPath = false): st
       ) {
         return undefined;
       }
+      if (protocol === "file:") url.pathname = stripLineReference(url.pathname);
       return url.href;
     } catch {
       return undefined;
@@ -259,13 +261,18 @@ function hrefForTarget(rawTarget: string, cwd: string, markdownPath = false): st
 
   if (!markdownPath && !looksLikeLocalPath(target)) return undefined;
   if (target.startsWith("//")) return undefined;
-  return localFileHref(markdownPath ? decodeMarkdownPath(target) : target, cwd);
+  const path = markdownPath ? decodeMarkdownPath(target) : stripLineReference(target);
+  return localFileHref(path, cwd);
+}
+
+function stripLineReference(target: string): string {
+  return target.replace(/:\d+(?::\d+)?$/u, "");
 }
 
 function decodeMarkdownPath(target: string): string {
   // A default file handler opens the asset, not a Markdown heading or line anchor.
   // Encoded ? and # are still literal filename characters, so split before decoding.
-  const pathname = target.split(/[?#]/u, 1)[0]!;
+  const pathname = stripLineReference(target.split(/[?#]/u, 1)[0]!);
   try {
     return decodeURIComponent(pathname);
   } catch {

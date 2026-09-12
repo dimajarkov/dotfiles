@@ -107,6 +107,44 @@ test("dispose closes pending inspection and duplicate names remain selectable", 
   await pending;
 });
 
+test("failed empty output preserves the result and displays failure details", async () => {
+  const inspector = new SubagentInspector();
+  const failedRows = buildSubagentTree(
+    [{ ...children[0]!, state: "failed", result: "", error: "provider exploded" }],
+    "root",
+  );
+  let screen = "";
+  const ctx = {
+    mode: "tui",
+    ui: {
+      notify: () => assert.fail("Unexpected notification"),
+      custom: async (
+        factory: (
+          tui: unknown,
+          theme: unknown,
+          keys: unknown,
+          done: (value: unknown) => void,
+        ) => Component,
+      ) =>
+        new Promise((resolve) => {
+          const view = factory(
+            { terminal: { rows: 32 }, requestRender() {} },
+            theme,
+            {},
+            resolve,
+          );
+          screen = view.render(100).join("\n");
+          view.handleInput?.("\x1b");
+        }),
+    },
+  } as unknown as ExtensionContext;
+
+  await inspector.show(ctx, failedRows, "output", "", failedRows[0]);
+
+  assert.match(screen, /Saved final response · failure details below/);
+  assert.match(screen, /Failure: provider exploded/);
+});
+
 test("non-TUI uses a text tree fallback without opening a modal", async () => {
   const inspector = new SubagentInspector();
   let output = "";

@@ -11,6 +11,20 @@ const overlay = {
 const singleLine = (text: string) => promptText(text).replace(/\n/g, " ");
 const displayPath = (row: TreeRow) => row.displayPath;
 
+function outputLines(row: TreeRow, width: number): string[] {
+  const lines = renderOutputContent(
+    row.child.result ?? "No final response has been saved for this agent yet.",
+    row.child.cwd,
+    width,
+  );
+  if (row.child.error === undefined) return lines;
+  return [
+    ...lines,
+    "",
+    ...renderOutputContent(`Failure: ${row.child.error}`, row.child.cwd, width),
+  ];
+}
+
 /** Read-only inspection never focuses, resumes, or sends input to a child pane. */
 export class SubagentInspector {
   private opened = false;
@@ -77,16 +91,9 @@ export class SubagentInspector {
                     title: "Output",
                     label:
                       row.child.result === undefined
-                        ? "Final response not available"
-                        : "Saved final response · links open with system defaults",
-                    render: (width: number) =>
-                      renderOutputContent(
-                        row.child.result ??
-                          row.child.error ??
-                          "No final response has been saved for this agent yet.",
-                        row.child.cwd,
-                        width,
-                      ),
+                        ? `Final response not available${row.child.error ? " · failure details below" : ""}`
+                        : `Saved final response${row.child.error ? " · failure details below" : ""} · links open with system defaults`,
+                    render: (width: number) => outputLines(row, width),
                   }
                 : undefined;
             const view = new SubagentPromptView(

@@ -20,14 +20,20 @@ const SENSITIVE_HEADER_NAMES = new Set([
   "cookie",
   "set-cookie",
 ]);
+const SENSITIVE_COMPACT_NAMES = new Set(
+  [...SENSITIVE_HEADER_NAMES, "session-id"].map((name) => name.replace(/[-_]/g, "")),
+);
 
 function isSensitiveHeader(name: string): boolean {
   const normalized = name
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
     .replace(/([a-z\d])([A-Z])/g, "$1-$2")
     .toLowerCase();
+  const compact = normalized.replace(/[-_]/g, "");
   return (
     SENSITIVE_HEADER_NAMES.has(normalized) ||
+    SENSITIVE_COMPACT_NAMES.has(compact) ||
+    /(?:api(?:cation)?key|credentials?|password|secret|token)$/u.test(compact) ||
     /(?:^|[-_])(?:access[-_]?token|api[-_]?key|credential|password|secret|token)(?:$|[-_])/i.test(
       normalized,
     )

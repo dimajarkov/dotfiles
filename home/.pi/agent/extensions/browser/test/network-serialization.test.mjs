@@ -74,3 +74,32 @@ test("camelCase credential names are redacted in headers and URLs", () => {
   assert.match(result.entries[0].url, /refreshToken=%5BREDACTED%5D/);
   assert.doesNotMatch(JSON.stringify(result), /private-/);
 });
+
+test("transport-normalized compact credential names remain redacted", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "POST",
+        url: "https://example.test/refresh?refreshtoken=compact-refresh-secret",
+        resourceType: "fetch",
+        requestHeaders: {
+          refreshtoken: "compact-refresh-secret",
+          idtoken: "compact-id-secret",
+          clientsecret: "compact-client-secret",
+        },
+      },
+    ],
+    true,
+    new Set(["refreshtoken", "idtoken", "clientsecret"]),
+  );
+
+  assert.match(result.text, /refreshtoken: \[REDACTED\]/);
+  assert.match(result.text, /idtoken: \[REDACTED\]/);
+  assert.match(result.text, /clientsecret: \[REDACTED\]/);
+  assert.equal(result.entries[0].requestHeaders.refreshtoken, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.idtoken, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.clientsecret, "[REDACTED]");
+  assert.match(result.entries[0].url, /refreshtoken=%5BREDACTED%5D/);
+  assert.doesNotMatch(JSON.stringify(result), /compact-/);
+});

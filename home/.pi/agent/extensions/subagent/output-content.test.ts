@@ -87,6 +87,31 @@ test("local Markdown links open assets rather than treating anchors as filename 
   );
 });
 
+test("local line references open files while preserving exact labels", () => {
+  const output = [
+    "src/review.ts:42",
+    "/tmp/child/absolute.ts:9:3",
+    '"./quoted file.ts:12"',
+    "`./backtick file.ts:13:4`",
+    "[source](./markdown file.ts:14:5)",
+    "[query](./query.ts:16?download=1#heading)",
+    "file:///tmp/child/url.ts:15:6",
+    "https://example.com/page:42",
+  ].join("\n");
+  const lines = renderOutputContent(output, "/tmp/child", 160);
+  const rendered = lines.join("\n");
+
+  assert.equal(plain(lines), output);
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/src/review.ts${OSC8_CLOSE}src/review.ts:42`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/absolute.ts${OSC8_CLOSE}/tmp/child/absolute.ts:9:3`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/quoted%20file.ts${OSC8_CLOSE}./quoted file.ts:12`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/backtick%20file.ts${OSC8_CLOSE}./backtick file.ts:13:4`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/markdown%20file.ts${OSC8_CLOSE}source`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/query.ts${OSC8_CLOSE}query`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/url.ts${OSC8_CLOSE}file:///tmp/child/url.ts:15:6`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}https://example.com/page:42${OSC8_CLOSE}https://example.com/page:42`));
+});
+
 test("reopens OSC 8 links on every wrapped line", () => {
   const output = "https://example.com/a-long-path-that-must-be-clickable-after-scrolling";
   const lines = renderOutputContent(output, "/tmp/child", 12);

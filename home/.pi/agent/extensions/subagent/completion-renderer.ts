@@ -26,11 +26,20 @@ interface CompletionDetails {
   semanticName?: string;
   role?: string;
   state?: string;
+  result?: string;
+  error?: string;
 }
 
 function completionDetails(details: unknown): CompletionDetails | undefined {
   if (typeof details !== "object" || details === null || Array.isArray(details)) return undefined;
-  return details as CompletionDetails;
+  const value = details as Record<string, unknown>;
+  return {
+    semanticName: typeof value.semanticName === "string" ? value.semanticName : undefined,
+    role: typeof value.role === "string" ? value.role : undefined,
+    state: typeof value.state === "string" ? value.state : undefined,
+    result: typeof value.result === "string" ? value.result : undefined,
+    error: typeof value.error === "string" ? value.error : undefined,
+  };
 }
 
 export function completionOutput(content: string): string {
@@ -50,7 +59,8 @@ export function renderCompletionMessage(
   const role = details?.role ? ` [${details.role}]` : "";
   const failed = details?.state === "failed" || details?.state === "crashed";
   const content = typeof message.content === "string" ? message.content : "Subagent finished";
-  const output = completionOutput(content);
+  const output = details?.result ?? completionOutput(content);
+  const error = details?.error;
   const container = new Container();
 
   container.addChild(
@@ -62,7 +72,8 @@ export function renderCompletionMessage(
   );
   if (!options.expanded) {
     const lines = output ? output.split(/\r?\n/) : [];
-    const preview = lines.find((line) => line.trim())?.trim() || "(no output)";
+    const preview = lines.find((line) => line.trim())?.trim() ||
+      (error ? `Failure: ${error}` : "(no output)");
     const lineCount = lines.length || 1;
     const suffix = lineCount === 1 ? "" : ` · ${lineCount} lines`;
 
@@ -85,5 +96,11 @@ export function renderCompletionMessage(
       color: (text: string) => theme.fg("toolOutput", text),
     }),
   );
+  if (error) {
+    container.addChild(new Spacer(1));
+    container.addChild(
+      new Text(theme.fg("error", `Failure: ${error}`), options.outputPad, 0),
+    );
+  }
   return container;
 }

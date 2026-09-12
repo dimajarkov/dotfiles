@@ -48,7 +48,9 @@ Lineage identity includes conversation lineage, Herdr runtime session, workspace
 Matching labels in unrelated sessions do not merge their agents.
 
 Spawns run asynchronously and preserve user focus.
-If a split clears the focused pane's existing zoom, the extension restores it only while that pane still has actual user focus; it never restores zoom by pulling the user back from another pane or tab.
+Splitting a zoomed pane may clear its zoom.
+The extension does not restore zoom automatically because the current Herdr zoom operation can change focus and has no atomic non-focusing precondition.
+This prevents a concurrent pane or tab switch from being pulled back; restore zoom manually when wanted.
 Every child is created by splitting a pane in the master Pi agent's current Herdr tab.
 The master pane is used for root and unscoped children; later placement selects the largest currently live, ownership-verified child pane when one exists.
 Human panes and panes from other conversations are never placement candidates.
@@ -72,6 +74,7 @@ Click a row in fullscreen mode to open its complete initial delegation prompt in
 Click a completed agent's `[output]` button to read its saved final response, not a summary or terminal tail.
 The modal displays literal text, preserving Markdown source, and strips unsafe terminal controls.
 Output URLs and asset links are clickable; relative file links resolve against the child's working directory and use the system's default handler, such as the associated text editor.
+Trailing `:line` and `:line:column` references stay visible but are removed from the file target before opening.
 Fullscreen Pi opens links on click; regular terminals use their native hyperlink gesture.
 Only HTTP, HTTPS, and local file targets become links, and nothing opens until clicked.
 
@@ -87,6 +90,7 @@ Inspection is read-only and never resumes an agent, focuses its pane, or submits
 
 Completed children retain Pi session history while their owned terminal panes are cleaned up.
 Before acknowledging delivery, the extension saves the full completion in an outbox entry on the parent's active Pi session branch, then queues its model-visible follow-up.
+Exact final output and failure diagnostics remain separate fields so an empty failed response still shows its error.
 Lifecycle controls never wait for the parent model to consume that follow-up.
 Unconsumed outbox entries replay after restart or a cleared message queue; consumed completions are not replayed.
 `deliveredAt` means the completion was durably enqueued, not necessarily consumed by the parent model.
