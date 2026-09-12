@@ -12,7 +12,10 @@ async function within<T>(promise: Promise<T>): Promise<T> {
     return await Promise.race([
       promise,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error("Lifecycle control blocked on queued completion")), 1_000);
+        timer = setTimeout(
+          () => reject(new Error("Lifecycle control blocked on queued completion")),
+          1_000,
+        );
       }),
     ]);
   } finally {
@@ -20,47 +23,93 @@ async function within<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
-function scenario() {
+interface ScenarioOptions {
+  result?: string;
+  stopReason?: "stop" | "error";
+  errorMessage?: string;
+  monitor?: boolean;
+}
+
+function scenario(options: ScenarioOptions = {}) {
   const directory = mkdtempSync(join(tmpdir(), "subagent-lifecycle-"));
   const session = join(directory, "child.jsonl");
   const parentSession = join(directory, "parent.jsonl");
+  const result = options.result ?? "SAVED_SCOUT_FINDINGS";
+  const stopReason = options.stopReason ?? "stop";
   writeFileSync(parentSession, "");
-  writeFileSync(session, `${JSON.stringify({
-    type: "message", id: "result-1", parentId: null,
-    message: { role: "assistant", content: [{ type: "text", text: "SAVED_SCOUT_FINDINGS" }], stopReason: "stop" },
-  })}\n`);
+  writeFileSync(
+    session,
+    `${JSON.stringify({
+      type: "message",
+      id: "result-1",
+      parentId: null,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: result }],
+        stopReason,
+        ...(options.errorMessage === undefined ? {} : { errorMessage: options.errorMessage }),
+      },
+    })}\n`,
+  );
   mkdirSync(join(directory, "parent"));
-  writeFileSync(join(directory, "parent", "child-1.generation-1.complete"), JSON.stringify({
-    version: 1, childId: "child-1", generation: 1, stopReason: "stop", entryId: "result-1", sessionPath: session,
-  }));
+  writeFileSync(
+    join(directory, "parent", "child-1.generation-1.complete"),
+    JSON.stringify({
+      version: 1,
+      childId: "child-1",
+      generation: 1,
+      stopReason,
+      entryId: "result-1",
+      sessionPath: session,
+    }),
+  );
   const branch: unknown[] = [];
   const queued: unknown[] = [];
+  const events: string[] = [];
   const controller = new AbortController();
   let resolveQueued!: () => void;
-  const completionQueued = new Promise<void>((resolve) => { resolveQueued = resolve; });
+  const completionQueued = new Promise<void>((resolve) => {
+    resolveQueued = resolve;
+  });
   const delivery = new CompletionDelivery({
     getBranch: () => branch,
-    appendEntry: (customType, data) => { branch.push({ type: "custom", customType, data }); },
-    sendMessage: (message) => { queued.push(message); resolveQueued(); },
+    appendEntry: (customType, data) => {
+      branch.push({ type: "custom", customType, data });
+    },
+    sendMessage: (message) => {
+      queued.push(message);
+      resolveQueued();
+    },
     signal: controller.signal,
   });
   let generation = 0;
   const orchestrator = new SubagentOrchestrator({
     stateDirectory: directory,
-    environment: { HERDR_ENV: "1", HERDR_WORKSPACE_ID: "w1", HERDR_TAB_ID: "w1:t1", HERDR_PANE_ID: "w1:p1" },
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_TAB_ID: "w1:t1",
+      HERDR_PANE_ID: "w1:p1",
+    },
     id: () => "child-1",
     transport: {
       async run(args, signal): Promise<CommandExecution> {
         let result: unknown;
         if (args[0] === "pane" && args[1] === "current") {
-          result = { pane: {
-            pane_id: "w1:p1", tab_id: "w1:t1", workspace_id: "w1", agent: "pi",
-            agent_session: { kind: "path", value: parentSession },
-          } };
+          result = {
+            pane: {
+              pane_id: "w1:p1",
+              tab_id: "w1:t1",
+              workspace_id: "w1",
+              agent: "pi",
+              agent_session: { kind: "path", value: parentSession },
+            },
+          };
         } else if (args[0] === "pane" && args[1] === "layout") {
           result = {
             layout: {
-              tab_id: "w1:t1", workspace_id: "w1",
+              tab_id: "w1:t1",
+              workspace_id: "w1",
               panes: [
                 { pane_id: "w1:p1", rect: { width: 120, height: 60 } },
                 ...(generation > 0
@@ -73,35 +122,67 @@ function scenario() {
           generation += 1;
           result = { pane: { pane_id: `w1:p${generation + 1}`, tab_id: "w1:t1" } };
         } else if (args[0] === "pane") {
-          result = { pane: {
-            pane_id: `w1:p${generation + 1}`, tab_id: "w1:t1", workspace_id: "w1", agent: "pi",
-            agent_session: { kind: "path", value: session },
-          } };
+          result = {
+            pane: {
+              pane_id: `w1:p${generation + 1}`,
+              tab_id: "w1:t1",
+              workspace_id: "w1",
+              agent: "pi",
+              agent_session: { kind: "path", value: session },
+            },
+          };
         } else if (args[0] === "agent") {
+          if (args[1] === "prompt") events.push(`prompt:${generation}`);
           if (args[1] === "wait" && generation > 1) {
             return new Promise((_resolve, reject) => {
               if (signal?.aborted) reject(new Error("aborted"));
-              else signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+              else
+                signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+                  once: true,
+                });
             });
           }
-          result = { agent: {
-            name: "scout-scout-child1", pane_id: `w1:p${generation + 1}`, agent_status: "done",
-            agent_session: { kind: "path", value: session },
-          } };
+          result = {
+            agent: {
+              name: "scout-scout-child1",
+              pane_id: `w1:p${generation + 1}`,
+              agent_status: "done",
+              agent_session: { kind: "path", value: session },
+            },
+          };
         } else {
           throw new Error(`Unexpected Herdr command: ${args.join(" ")}`);
         }
         return { code: 0, stdout: JSON.stringify({ result }), stderr: "" };
       },
     },
-    onCompletion: async (child) => delivery.deliver(child),
+    monitor: options.monitor,
+    onCompletion: async (child) => {
+      events.push(`delivery:${child.generation}`);
+      return delivery.deliver(child);
+    },
   });
   return {
-    orchestrator, branch, queued, completionQueued, session,
-    spawn: () => orchestrator.spawn({
-      name: "scout", task: "Recon", cwd: directory, parentSessionId: "parent",
-      agent: { name: "scout", description: "Scout", tools: ["read"], skillPaths: [], spawnTargets: [] },
-    }),
+    orchestrator,
+    branch,
+    queued,
+    completionQueued,
+    session,
+    events,
+    spawn: () =>
+      orchestrator.spawn({
+        name: "scout",
+        task: "Recon",
+        cwd: directory,
+        parentSessionId: "parent",
+        agent: {
+          name: "scout",
+          description: "Scout",
+          tools: ["read"],
+          skillPaths: [],
+          spawnTargets: [],
+        },
+      }),
     async close() {
       controller.abort();
       await orchestrator.shutdown();
@@ -142,13 +223,95 @@ test("message can reactivate a completed child before the parent consumes its qu
   try {
     await s.spawn();
     await within(s.completionQueued);
-    const child = await within(s.orchestrator.message("parent", "parent", "scout", "Continue the investigation"));
+    const child = await within(
+      s.orchestrator.message("parent", "parent", "scout", "Continue the investigation"),
+    );
     assert.equal(child.state, "working");
     assert.equal(child.generation, 2);
     assert.equal(child.sessionPath, s.session);
     assert.equal(s.queued.length, 1);
     assert.match(readFileSync(s.session, "utf8"), /SAVED_SCOUT_FINDINGS/);
     assert.match(JSON.stringify(s.branch), /SAVED_SCOUT_FINDINGS/);
+  } finally {
+    await s.close();
+  }
+});
+
+for (const [label, result] of [
+  ["empty", ""],
+  ["whitespace", " \n\t"],
+] as const) {
+  test(`message reconciles a settled ${label} result before prompting a fresh generation`, async () => {
+    const s = scenario({ result, monitor: false });
+    try {
+      const spawned = await s.spawn();
+      assert.equal(spawned.state, "working");
+      assert.equal(spawned.generation, 1);
+
+      const child = await within(
+        s.orchestrator.message("parent", "parent", "scout", "Continue the investigation"),
+      );
+
+      assert.equal(child.state, "working");
+      assert.equal(child.generation, 2);
+      assert.equal(s.queued.length, 1);
+      const completion = s.queued[0] as {
+        details: { runId: string; result?: string; error?: string };
+      };
+      assert.equal(completion.details.runId, "child-1:1");
+      assert.equal(completion.details.result, result);
+      assert.equal(completion.details.error, undefined);
+      assert.deepEqual(
+        s.events.filter((event) => event.startsWith("delivery:")),
+        ["delivery:1"],
+      );
+      assert.ok(s.events.indexOf("delivery:1") < s.events.indexOf("prompt:2"));
+    } finally {
+      await s.close();
+    }
+  });
+}
+
+test("message delivers a settled error once before prompting a fresh generation", async () => {
+  const s = scenario({
+    result: "PARTIAL_RESULT",
+    stopReason: "error",
+    errorMessage: "CHILD_FAILURE",
+    monitor: false,
+  });
+  try {
+    await s.spawn();
+
+    const child = await within(
+      s.orchestrator.message("parent", "parent", "scout", "Try a different approach"),
+    );
+
+    assert.equal(child.state, "working");
+    assert.equal(child.generation, 2);
+    assert.equal(s.queued.length, 1);
+    const completion = s.queued[0] as {
+      details: { runId: string; state: string; result?: string; error?: string };
+    };
+    assert.deepEqual(completion.details, {
+      completionDataVersion: 1,
+      childId: "child-1",
+      runId: "child-1:1",
+      semanticName: "scout",
+      role: "scout",
+      state: "failed",
+      workScope: undefined,
+      model: undefined,
+      thinking: undefined,
+      paneId: "w1:p2",
+      sessionPath: s.session,
+      result: "PARTIAL_RESULT",
+      error: "CHILD_FAILURE",
+    });
+    assert.deepEqual(
+      s.events.filter((event) => event.startsWith("delivery:")),
+      ["delivery:1"],
+    );
+    assert.ok(s.events.indexOf("delivery:1") < s.events.indexOf("prompt:2"));
   } finally {
     await s.close();
   }
