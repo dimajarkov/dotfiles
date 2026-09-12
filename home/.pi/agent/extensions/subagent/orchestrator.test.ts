@@ -2865,7 +2865,11 @@ test("successful detached root completion closes only its recorded pane after du
       parentId: null,
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "\n  DELIVERED_RESULT  \n" }],
+        content: [
+          { type: "text", text: "\n  DELIVERED" },
+          { type: "text", text: "_RESULT" },
+          { type: "text", text: "  \n" },
+        ],
         stopReason: "stop",
       },
     })}\n`,
@@ -3979,6 +3983,96 @@ test("failed surface close stays cleanup-pending and recovery retries it", async
   await recovered.recover("parent-session", "parent-session");
   assert.deepEqual(recoveryTransport.calls, [["pane", "close", "w1:p9"]]);
   assert.equal(recovered.list("parent-session")[0]?.surfaceState, "closed");
+});
+
+test("follow-up cleans a pending terminal surface and relaunches a fresh generation", async () => {
+  const directory = temporaryDirectory();
+  const childSession = join(directory, "pending-follow-up.jsonl");
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({
+      type: "message",
+      id: "assistant-1",
+      parentId: null,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "FIRST_RESULT" }],
+        stopReason: "stop",
+      },
+    })}\n`,
+  );
+  const spawnResponses = successfulRootSpawnResponses();
+  const started = spawnResponses[2] as {
+    result: { agent: { agent_session: { value: string } } };
+  };
+  started.result.agent.agent_session.value = childSession;
+  const environment = {
+    HERDR_ENV: "1",
+    HERDR_WORKSPACE_ID: "w1",
+    HERDR_PANE_ID: "w1:p1",
+  };
+  const initial = new SubagentOrchestrator({
+    transport: new FakeHerdrTransport(spawnResponses),
+    stateDirectory: directory,
+    environment,
+    id: () => "child-1",
+    monitor: false,
+  });
+  await initial.spawn(spawnRequest());
+  const pending = {
+    ...initial.list("parent-session")[0]!,
+    state: "completed",
+    surfaceState: "cleanup-pending",
+    result: "FIRST_RESULT",
+    deliveredAt: 1,
+  };
+  writeFileSync(
+    join(directory, "parent-session", "child-1.json"),
+    `${JSON.stringify(pending, null, 2)}\n`,
+  );
+
+  const transport = new FakeHerdrTransport([
+    { id: "cli:pane:close", result: { type: "ok" } },
+    { id: "cli:pane:split", result: { pane: { pane_id: "w1:p10", tab_id: "w1:t1" } } },
+    { id: "cli:pane:rename", result: { pane: { pane_id: "w1:p10" } } },
+    {
+      id: "cli:agent:start",
+      result: {
+        agent: {
+          pane_id: "w1:p10",
+          agent_status: "idle",
+          agent_session: { kind: "path", value: childSession },
+        },
+      },
+    },
+    { id: "cli:agent:prompt", result: { agent: { agent_status: "working" } } },
+  ]);
+  const relaunched = new SubagentOrchestrator({
+    transport,
+    stateDirectory: directory,
+    environment,
+    monitor: false,
+  });
+
+  const child = await relaunched.message(
+    "parent-session",
+    "parent-session",
+    "authentication",
+    "FOLLOW_UP",
+  );
+
+  assert.equal(child.generation, 2);
+  assert.equal(child.state, "working");
+  assert.equal(child.surfaceState, "open");
+  assert.equal(child.paneId, "w1:p10");
+  assert.deepEqual(transport.calls.map((call) => call.slice(0, 2)), [
+    ["pane", "close"],
+    ["pane", "split"],
+    ["pane", "rename"],
+    ["agent", "start"],
+    ["agent", "prompt"],
+  ]);
+  assert.ok(transport.calls[1]?.includes("HERDR_SUBAGENT_GENERATION=2"));
 });
 
 test("error completion is delivered as failed and its recorded pane is cleaned", async () => {

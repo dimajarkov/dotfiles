@@ -6,6 +6,7 @@ import {
   type Component,
   type MarkdownTheme,
 } from "@earendil-works/pi-tui";
+import { sanitizeMarkdownOutput, sanitizeOutput } from "./output-content.ts";
 
 export interface CompletionRenderMessage {
   content: unknown;
@@ -23,6 +24,7 @@ export interface CompletionRenderTheme {
 }
 
 interface CompletionDetails {
+  structured: boolean;
   semanticName?: string;
   role?: string;
   state?: string;
@@ -34,6 +36,10 @@ function completionDetails(details: unknown): CompletionDetails | undefined {
   if (typeof details !== "object" || details === null || Array.isArray(details)) return undefined;
   const value = details as Record<string, unknown>;
   return {
+    structured:
+      value.completionDataVersion === 1 ||
+      typeof value.result === "string" ||
+      typeof value.error === "string",
     semanticName: typeof value.semanticName === "string" ? value.semanticName : undefined,
     role: typeof value.role === "string" ? value.role : undefined,
     state: typeof value.state === "string" ? value.state : undefined,
@@ -59,8 +65,9 @@ export function renderCompletionMessage(
   const role = details?.role ? ` [${details.role}]` : "";
   const failed = details?.state === "failed" || details?.state === "crashed";
   const content = typeof message.content === "string" ? message.content : "Subagent finished";
-  const output = details?.result ?? completionOutput(content);
-  const error = details?.error;
+  const output = details?.structured ? details.result : completionOutput(content);
+  const error = details?.error === undefined ? undefined : sanitizeOutput(details.error);
+  const safeOutput = sanitizeOutput(output ?? "");
   const container = new Container();
 
   container.addChild(
@@ -71,9 +78,9 @@ export function renderCompletionMessage(
     ),
   );
   if (!options.expanded) {
-    const lines = output ? output.split(/\r?\n/) : [];
-    const preview = lines.find((line) => line.trim())?.trim() ||
-      (error ? `Failure: ${error}` : "(no output)");
+    const lines = safeOutput ? safeOutput.split(/\r?\n/) : [];
+    const preview =
+      lines.find((line) => line.trim())?.trim() || (error ? `Failure: ${error}` : "(no output)");
     const lineCount = lines.length || 1;
     const suffix = lineCount === 1 ? "" : ` · ${lineCount} lines`;
 
@@ -92,15 +99,19 @@ export function renderCompletionMessage(
 
   container.addChild(new Spacer(1));
   container.addChild(
-    new Markdown(output || "(no output)", options.outputPad, 0, markdownTheme, {
-      color: (text: string) => theme.fg("toolOutput", text),
-    }),
+    new Markdown(
+      sanitizeMarkdownOutput(output ?? "") || "(no output)",
+      options.outputPad,
+      0,
+      markdownTheme,
+      {
+        color: (text: string) => theme.fg("toolOutput", text),
+      },
+    ),
   );
   if (error) {
     container.addChild(new Spacer(1));
-    container.addChild(
-      new Text(theme.fg("error", `Failure: ${error}`), options.outputPad, 0),
-    );
+    container.addChild(new Text(theme.fg("error", `Failure: ${error}`), options.outputPad, 0));
   }
   return container;
 }

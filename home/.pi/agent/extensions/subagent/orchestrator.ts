@@ -405,7 +405,7 @@ function finalAssistantResult(sessionPath: string): {
       const text = content
         .filter((part): part is JsonObject => isObject(part) && part.type === "text")
         .map((part) => (typeof part.text === "string" ? part.text : ""))
-        .join("\n");
+        .join("");
       return {
         entryId: stringAt(leaf, "id"),
         text,
@@ -633,6 +633,15 @@ export class SubagentOrchestrator {
     this.#assertCurrentHerdrSession(child);
     await this.#stopMonitor(child.id);
     child = this.#findChild(rootId, ownerId, target);
+    if (CLEANUP_TERMINAL_STATES.has(child.state) && !isRetiredSurface(child)) {
+      await this.#cleanupSurface(child);
+      child = this.#findChild(rootId, ownerId, target);
+      if (!isRetiredSurface(child)) {
+        throw new Error(
+          `Cannot reactivate ${child.semanticName}: previous pane cleanup remains pending`,
+        );
+      }
+    }
     if (isRetiredSurface(child)) {
       return this.#relaunchClosedChild(child, message, signal);
     }

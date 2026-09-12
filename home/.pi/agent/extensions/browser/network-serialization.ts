@@ -33,10 +33,11 @@ function isSensitiveHeader(name: string): boolean {
   return (
     SENSITIVE_HEADER_NAMES.has(normalized) ||
     SENSITIVE_COMPACT_NAMES.has(compact) ||
-    /(?:api(?:cation)?key|credentials?|password|secret|token)$/u.test(compact) ||
+    /(?:api(?:cation)?key|credentials?|password|secret|token|signature\d*)$/u.test(compact) ||
     /(?:^|[-_])(?:access[-_]?token|api[-_]?key|credential|password|secret|token)(?:$|[-_])/i.test(
       normalized,
-    )
+    ) ||
+    /(?:^|[-_])(?:hmac|signature)(?:$|[-_]|\d)/i.test(normalized)
   );
 }
 

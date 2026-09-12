@@ -37,7 +37,7 @@ test("private, credential-bearing, and signed URLs never reach Jina", async () =
   assert.equal(resolverCalls, 0);
 });
 
-test("third-party fallback defaults off for path-secret URLs", async () => {
+test("path-secret URLs remain ineligible with explicit third-party authorization", async () => {
   let fallbackCalls = 0;
   let resolverCalls = 0;
   const result = await runEligibleJinaFallback(
@@ -47,6 +47,7 @@ test("third-party fallback defaults off for path-secret URLs", async () => {
       return "unexpected";
     },
     {
+      allowThirdPartyFallback: true,
       resolve: async () => {
         resolverCalls += 1;
         return [{ address: "13.107.42.14", family: 4 }];
@@ -61,13 +62,13 @@ test("third-party fallback defaults off for path-secret URLs", async () => {
 
 test("DNS-private and mixed-resolution hosts fail closed", async () => {
   assert.equal(
-    await eligibleJinaFallbackUrl("https://service.example.com/article", async () => [
+    await eligibleJinaFallbackUrl("https://docs.github.com/en/get-started", async () => [
       { address: "10.0.0.8", family: 4 },
     ]),
     undefined,
   );
   assert.equal(
-    await eligibleJinaFallbackUrl("https://service.example.com/article", async () => [
+    await eligibleJinaFallbackUrl("https://docs.github.com/en/get-started", async () => [
       { address: "93.184.216.34", family: 4 },
       { address: "fd00::8", family: 6 },
     ]),
@@ -78,7 +79,7 @@ test("DNS-private and mixed-resolution hosts fail closed", async () => {
 test("clean public URLs may use the fallback", async () => {
   const calls = [];
   const result = await runEligibleJinaFallback(
-    "https://example.com/article",
+    "https://docs.github.com/en/get-started",
     async (url) => {
       calls.push(url);
       return "reader output";
@@ -93,5 +94,17 @@ test("clean public URLs may use the fallback", async () => {
   );
 
   assert.equal(result, "reader output");
-  assert.deepEqual(calls, ["https://example.com/article"]);
+  assert.deepEqual(calls, ["https://docs.github.com/en/get-started"]);
+});
+
+test("unlisted public hosts remain ineligible", async () => {
+  let resolverCalls = 0;
+  assert.equal(
+    await eligibleJinaFallbackUrl("https://example.com/article", async () => {
+      resolverCalls += 1;
+      return [{ address: "93.184.216.34", family: 4 }];
+    }),
+    undefined,
+  );
+  assert.equal(resolverCalls, 0);
 });

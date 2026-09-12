@@ -24,6 +24,14 @@ const LOCAL_HOST_SUFFIXES = [
 	".test",
 ];
 
+const PUBLIC_CONTENT_PATHS = new Map<string, readonly RegExp[]>([
+	["developer.mozilla.org", [/^\/[A-Za-z]{2}(?:-[A-Za-z]{2})?\/docs(?:\/|$)/u]],
+	["docs.github.com", [/^\//u]],
+	["en.wikipedia.org", [/^\/wiki\//u]],
+	["www.rfc-editor.org", [/^\/rfc\//u]],
+	["datatracker.ietf.org", [/^\/doc\//u]],
+]);
+
 const resolveAddresses: ResolveAddresses = (hostname) =>
 	lookup(hostname, { all: true, verbatim: true });
 
@@ -101,6 +109,8 @@ export async function eligibleJinaFallbackUrl(
 	) {
 		return undefined;
 	}
+	const allowedPaths = PUBLIC_CONTENT_PATHS.get(hostname);
+	if (!allowedPaths?.some((pattern) => pattern.test(url.pathname))) return undefined;
 
 	let addresses: readonly ResolvedAddress[];
 	try {

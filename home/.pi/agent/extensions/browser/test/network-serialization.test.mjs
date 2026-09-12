@@ -103,3 +103,31 @@ test("transport-normalized compact credential names remain redacted", () => {
   assert.match(result.entries[0].url, /refreshtoken=%5BREDACTED%5D/);
   assert.doesNotMatch(JSON.stringify(result), /compact-/);
 });
+
+test("signature authentication headers are redacted in structured and rendered output", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "POST",
+        url: "https://example.test/webhook",
+        resourceType: "fetch",
+        requestHeaders: {
+          "stripe-signature": "stripe-proof-secret",
+          "x-hub-signature-256": "hub-proof-secret",
+          signature256: "compact-proof-secret",
+        },
+      },
+    ],
+    true,
+    new Set(["stripe-signature", "x-hub-signature-256", "signature256"]),
+  );
+
+  assert.match(result.text, /stripe-signature: \[REDACTED\]/);
+  assert.match(result.text, /x-hub-signature-256: \[REDACTED\]/);
+  assert.match(result.text, /signature256: \[REDACTED\]/);
+  assert.equal(result.entries[0].requestHeaders["stripe-signature"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["x-hub-signature-256"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.signature256, "[REDACTED]");
+  assert.doesNotMatch(JSON.stringify(result), /proof-secret/);
+});

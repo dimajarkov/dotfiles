@@ -88,6 +88,7 @@ test("renders failed empty output and its error as separate fields", () => {
   const message = {
     content: "Subagent scout failed.\n\n\n\nFailure: provider exploded",
     details: {
+      completionDataVersion: 1,
       semanticName: "scout",
       role: "researcher",
       state: "failed",
@@ -100,16 +101,87 @@ test("renders failed empty output and its error as separate fields", () => {
     { expanded: false, outputPad: 1 },
     theme,
     markdownTheme,
-  ).render(60).map(stripTerminalSequences).join("\n");
+  )
+    .render(60)
+    .map(stripTerminalSequences)
+    .join("\n");
   const expanded = renderCompletionMessage(
     message,
     { expanded: true, outputPad: 1 },
     theme,
     markdownTheme,
-  ).render(60).map(stripTerminalSequences).join("\n");
+  )
+    .render(60)
+    .map(stripTerminalSequences)
+    .join("\n");
 
   assert.match(collapsed, /✗ scout \[researcher\]/);
   assert.match(collapsed, /Failure: provider exploded/);
   assert.match(expanded, /\(no output\)/);
   assert.match(expanded, /Failure: provider exploded/);
+});
+
+test("structured missing output renders its failure once without legacy content fallback", () => {
+  const message = {
+    content: "Subagent scout crashed.\n\n(no output)\n\nFailure: provider exploded",
+    details: {
+      completionDataVersion: 1,
+      semanticName: "scout",
+      role: "researcher",
+      state: "crashed",
+      error: "provider exploded",
+    },
+  };
+  const collapsed = renderCompletionMessage(
+    message,
+    { expanded: false, outputPad: 1 },
+    theme,
+    markdownTheme,
+  )
+    .render(60)
+    .map(stripTerminalSequences)
+    .join("\n");
+  const expanded = renderCompletionMessage(
+    message,
+    { expanded: true, outputPad: 1 },
+    theme,
+    markdownTheme,
+  )
+    .render(60)
+    .map(stripTerminalSequences)
+    .join("\n");
+
+  assert.equal((collapsed.match(/Failure: provider exploded/gu) ?? []).length, 1);
+  assert.doesNotMatch(collapsed, /Subagent scout crashed/);
+  assert.match(expanded, /\(no output\)/);
+  assert.equal((expanded.match(/Failure: provider exploded/gu) ?? []).length, 1);
+});
+
+test("completion rendering removes terminal controls and neutralizes unsafe links", () => {
+  const result =
+    "before\x1b]52;c;terminal-secret\x07after [run](command:rm -rf /) <javascript:alert(1)> [docs](https://example.com)";
+  const message = {
+    content: "Subagent scout completed.",
+    details: {
+      completionDataVersion: 1,
+      semanticName: "scout",
+      role: "researcher",
+      state: "completed",
+      result,
+    },
+  };
+
+  for (const expanded of [false, true]) {
+    const rendered = renderCompletionMessage(
+      message,
+      { expanded, outputPad: 1 },
+      theme,
+      markdownTheme,
+    )
+      .render(160)
+      .join("\n");
+    assert.doesNotMatch(rendered, /terminal-secret|\x1b\]52;/u);
+    assert.doesNotMatch(rendered, /\x1b\]8;;(?:command|javascript):/u);
+  }
+  assert.equal(message.details.result, result);
 });

@@ -11,11 +11,12 @@ import {
 
 const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "file:"]);
 const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
-const LOCAL_FILE_EXTENSION =
-  /\.[A-Za-z0-9][A-Za-z0-9_-]{0,15}(?::\d+(?::\d+)?)?(?:[#?].*)?$/u;
+const LOCAL_FILE_EXTENSION = /\.[A-Za-z0-9][A-Za-z0-9_-]{0,15}(?::\d+(?::\d+)?)?(?:[#?].*)?$/u;
 const MARKDOWN_LINK_START = /\[([^\]\n]+)\]\(/gu;
 const INLINE_CODE = /`([^`\n]+)`/gu;
 const BARE_URL = /(?<![A-Za-z0-9+./:-])(?:https?|file):\/\/[^\s<>"'`]+/giu;
+const BARE_LOCAL_LINE_REFERENCE =
+  /(?<![A-Za-z0-9_@./\\-])[A-Za-z0-9_@.-]+\.[A-Za-z0-9][A-Za-z0-9_-]{0,15}:\d+(?::\d+)?(?![A-Za-z0-9_])/gu;
 const PATH =
   /(^|[\s("'`])((?:\/[^\s<>"'`]+|~[\\/][^\s<>"'`]+|\.{1,2}[\\/][^\s<>"'`]+|[A-Za-z]:[\\/][^\s<>"'`]+|\\\\[^\s<>"'`]+|[A-Za-z0-9_@.-]+[\\/][^\s<>"'`]+))/gu;
 const QUOTED_PATH = /(["'])((?:\/|~[\\/]|\.{1,2}[\\/]|[A-Za-z]:[\\/]|\\\\)[^"'`\n]+)\1/gu;
@@ -48,7 +49,7 @@ export function renderOutputContent(text: string, cwd: string, width: number): s
   });
 }
 
-function sanitizeOutput(text: string): string {
+export function sanitizeOutput(text: string): string {
   // Pi's helper removes CSI, OSC (including OSC 52), and APC sequences. Remove
   // any remaining C0/C1 controls as well so malformed escapes cannot reach the
   // generated OSC 8 links or the terminal.
@@ -69,6 +70,57 @@ function sanitizeOutput(text: string): string {
     if (!isControl && !isBidiFormat) result += character;
   }
   return result;
+}
+
+export function sanitizeMarkdownOutput(text: string): string {
+  return neutralizeUnsafeAutolinks(neutralizeUnsafeMarkdownLinks(sanitizeOutput(text)));
+}
+
+function neutralizeUnsafeMarkdownLinks(text: string): string {
+  MARKDOWN_LINK_START.lastIndex = 0;
+  let result = "";
+  let position = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MARKDOWN_LINK_START.exec(text)) !== null) {
+    const openingEnd = match.index + match[0].length;
+    let depth = 1;
+    let end = openingEnd;
+    for (; end < text.length; end++) {
+      const character = text[end];
+      if (character === "(") depth++;
+      if (character === ")" && --depth === 0) break;
+    }
+    if (depth !== 0) continue;
+    const target = markdownTarget(text.slice(openingEnd, end));
+    if (!safeExplicitUrl(target)) {
+      result += `${text.slice(position, match.index)}\\${text.slice(match.index, end + 1)}`;
+      position = end + 1;
+    }
+    MARKDOWN_LINK_START.lastIndex = end + 1;
+  }
+  return result + text.slice(position);
+}
+
+function neutralizeUnsafeAutolinks(text: string): string {
+  return text.replace(/<([A-Za-z][A-Za-z0-9+.-]*:[^<>\n]+)>/gu, (match, target: string) =>
+    safeExplicitUrl(target) ? match : `\\${match}`,
+  );
+}
+
+function safeExplicitUrl(target: string): boolean {
+  try {
+    const url = new URL(target);
+    const protocol = url.protocol.toLowerCase();
+    return (
+      SAFE_URL_PROTOCOLS.has(protocol) &&
+      (protocol !== "file:" ||
+        ((url.hostname === "" || url.hostname.toLowerCase() === "localhost") &&
+          url.username === "" &&
+          url.password === ""))
+    );
+  } catch {
+    return false;
+  }
 }
 
 function linkifyLine(line: string, cwd: string): string {
@@ -106,6 +158,9 @@ function collectCandidates(line: string, cwd: string): LinkCandidate[] {
   collectInlineCodeCandidates(line, cwd, candidates);
   collectQuotedPathCandidates(line, cwd, candidates);
   collectRegexCandidates(line, BARE_URL, 2, candidates, (value) => hrefForTarget(value, cwd));
+  collectRegexCandidates(line, BARE_LOCAL_LINE_REFERENCE, 2, candidates, (value) =>
+    hrefForTarget(value, cwd),
+  );
   collectPathCandidates(line, cwd, candidates);
   return candidates;
 }
@@ -239,7 +294,22 @@ function hrefForTarget(rawTarget: string, cwd: string, markdownPath = false): st
   const target = rawTarget.trim();
   if (!target || target.startsWith("#")) return undefined;
 
+  if (/^[A-Za-z]:[\\/]/u.test(target)) {
+    return localFileHref(
+      markdownPath ? decodeMarkdownPath(target) : stripLineReference(target),
+      cwd,
+    );
+  }
+
   if (URL_SCHEME.test(target)) {
+    const referencedPath = stripLineReference(target);
+    if (
+      referencedPath !== target &&
+      !URL_SCHEME.test(referencedPath) &&
+      looksLikeLocalPath(referencedPath)
+    ) {
+      return localFileHref(markdownPath ? decodeMarkdownPath(target) : referencedPath, cwd);
+    }
     try {
       const url = new URL(target);
       const protocol = url.protocol.toLowerCase();

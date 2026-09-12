@@ -21,6 +21,7 @@ interface CompletionMessage {
   content: string;
   display: boolean;
   details: {
+    completionDataVersion: 1;
     childId: string;
     runId: string;
     semanticName: string;
@@ -61,7 +62,8 @@ function isCompletionMessage(value: unknown): value is CompletionMessage {
   if (!isObject(value) || value.customType !== COMPLETION_TYPE ||
     typeof value.content !== "string" || typeof value.display !== "boolean" || !isObject(value.details)) return false;
   const details = value.details;
-  return ["childId", "runId", "semanticName", "role", "state"].every((key) => typeof details[key] === "string") &&
+  return (details.completionDataVersion === undefined || details.completionDataVersion === 1) &&
+    ["childId", "runId", "semanticName", "role", "state"].every((key) => typeof details[key] === "string") &&
     ["workScope", "model", "thinking", "paneId", "sessionPath", "result", "error"].every((key) =>
       details[key] === undefined || typeof details[key] === "string");
 }
@@ -107,6 +109,7 @@ export class CompletionDelivery {
         content: `Subagent ${child.semanticName} ${child.state}.\n\n${output}${failure}`,
         display: true,
         details: {
+          completionDataVersion: 1,
           childId: child.id, runId, semanticName: child.semanticName, role: child.role, state: child.state,
           workScope: child.workScope, model: child.model, thinking: child.thinking,
           paneId: child.paneId, sessionPath: child.sessionPath, result: child.result, error: child.error,

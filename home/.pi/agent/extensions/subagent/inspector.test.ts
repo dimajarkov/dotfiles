@@ -68,10 +68,77 @@ test("inspector navigates tree, switches exact prompt/output, closes without lif
   } as unknown as ExtensionContext;
   await inspector.show(ctx, rows);
   assert.match(screens[0]!, /select to inspect/);
+  assert.match(screens[0]!, /Enter prompt · p prompt · o output/);
   assert.match(screens[1]!, /child original task/);
   assert.match(screens[2]!, /child exact conclusion/);
   assert.match(screens[3]!, /child original task/);
   assert.equal(input.length, 0);
+});
+
+test("picker Enter preserves requested mode while p and o select explicit modes", async (t) => {
+  for (const scenario of [
+    {
+      name: "output Enter",
+      requested: "output",
+      key: "\r",
+      expected: /parent exact conclusion/,
+      hint: /Enter output/,
+    },
+    {
+      name: "prompt key",
+      requested: "output",
+      key: "p",
+      expected: /parent original task/,
+      hint: /Enter output/,
+    },
+    {
+      name: "output key",
+      requested: "prompt",
+      key: "o",
+      expected: /parent exact conclusion/,
+      hint: /Enter prompt/,
+    },
+  ] as const) {
+    await t.test(scenario.name, async () => {
+      const inspector = new SubagentInspector();
+      const screens: string[] = [];
+      const input = [scenario.key, "\x1b"];
+      const ctx = {
+        mode: "tui",
+        ui: {
+          notify: () => assert.fail("Unexpected notification"),
+          custom: async (
+            factory: (
+              tui: unknown,
+              theme: unknown,
+              keys: unknown,
+              done: (value: unknown) => void,
+            ) => Component,
+          ) =>
+            new Promise((resolve) => {
+              let settled = false;
+              const view = factory(
+                { terminal: { rows: 32 }, requestRender() {} },
+                theme,
+                {},
+                (value) => {
+                  settled = true;
+                  resolve(value);
+                },
+              );
+              screens.push(view.render(100).join("\n"));
+              view.handleInput?.(input.shift()!);
+              assert.ok(settled, "UI must settle through user input");
+            }),
+        },
+      } as unknown as ExtensionContext;
+
+      await inspector.show(ctx, rows, scenario.requested);
+      assert.match(screens[0]!, scenario.hint);
+      assert.match(screens[1]!, scenario.expected);
+      assert.equal(input.length, 0);
+    });
+  }
 });
 
 test("dispose closes pending inspection and duplicate names remain selectable", async () => {
@@ -127,12 +194,7 @@ test("failed empty output preserves the result and displays failure details", as
         ) => Component,
       ) =>
         new Promise((resolve) => {
-          const view = factory(
-            { terminal: { rows: 32 }, requestRender() {} },
-            theme,
-            {},
-            resolve,
-          );
+          const view = factory({ terminal: { rows: 32 }, requestRender() {} }, theme, {}, resolve);
           screen = view.render(100).join("\n");
           view.handleInput?.("\x1b");
         }),

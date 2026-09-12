@@ -11,7 +11,7 @@ function parent(branch: unknown[] = []) {
   const queued: Array<{
     customType: string;
     content: string;
-    details: { runId: string; result?: string; error?: string };
+    details: { completionDataVersion: 1; runId: string; result?: string; error?: string };
   }> = [];
   const controller = new AbortController();
   const options = {
@@ -131,6 +131,7 @@ test("failed empty output carries result and error separately", () => {
 
   assert.equal(p.queued[0].details.result, "");
   assert.equal(p.queued[0].details.error, "provider exploded");
+  assert.equal(p.queued[0].details.completionDataVersion, 1);
   assert.match(p.queued[0].content, /Failure: provider exploded/);
   const restarted = parent(JSON.parse(JSON.stringify(p.branch)));
   restarted.delivery.replay();

@@ -175,7 +175,11 @@ export class SubagentInspector {
             );
             container.addChild(list);
             container.addChild(
-              new Text(theme.fg("dim", "↑↓ choose · Enter prompt · o output · Esc close"), 0, 0),
+              new Text(
+                theme.fg("dim", `↑↓ choose · Enter ${mode} · p prompt · o output · Esc close`),
+                0,
+                0,
+              ),
             );
             return container.render(width);
           },
@@ -183,6 +187,8 @@ export class SubagentInspector {
           handleMouse: (event) => container.handleMouse(event),
           handleInput: (data) => {
             if (matchesKey(data, "escape")) done(undefined);
+            else if (data === "p" && list?.getSelectedItem())
+              done({ id: list.getSelectedItem()!.value, mode: "prompt" });
             else if (data === "o" && list?.getSelectedItem())
               done({ id: list.getSelectedItem()!.value, mode: "output" });
             else list?.handleInput(data);
