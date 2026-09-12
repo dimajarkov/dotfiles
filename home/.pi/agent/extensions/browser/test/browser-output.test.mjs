@@ -35,13 +35,23 @@ test("passive browser URL outputs redact credentials", async () => {
   const tools = new Map();
   const commands = new Map();
   const pageHandlers = new Map();
-  const finalUrl =
+  let currentUrl =
     "https://app.test/callback?access_token=goto-secret#refresh_token=fragment-secret";
+  let navigationError;
   const page = {
     isClosed: () => false,
     on: (event, handler) => pageHandlers.set(event, handler),
-    goto: async () => ({ status: () => 302 }),
-    url: () => finalUrl,
+    click: async () => {
+      throw Object.assign(
+        new Error("click failed at https://app.test/button?code=click-secret"),
+        { cause: new Error("cause https://app.test/?token=cause-secret") },
+      );
+    },
+    goto: async () => {
+      if (navigationError) throw navigationError;
+      return { status: () => 302 };
+    },
+    url: () => currentUrl,
   };
   const context = {
     pages: () => [page],
@@ -93,4 +103,33 @@ test("passive browser URL outputs redact credentials", async () => {
     "browser tools: disabled (run /browser on), open at https://app.test/callback?access_token=%5BREDACTED%5D#refresh_token=%5BREDACTED%5D",
   );
   assert.doesNotMatch(notifications[0], /(?:goto|fragment)-secret/);
+
+  currentUrl = "https://dead.invalid/callback?access_token=redirect-secret";
+  navigationError = Object.assign(
+    new Error(
+      "page.goto: net::ERR_NAME_NOT_RESOLVED at https://dead.invalid/callback?access_token=error-secret",
+    ),
+    { cause: new Error("redirect cause https://dead.invalid/?code=cause-secret") },
+  );
+  const failureResult = await tools.get("browser_goto").execute("call", {
+    url: "https://app.test/start",
+  });
+  assert.equal(failureResult.isError, true);
+  assert.equal(
+    failureResult.details.finalUrl,
+    "https://dead.invalid/callback?access_token=%5BREDACTED%5D",
+  );
+  assert.match(failureResult.details.error, /access_token=%5BREDACTED%5D/);
+  assert.doesNotMatch(JSON.stringify(failureResult), /(?:redirect|error|cause)-secret/);
+  assert.equal("cause" in failureResult.details, false);
+
+  await assert.rejects(
+    tools.get("browser_click").execute("call", { selector: "button" }),
+    (error) => {
+      assert.match(error.message, /code=%5BREDACTED%5D/);
+      assert.doesNotMatch(error.stack, /(?:click|cause)-secret/);
+      assert.equal(error.cause, undefined);
+      return true;
+    },
+  );
 });

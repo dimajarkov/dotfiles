@@ -3,11 +3,10 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  renameSync,
-  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { atomicWriteText } from "./atomic-file.ts";
 import { withRegistryLock } from "./registry-lock.ts";
 
 export interface CommandExecution {
@@ -1012,13 +1011,7 @@ export class SubagentOrchestrator {
 
   #saveMaster(master: MasterIdentity): void {
     const path = this.#masterPath(master.rootId);
-    const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    mkdirSync(this.#registryPath(master.rootId), { recursive: true, mode: 0o700 });
-    writeFileSync(temporaryPath, `${JSON.stringify(master, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    renameSync(temporaryPath, path);
+    atomicWriteText(path, `${JSON.stringify(master, null, 2)}\n`);
   }
 
   #masterFromPane(
@@ -1603,12 +1596,7 @@ export class SubagentOrchestrator {
       );
     }
     const next = { ...child, revision: currentRevision + 1 };
-    const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    renameSync(temporaryPath, path);
+    atomicWriteText(path, `${JSON.stringify(next, null, 2)}\n`);
     child.revision = next.revision;
   }
 

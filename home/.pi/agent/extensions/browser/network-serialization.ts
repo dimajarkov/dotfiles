@@ -118,6 +118,12 @@ function redactAuthorityCredentials(value: string): string {
   return `${value.slice(0, authorityStart)}${replacement}@${authority.slice(at + 1)}${value.slice(authorityEnd)}`;
 }
 
+function redactMatchedUrl(value: string): string {
+  const suffix = /[),.;:!?\]}]+$/u.exec(value)?.[0] ?? "";
+  const url = suffix ? value.slice(0, -suffix.length) : value;
+  return `${redactBrowserUrl(url)}${suffix}`;
+}
+
 export function redactBrowserUrl(value: string): string {
   const fragmentStart = value.indexOf("#");
   const beforeFragment = fragmentStart === -1 ? value : value.slice(0, fragmentStart);
@@ -130,12 +136,55 @@ export function redactBrowserUrl(value: string): string {
   return redactAuthorityCredentials(redacted);
 }
 
+export function redactBrowserDiagnostic(value: string): string {
+  return value.replace(
+    /(?:\b[a-z][a-z\d+.-]*:(?:\/\/)?|\/\/)[^\s<>"'`]+/giu,
+    redactMatchedUrl,
+  );
+}
+
+function redactLinkHeader(value: string): string {
+  const targets = value.replace(
+    /<([^>]*)>/gu,
+    (_match, url: string) => `<${redactBrowserUrl(url)}>`,
+  );
+  return redactBrowserDiagnostic(targets);
+}
+
+function redactRefreshHeader(value: string): string {
+  const match = /\burl\s*=\s*/iu.exec(value);
+  if (!match) return value;
+  const start = match.index + match[0].length;
+  const quote = value[start] === '"' || value[start] === "'" ? value[start] : undefined;
+  if (!quote) {
+    const trailingWhitespace = /\s*$/u.exec(value.slice(start))?.[0] ?? "";
+    const end = value.length - trailingWhitespace.length;
+    return `${value.slice(0, start)}${redactBrowserUrl(value.slice(start, end))}${value.slice(end)}`;
+  }
+
+  let end = start + 1;
+  while (end < value.length) {
+    if (value[end] === quote) {
+      let backslashes = 0;
+      for (let cursor = end - 1; cursor >= start && value[cursor] === "\\"; cursor -= 1) {
+        backslashes += 1;
+      }
+      if (backslashes % 2 === 0) break;
+    }
+    end += 1;
+  }
+  return `${value.slice(0, start + 1)}${redactBrowserUrl(value.slice(start + 1, end))}${value.slice(end)}`;
+}
+
 function redactHeaderValue(name: string, value: string): string {
   if (isSensitiveName(name)) return REDACTED;
-  if (URL_BEARING_HEADER_NAMES.has(name.toLowerCase())) {
+  const normalizedName = name.toLowerCase();
+  if (normalizedName === "link") return redactLinkHeader(value);
+  if (normalizedName === "refresh") return redactRefreshHeader(value);
+  if (URL_BEARING_HEADER_NAMES.has(normalizedName)) {
     return redactBrowserUrl(value);
   }
-  return value;
+  return redactBrowserDiagnostic(value);
 }
 
 function redactHeaders(headers?: Record<string, string>): Record<string, string> | undefined {
@@ -153,8 +202,14 @@ export function serializeNetworkEntries(
   const safeEntries = entries.map((entry) => ({
     ...entry,
     url: redactBrowserUrl(entry.url),
+    ...(entry.statusText === undefined
+      ? {}
+      : { statusText: redactBrowserDiagnostic(entry.statusText) }),
     requestHeaders: redactHeaders(entry.requestHeaders),
     responseHeaders: redactHeaders(entry.responseHeaders),
+    ...(entry.failure === undefined
+      ? {}
+      : { failure: redactBrowserDiagnostic(entry.failure) }),
   }));
   const lines: string[] = [];
 
