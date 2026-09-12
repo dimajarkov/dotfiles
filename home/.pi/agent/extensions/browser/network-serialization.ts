@@ -62,6 +62,7 @@ function isSensitiveName(name: string): boolean {
     SENSITIVE_HEADER_NAMES.has(normalized) ||
     SENSITIVE_COMPACT_NAMES.has(compact) ||
     /(?:authorization|authentication(?:info)?)$/u.test(compact) ||
+    /(?:assertion|jwt|samlart|samlrequest|samlresponse)$/u.test(compact) ||
     /(?:api(?:cation)?key|credentials?|password|secret|token|signature\d*)$/u.test(compact) ||
     /(?:^|[-_])(?:access[-_]?token|api[-_]?key|credential|password|secret|token)(?:$|[-_])/i.test(
       normalized,

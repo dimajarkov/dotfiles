@@ -1,9 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-} from "node:fs";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { atomicWriteText } from "./atomic-file.ts";
@@ -52,8 +48,7 @@ const CHILD_COMPLETION_EXTENSION = fileURLToPath(
   new URL("./completion-protocol.ts", import.meta.url),
 );
 const AGENT_START_TIMEOUT_MILLISECONDS = 60_000;
-const PLACEMENT_LOCK_TIMEOUT_SECONDS =
-  Math.ceil(AGENT_START_TIMEOUT_MILLISECONDS / 1_000) + 30;
+const PLACEMENT_LOCK_TIMEOUT_SECONDS = Math.ceil(AGENT_START_TIMEOUT_MILLISECONDS / 1_000) + 30;
 
 export type ChildState =
   | "starting"
@@ -167,8 +162,11 @@ function isContentArtifact(value: unknown): value is ResolvedContentArtifact {
 }
 
 function isSafePiEnvironment(value: unknown): value is Record<string, string> {
-  return isObject(value) && Object.entries(value).every(
-    ([key, entry]) => SAFE_PI_ENVIRONMENT_KEY_SET.has(key) && typeof entry === "string",
+  return (
+    isObject(value) &&
+    Object.entries(value).every(
+      ([key, entry]) => SAFE_PI_ENVIRONMENT_KEY_SET.has(key) && typeof entry === "string",
+    )
   );
 }
 
@@ -195,8 +193,10 @@ function environmentsMatch(
   current: Record<string, string>,
 ): boolean {
   const savedEntries = Object.entries(saved);
-  return savedEntries.length === Object.keys(current).length &&
-    savedEntries.every(([key, value]) => current[key] === value);
+  return (
+    savedEntries.length === Object.keys(current).length &&
+    savedEntries.every(([key, value]) => current[key] === value)
+  );
 }
 
 function resolveLaunchLoadout(
@@ -251,9 +251,7 @@ function stringAt(value: unknown, key: string): string {
   return value[key];
 }
 
-function currentHerdrSession(
-  environment: Record<string, string | undefined>,
-): string {
+function currentHerdrSession(environment: Record<string, string | undefined>): string {
   return environment.HERDR_SESSION ?? "default";
 }
 
@@ -277,7 +275,11 @@ function slug(value: string): string {
 }
 
 function herdrName(semanticName: string, role: string, id: string): string {
-  const unique = id.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 6) || "child";
+  const unique =
+    id
+      .replace(/[^a-zA-Z0-9]/g, "")
+      .toLowerCase()
+      .slice(0, 6) || "child";
   const suffix = `-${slug(role).slice(0, 10)}-${unique}`;
   const available = Math.max(1, 32 - suffix.length);
   return `${slug(semanticName).slice(0, available)}${suffix}`.slice(0, 32);
@@ -313,13 +315,17 @@ class StaleGenerationError extends Error {}
 class StaleRevisionError extends Error {}
 
 function isPositiveAgentAbsence(error: unknown): boolean {
-  return error instanceof Error &&
-    /(?:agent[ _]not[ _]found|unknown agent|no such agent)/i.test(error.message);
+  return (
+    error instanceof Error &&
+    /(?:agent[ _]not[ _]found|unknown agent|no such agent)/i.test(error.message)
+  );
 }
 
 function isPositivePaneAbsence(error: unknown): boolean {
-  return error instanceof Error &&
-    /(?:pane[ _]not[ _]found|unknown pane|no such pane)/i.test(error.message);
+  return (
+    error instanceof Error &&
+    /(?:pane[ _]not[ _]found|unknown pane|no such pane)/i.test(error.message)
+  );
 }
 
 function validateWorkScope(value: string | undefined): string | undefined {
@@ -384,9 +390,7 @@ function finalAssistantResult(sessionPath: string): {
   stopReason?: string;
   errorMessage?: string;
 } {
-  const lines = readFileSync(sessionPath, "utf8")
-    .split("\n")
-    .filter(Boolean);
+  const lines = readFileSync(sessionPath, "utf8").split("\n").filter(Boolean);
   const entries = new Map<string, JsonObject>();
   let leaf: JsonObject | undefined;
   for (const line of lines) {
@@ -432,7 +436,9 @@ async function finalAssistantResultWithRetry(
     try {
       const result = finalAssistantResult(sessionPath);
       if (result.entryId === startedAfterEntryId) {
-        throw new Error(`Child session has not persisted its next assistant result: ${sessionPath}`);
+        throw new Error(
+          `Child session has not persisted its next assistant result: ${sessionPath}`,
+        );
       }
       return result;
     } catch (error) {
@@ -486,7 +492,8 @@ export class SubagentOrchestrator {
       this.#assertCurrentHerdrSession(listedChild);
       await this.#stopMonitor(listedChild.id);
       await this.#withChildRegistryLock(rootId, listedChild.id, () =>
-        this.#recoverChild(rootId, ownerId, listedChild.id));
+        this.#recoverChild(rootId, ownerId, listedChild.id),
+      );
     }
     return this.list(rootId);
   }
@@ -499,8 +506,7 @@ export class SubagentOrchestrator {
       await this.#cleanupSurface(child);
       if (interruptedCleanup) {
         child.state = "failed";
-        child.error =
-          `Recovered interrupted cleanup for generation ${child.generation}`;
+        child.error = `Recovered interrupted cleanup for generation ${child.generation}`;
         child.updatedAt = this.#now();
         this.#saveChild(child);
         await this.#deliver(child);
@@ -632,19 +638,21 @@ export class SubagentOrchestrator {
     this.#assertCurrentHerdrSession(child);
     await this.#stopMonitor(child.id);
     child = this.#findChild(rootId, ownerId, target);
-    if (CLEANUP_TERMINAL_STATES.has(child.state) && !isRetiredSurface(child)) {
-      await this.#cleanupSurface(child);
-      child = this.#findChild(rootId, ownerId, target);
-      if (!isRetiredSurface(child)) {
-        throw new Error(
-          `Cannot reactivate ${child.semanticName}: previous pane cleanup remains pending`,
-        );
-      }
-    }
-    if (isRetiredSurface(child)) {
+    if (CLEANUP_TERMINAL_STATES.has(child.state)) {
+      child = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, child);
       return this.#relaunchClosedChild(child, message, signal);
     }
-    await this.#assertLiveChild(child, signal);
+    if (isRetiredSurface(child)) return this.#relaunchClosedChild(child, message, signal);
+    const status = await this.#assertLiveChild(child, signal);
+    if (status === "idle" || status === "done") {
+      await this.#completeFromSession(child, signal);
+      child = this.#findChild(rootId, ownerId, child.id);
+      child = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, child);
+      return this.#relaunchClosedChild(child, message, signal);
+    }
+    if (status !== "working" && status !== "blocked") {
+      throw new Error(`Cannot message ${child.semanticName}: unexpected Herdr state ${status}`);
+    }
     if (child.sessionPath) {
       try {
         child.startedAfterEntryId = finalAssistantResult(child.sessionPath).entryId;
@@ -683,6 +691,36 @@ export class SubagentOrchestrator {
     this.#saveChild(child);
     if (this.#monitor) void this.#monitorChild(child);
     return { ...child };
+  }
+
+  async #prepareTerminalChildForFollowUp(
+    rootId: string,
+    ownerId: string,
+    initialChild: ChildRecord,
+  ): Promise<ChildRecord> {
+    let child = initialChild;
+    if (
+      child.deliveredAt === undefined &&
+      (child.state === "completed" || child.state === "failed" || child.state === "crashed")
+    ) {
+      await this.#deliver(child);
+      child = this.#findChild(rootId, ownerId, child.id);
+      if (child.deliveredAt === undefined) {
+        throw new Error(
+          `Cannot reactivate ${child.semanticName}: previous outcome is awaiting delivery`,
+        );
+      }
+    }
+    if (!isRetiredSurface(child)) {
+      await this.#cleanupSurface(child);
+      child = this.#findChild(rootId, ownerId, child.id);
+    }
+    if (!isRetiredSurface(child)) {
+      throw new Error(
+        `Cannot reactivate ${child.semanticName}: previous pane cleanup remains pending`,
+      );
+    }
+    return child;
   }
 
   async cancel(
@@ -780,7 +818,8 @@ export class SubagentOrchestrator {
     signal?: AbortSignal,
   ): Promise<ChildRecord> {
     return this.#withChildOperation(rootId, ownerId, target, () =>
-      this.#resumeUnlocked(rootId, ownerId, target, signal));
+      this.#resumeUnlocked(rootId, ownerId, target, signal),
+    );
   }
 
   async #resumeUnlocked(
@@ -837,7 +876,11 @@ export class SubagentOrchestrator {
     if (callerDepth > 0 && inheritedScope === undefined && requestedScope !== undefined) {
       throw new Error("A legacy scope-less child cannot choose a workScope");
     }
-    if (inheritedScope !== undefined && requestedScope !== undefined && requestedScope !== inheritedScope) {
+    if (
+      inheritedScope !== undefined &&
+      requestedScope !== undefined &&
+      requestedScope !== inheritedScope
+    ) {
       throw new Error(
         `Descendant workScope ${requestedScope} does not match inherited workScope ${inheritedScope}`,
       );
@@ -853,15 +896,16 @@ export class SubagentOrchestrator {
       const existingChildren = this.#loadChildren(rootId);
       if (
         existingChildren.some(
-          (candidate) =>
-            candidate.parentId === parentId && candidate.semanticName === request.name,
+          (candidate) => candidate.parentId === parentId && candidate.semanticName === request.name,
         )
       ) {
         throw new Error(
           `A child named ${request.name} already exists for this parent; use message to continue it`,
         );
       }
-      const activeChildren = existingChildren.filter((candidate) => ACTIVE_STATES.has(candidate.state));
+      const activeChildren = existingChildren.filter((candidate) =>
+        ACTIVE_STATES.has(candidate.state),
+      );
       if (activeChildren.length >= 8) {
         throw new Error("Maximum of 8 live subagents per lineage reached");
       }
@@ -891,10 +935,7 @@ export class SubagentOrchestrator {
         generation: 1,
         workspaceId: master.workspaceId,
         herdrSession: master.herdrSession,
-        completionMarkerPath: join(
-          this.#registryPath(rootId),
-          `${slug(id)}.generation-1.complete`,
-        ),
+        completionMarkerPath: join(this.#registryPath(rootId), `${slug(id)}.generation-1.complete`),
         launchLoadout,
         state: "starting",
         createdAt: now,
@@ -905,7 +946,8 @@ export class SubagentOrchestrator {
     });
 
     return this.#withChildRegistryLock(child.rootId, child.id, () =>
-      this.#startReservedChild(child, callerDepth, signal));
+      this.#startReservedChild(child, callerDepth, signal),
+    );
   }
 
   async #startReservedChild(
@@ -918,29 +960,33 @@ export class SubagentOrchestrator {
       await this.#withPlacementLock(child.rootId, async () => {
         await this.#createSurface(child, callerDepth, signal, true);
 
-        await this.#runJson([
-          "pane",
-          "rename",
-          child.paneId,
-          paneLabel(child.launchLoadout.role, child.semanticName),
-        ], signal);
+        await this.#runJson(
+          ["pane", "rename", child.paneId, paneLabel(child.launchLoadout.role, child.semanticName)],
+          signal,
+        );
 
         const piArguments = this.#piArguments(child);
-        child.sessionPath = await this.#startChildAgent([
-          "agent",
-          "start",
-          child.herdrName,
-          "--kind",
-          "pi",
-          "--pane",
-          child.paneId,
-          "--timeout",
-          String(AGENT_START_TIMEOUT_MILLISECONDS),
-          "--",
-          ...piArguments,
-        ], child, undefined, () => {
-          agentStarted = true;
-        }, signal);
+        child.sessionPath = await this.#startChildAgent(
+          [
+            "agent",
+            "start",
+            child.herdrName,
+            "--kind",
+            "pi",
+            "--pane",
+            child.paneId,
+            "--timeout",
+            String(AGENT_START_TIMEOUT_MILLISECONDS),
+            "--",
+            ...piArguments,
+          ],
+          child,
+          undefined,
+          () => {
+            agentStarted = true;
+          },
+          signal,
+        );
         child.updatedAt = this.#now();
         this.#saveChild(child);
       });
@@ -961,7 +1007,9 @@ export class SubagentOrchestrator {
           await this.#assertLiveChild(child);
           await this.#runJson(["agent", "send-keys", child.herdrName, "ctrl+c", "ctrl+c"]);
         } catch (cleanupError) {
-          cleanupErrors.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+          cleanupErrors.push(
+            cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          );
         }
       }
       if (child.paneId !== undefined) {
@@ -970,9 +1018,10 @@ export class SubagentOrchestrator {
       }
       child.state = "failed";
       const primaryError = error instanceof Error ? error.message : String(error);
-      child.error = cleanupErrors.length > 0
-        ? `${primaryError}; cleanup failed: ${cleanupErrors.join("; ")}`
-        : primaryError;
+      child.error =
+        cleanupErrors.length > 0
+          ? `${primaryError}; cleanup failed: ${cleanupErrors.join("; ")}`
+          : primaryError;
       child.deliveredAt = this.#now();
       child.updatedAt = child.deliveredAt;
       this.#saveChild(child);
@@ -993,11 +1042,16 @@ export class SubagentOrchestrator {
     try {
       const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
       if (
-        !isObject(parsed) || parsed.version !== 1 || parsed.rootId !== rootId ||
-        typeof parsed.herdrSession !== "string" || typeof parsed.workspaceId !== "string" ||
-        typeof parsed.masterPaneId !== "string" || typeof parsed.tabId !== "string" ||
+        !isObject(parsed) ||
+        parsed.version !== 1 ||
+        parsed.rootId !== rootId ||
+        typeof parsed.herdrSession !== "string" ||
+        typeof parsed.workspaceId !== "string" ||
+        typeof parsed.masterPaneId !== "string" ||
+        typeof parsed.tabId !== "string" ||
         (parsed.masterSessionPath !== undefined && typeof parsed.masterSessionPath !== "string") ||
-        !Number.isSafeInteger(parsed.createdAt) || !Number.isSafeInteger(parsed.updatedAt)
+        !Number.isSafeInteger(parsed.createdAt) ||
+        !Number.isSafeInteger(parsed.updatedAt)
       ) {
         throw new Error(`Malformed lineage master record: ${path}`);
       }
@@ -1024,24 +1078,34 @@ export class SubagentOrchestrator {
     const tabId = stringAt(pane, "tab_id");
     const workspaceId = stringAt(pane, "workspace_id");
     const herdrSession = currentHerdrSession(this.#environment);
-    if (existing && (
-      existing.rootId !== rootId ||
-      existing.herdrSession !== herdrSession ||
-      existing.workspaceId !== workspaceId ||
-      existing.masterPaneId !== paneId ||
-      existing.tabId !== tabId
-    )) {
+    if (
+      existing &&
+      (existing.rootId !== rootId ||
+        existing.herdrSession !== herdrSession ||
+        existing.workspaceId !== workspaceId ||
+        existing.masterPaneId !== paneId ||
+        existing.tabId !== tabId)
+    ) {
       throw new RuntimeIdentityError("Lineage master identity changed");
     }
     if (pane.agent !== "pi") {
       throw new RuntimeIdentityError("Lineage master pane is not occupied by Pi");
     }
     const observedSessionPath = sessionPathFromAgent(pane);
-    if (parentSessionFile !== undefined && observedSessionPath !== undefined && parentSessionFile !== observedSessionPath) {
-      throw new RuntimeIdentityError("Root parent session artifact differs from the current master pane");
+    if (
+      parentSessionFile !== undefined &&
+      observedSessionPath !== undefined &&
+      parentSessionFile !== observedSessionPath
+    ) {
+      throw new RuntimeIdentityError(
+        "Root parent session artifact differs from the current master pane",
+      );
     }
     const masterSessionPath = parentSessionFile ?? observedSessionPath;
-    if (existing?.masterSessionPath !== undefined && existing.masterSessionPath !== masterSessionPath) {
+    if (
+      existing?.masterSessionPath !== undefined &&
+      existing.masterSessionPath !== masterSessionPath
+    ) {
       throw new RuntimeIdentityError("Lineage master session artifact changed");
     }
     return {
@@ -1070,13 +1134,21 @@ export class SubagentOrchestrator {
       const response = await this.#runJson(["pane", "current", "--current"], signal);
       const pane = objectAt(objectAt(response, "result"), "pane");
       if (pane.pane_id !== this.#environment.HERDR_PANE_ID) {
-        throw new RuntimeIdentityError("Root caller pane differs from explicit Herdr pane identity");
+        throw new RuntimeIdentityError(
+          "Root caller pane differs from explicit Herdr pane identity",
+        );
       }
       if (pane.workspace_id !== this.#environment.HERDR_WORKSPACE_ID) {
-        throw new RuntimeIdentityError("Root caller workspace differs from explicit Herdr workspace identity");
+        throw new RuntimeIdentityError(
+          "Root caller workspace differs from explicit Herdr workspace identity",
+        );
       }
       const master = this.#masterFromPane(rootId, pane, persisted, parentSessionFile);
-      if (!persisted || master.tabId !== persisted.tabId || master.updatedAt !== persisted.updatedAt) {
+      if (
+        !persisted ||
+        master.tabId !== persisted.tabId ||
+        master.updatedAt !== persisted.updatedAt
+      ) {
         this.#saveMaster(master);
       }
       return master;
@@ -1091,8 +1163,14 @@ export class SubagentOrchestrator {
       masterSessionPath: this.#environment.HERDR_SUBAGENT_MASTER_SESSION_PATH,
     };
     if (
-      !expected.rootId || !expected.herdrSession || !expected.workspaceId || !expected.masterPaneId ||
-      !expected.masterTabId || !expected.masterSessionPath || !persisted || !persisted.masterSessionPath
+      !expected.rootId ||
+      !expected.herdrSession ||
+      !expected.workspaceId ||
+      !expected.masterPaneId ||
+      !expected.masterTabId ||
+      !expected.masterSessionPath ||
+      !persisted ||
+      !persisted.masterSessionPath
     ) {
       throw new RuntimeIdentityError(
         "Descendant cannot prove the persisted lineage master identity; reload the parent Pi agent",
@@ -1108,7 +1186,9 @@ export class SubagentOrchestrator {
       this.#environment.HERDR_WORKSPACE_ID !== persisted.workspaceId ||
       currentHerdrSession(this.#environment) !== persisted.herdrSession
     ) {
-      throw new RuntimeIdentityError("Descendant lineage master identity does not match its environment");
+      throw new RuntimeIdentityError(
+        "Descendant lineage master identity does not match its environment",
+      );
     }
     const response = await this.#runJson(["pane", "get", persisted.masterPaneId], signal);
     const pane = objectAt(objectAt(response, "result"), "pane");
@@ -1150,9 +1230,14 @@ export class SubagentOrchestrator {
       const width = entry.rect.width;
       const height = entry.rect.height;
       if (
-        typeof width !== "number" || !Number.isFinite(width) || width <= 0 ||
-        typeof height !== "number" || !Number.isFinite(height) || height <= 0
-      ) return [];
+        typeof width !== "number" ||
+        !Number.isFinite(width) ||
+        width <= 0 ||
+        typeof height !== "number" ||
+        !Number.isFinite(height) ||
+        height <= 0
+      )
+        return [];
       return [{ paneId: entry.pane_id, width, height, area: width * height }];
     });
     if (!panes.some((pane) => pane.paneId === master.masterPaneId)) {
@@ -1167,12 +1252,13 @@ export class SubagentOrchestrator {
     layout: PaneLayout,
     signal?: AbortSignal,
   ): Promise<PaneLayout["panes"]> {
-    const records = this.#loadChildren(child.rootId).filter((candidate) =>
-      candidate.id !== child.id &&
-      candidate.paneId !== undefined &&
-      candidate.workspaceId === master.workspaceId &&
-      candidate.herdrSession === master.herdrSession &&
-      !isRetiredSurface(candidate),
+    const records = this.#loadChildren(child.rootId).filter(
+      (candidate) =>
+        candidate.id !== child.id &&
+        candidate.paneId !== undefined &&
+        candidate.workspaceId === master.workspaceId &&
+        candidate.herdrSession === master.herdrSession &&
+        !isRetiredSurface(candidate),
     );
     const owned: PaneLayout["panes"] = [];
     for (const owner of records) {
@@ -1180,7 +1266,9 @@ export class SubagentOrchestrator {
         const response = await this.#runJson(["pane", "get", owner.paneId!], signal);
         const observed = objectAt(objectAt(response, "result"), "pane");
         if (typeof observed.tab_id !== "string" || observed.tab_id.length === 0) {
-          throw new SurfaceOwnershipUnprovenError(`Pane tab identity is unproven for ${owner.paneId}`);
+          throw new SurfaceOwnershipUnprovenError(
+            `Pane tab identity is unproven for ${owner.paneId}`,
+          );
         }
         if (observed.tab_id !== master.tabId) {
           throw new RuntimeIdentityError("An owned pane moved to another tab; refusing placement");
@@ -1193,9 +1281,12 @@ export class SubagentOrchestrator {
         if (pane) owned.push(pane);
       } catch (error) {
         if (error instanceof SurfaceOwnershipLostError) {
-          throw new RuntimeIdentityError(`An owned pane moved or was replaced; refusing placement (${error.message})`);
+          throw new RuntimeIdentityError(
+            `An owned pane moved or was replaced; refusing placement (${error.message})`,
+          );
         }
-        if (error instanceof SurfaceOwnershipUnprovenError || isPositivePaneAbsence(error)) continue;
+        if (error instanceof SurfaceOwnershipUnprovenError || isPositivePaneAbsence(error))
+          continue;
         throw error;
       }
     }
@@ -1227,32 +1318,36 @@ export class SubagentOrchestrator {
         layout.panes.find((pane) => pane.paneId === master.masterPaneId)!,
         ...owned,
       ];
-      const target = [...new Map(candidates.map((pane) => [pane.paneId, pane])).values()]
-        .sort((left, right) => right.area - left.area)[0];
+      const target = [...new Map(candidates.map((pane) => [pane.paneId, pane])).values()].sort(
+        (left, right) => right.area - left.area,
+      )[0];
       if (!target) throw new RuntimeIdentityError("Lineage master layout has no split candidate");
       const propagatedEnvironment = this.#propagatedEnvironment(child, master);
-      const created = await this.#runJson([
-        "pane",
-        "split",
-        "--pane",
-        target.paneId,
-        "--direction",
-        "down",
-        "--ratio",
-        "0.5",
-        "--cwd",
-        child.launchLoadout.cwd,
-        ...propagatedEnvironment.flatMap((value) => ["--env", value]),
-        "--no-focus",
-      ], signal);
+      const created = await this.#runJson(
+        [
+          "pane",
+          "split",
+          "--pane",
+          target.paneId,
+          "--direction",
+          "down",
+          "--ratio",
+          "0.5",
+          "--cwd",
+          child.launchLoadout.cwd,
+          ...propagatedEnvironment.flatMap((value) => ["--env", value]),
+          "--no-focus",
+        ],
+        signal,
+      );
       const pane = objectAt(objectAt(created, "result"), "pane");
       const paneId = stringAt(pane, "pane_id");
-      const reportedTabId = typeof pane.tab_id === "string" && pane.tab_id.length > 0
-        ? pane.tab_id
-        : undefined;
-      const workspaceId = typeof pane.workspace_id === "string" && pane.workspace_id.length > 0
-        ? pane.workspace_id
-        : undefined;
+      const reportedTabId =
+        typeof pane.tab_id === "string" && pane.tab_id.length > 0 ? pane.tab_id : undefined;
+      const workspaceId =
+        typeof pane.workspace_id === "string" && pane.workspace_id.length > 0
+          ? pane.workspace_id
+          : undefined;
       // Publish the pane before validating its identity. Any later failure can
       // then use the ordinary ownership-checked, pane-only cleanup path.
       // Record the expected lineage tab rather than an untrusted response tab,
@@ -1264,10 +1359,14 @@ export class SubagentOrchestrator {
       this.#saveChild(child);
       if (!reportedTabId) throw new Error("Malformed Herdr response: missing string tab_id");
       if (workspaceId !== undefined && workspaceId !== master.workspaceId) {
-        throw new RuntimeIdentityError("Subagent split created in a different workspace than the master pane");
+        throw new RuntimeIdentityError(
+          "Subagent split created in a different workspace than the master pane",
+        );
       }
       if (reportedTabId !== master.tabId) {
-        throw new RuntimeIdentityError("Subagent split created in a different tab than the master Pi pane");
+        throw new RuntimeIdentityError(
+          "Subagent split created in a different tab than the master Pi pane",
+        );
       }
       const verifiedLayout = this.#masterLayout(
         await this.#runJson(["pane", "layout", "--pane", master.masterPaneId], signal),
@@ -1304,15 +1403,15 @@ export class SubagentOrchestrator {
       `HERDR_SUBAGENT_MASTER_WORKSPACE_ID=${master.workspaceId}`,
       `HERDR_SUBAGENT_MASTER_PANE_ID=${master.masterPaneId}`,
       `HERDR_SUBAGENT_MASTER_TAB_ID=${master.tabId}`,
-      ...(master.masterSessionPath ? [`HERDR_SUBAGENT_MASTER_SESSION_PATH=${master.masterSessionPath}`] : []),
+      ...(master.masterSessionPath
+        ? [`HERDR_SUBAGENT_MASTER_SESSION_PATH=${master.masterSessionPath}`]
+        : []),
       ...(child.workScope ? [`HERDR_SUBAGENT_WORK_SCOPE=${child.workScope}`] : []),
       `HERDR_SUBAGENT_REGISTRY=${this.#registryPath(child.rootId)}`,
       `HERDR_SUBAGENT_COMPLETION_MARKER=${child.completionMarkerPath}`,
       `HERDR_SUBAGENT_ROLE=${child.launchLoadout.role}`,
       `HERDR_SUBAGENT_SPAWN_TARGETS=${child.launchLoadout.spawnTargets.join(",")}`,
-      ...Object.entries(child.launchLoadout.environment).map(
-        ([key, value]) => `${key}=${value}`,
-      ),
+      ...Object.entries(child.launchLoadout.environment).map(([key, value]) => `${key}=${value}`),
     ];
   }
 
@@ -1356,9 +1455,7 @@ export class SubagentOrchestrator {
     ) {
       throw new Error(`Cannot reactivate ${child.semanticName}: saved launch loadout is invalid`);
     }
-    if (
-      !environmentsMatch(loadout.environment, safePiEnvironment(this.#environment))
-    ) {
+    if (!environmentsMatch(loadout.environment, safePiEnvironment(this.#environment))) {
       throw new Error(
         `Cannot reactivate ${child.semanticName}: ` +
           "saved Pi environment no longer matches the current parent environment",
@@ -1431,27 +1528,31 @@ export class SubagentOrchestrator {
       await this.#withPlacementLock(child.rootId, async () => {
         await this.#createSurface(child, child.depth - 1, signal, true);
 
-        await this.#runJson([
-          "pane",
-          "rename",
-          child.paneId,
-          paneLabel(child.launchLoadout.role, child.semanticName),
-        ], signal);
-        child.sessionPath = await this.#startChildAgent([
-          "agent",
-          "start",
-          child.herdrName,
-          "--kind",
-          "pi",
-          "--pane",
-          child.paneId,
-          "--timeout",
-          String(AGENT_START_TIMEOUT_MILLISECONDS),
-          "--",
-          ...this.#piArguments(child, sessionPath),
-        ], child, sessionPath, () => {
-          agentStarted = true;
-        }, signal);
+        await this.#runJson(
+          ["pane", "rename", child.paneId, paneLabel(child.launchLoadout.role, child.semanticName)],
+          signal,
+        );
+        child.sessionPath = await this.#startChildAgent(
+          [
+            "agent",
+            "start",
+            child.herdrName,
+            "--kind",
+            "pi",
+            "--pane",
+            child.paneId,
+            "--timeout",
+            String(AGENT_START_TIMEOUT_MILLISECONDS),
+            "--",
+            ...this.#piArguments(child, sessionPath),
+          ],
+          child,
+          sessionPath,
+          () => {
+            agentStarted = true;
+          },
+          signal,
+        );
         child.updatedAt = this.#now();
         this.#saveChild(child);
       });
@@ -1580,8 +1681,10 @@ export class SubagentOrchestrator {
           `Refusing to overwrite generation ${current.generation} with ${child.generation}`,
         );
       }
-      if (current.revision !== undefined &&
-        (!Number.isSafeInteger(current.revision) || current.revision < 0)) {
+      if (
+        current.revision !== undefined &&
+        (!Number.isSafeInteger(current.revision) || current.revision < 0)
+      ) {
         throw new Error(`Malformed subagent registry revision: ${path}`);
       }
       currentRevision = typeof current.revision === "number" ? current.revision : 0;
@@ -1611,9 +1714,9 @@ export class SubagentOrchestrator {
     return { ...matches[0] };
   }
 
-  async #assertLiveChild(child: ChildRecord, signal?: AbortSignal): Promise<void> {
+  async #assertLiveChild(child: ChildRecord, signal?: AbortSignal): Promise<string> {
     const response = await this.#runJson(["agent", "get", child.herdrName], signal);
-    this.#validatedAgentStatus(child, objectAt(objectAt(response, "result"), "agent"));
+    return this.#validatedAgentStatus(child, objectAt(objectAt(response, "result"), "agent"));
   }
 
   #validatedAgentStatus(child: ChildRecord, agent: JsonObject): string {
@@ -1699,18 +1802,17 @@ export class SubagentOrchestrator {
       started = await this.#startAgent(args, signal);
       markStarted();
     } catch (error) {
-      if (!(error instanceof Error) ||
-        error.message !== "Malformed Herdr JSON for command: herdr agent start") throw error;
+      if (
+        !(error instanceof Error) ||
+        error.message !== "Malformed Herdr JSON for command: herdr agent start"
+      )
+        throw error;
       malformedStartError = error;
       markStarted();
     }
 
     if (started !== undefined) {
-      const reportedSessionPath = this.#startedSessionPath(
-        child,
-        started,
-        expectedSessionPath,
-      );
+      const reportedSessionPath = this.#startedSessionPath(child, started, expectedSessionPath);
       if (reportedSessionPath !== undefined) return reportedSessionPath;
     }
 
@@ -1724,11 +1826,7 @@ export class SubagentOrchestrator {
         { cause: error },
       );
     }
-    const reconciledSessionPath = this.#startedSessionPath(
-      child,
-      reconciled,
-      expectedSessionPath,
-    );
+    const reconciledSessionPath = this.#startedSessionPath(child, reconciled, expectedSessionPath);
     if (reconciledSessionPath === undefined) {
       throw new RuntimeIdentityError(
         `Herdr did not report a persistent session for ${child.herdrName}`,
@@ -1740,7 +1838,9 @@ export class SubagentOrchestrator {
   async #runJson(args: string[], signal?: AbortSignal): Promise<JsonObject> {
     const execution = await this.#transport.run(args, signal);
     if (execution.code !== 0) {
-      throw new Error(execution.stderr.trim() || `Herdr command failed: herdr ${args.slice(0, 2).join(" ")}`);
+      throw new Error(
+        execution.stderr.trim() || `Herdr command failed: herdr ${args.slice(0, 2).join(" ")}`,
+      );
     }
     let parsed: unknown;
     try {
@@ -1753,12 +1853,14 @@ export class SubagentOrchestrator {
     }
     if ("error" in parsed) {
       const reportedError = parsed.error;
-      const code = isObject(reportedError) && typeof reportedError.code === "string"
-        ? reportedError.code
-        : undefined;
-      const message = isObject(reportedError) && typeof reportedError.message === "string"
-        ? reportedError.message
-        : undefined;
+      const code =
+        isObject(reportedError) && typeof reportedError.code === "string"
+          ? reportedError.code
+          : undefined;
+      const message =
+        isObject(reportedError) && typeof reportedError.message === "string"
+          ? reportedError.message
+          : undefined;
       throw new Error(
         [code, message].filter((part) => part !== undefined).join(": ") ||
           `Herdr command returned an error: herdr ${args.slice(0, 2).join(" ")}`,
@@ -1775,7 +1877,8 @@ export class SubagentOrchestrator {
           current.generation !== child.generation ||
           current.revision !== child.revision ||
           isRetiredSurface(current)
-        ) return false;
+        )
+          return false;
         this.#saveChild(child);
         return true;
       });
@@ -1793,7 +1896,8 @@ export class SubagentOrchestrator {
           current.generation !== child.generation ||
           current.revision !== child.revision ||
           !ACTIVE_STATES.has(current.state)
-        ) return false;
+        )
+          return false;
         current.state = "crashed";
         current.error = error;
         current.updatedAt = this.#now();
@@ -1881,7 +1985,7 @@ export class SubagentOrchestrator {
             child.state = "stale";
             child.error = `Could not reconcile failed Herdr wait: ${errorMessage(reconcileError)}`;
             child.updatedAt = this.#now();
-            if (!await this.#saveMonitoredChild(child)) return;
+            if (!(await this.#saveMonitoredChild(child))) return;
             return;
           }
         }
@@ -1896,13 +2000,13 @@ export class SubagentOrchestrator {
           child.state = "stale";
           child.error = errorMessage(error);
           child.updatedAt = this.#now();
-          if (!await this.#saveMonitoredChild(child)) return;
+          if (!(await this.#saveMonitoredChild(child))) return;
           return;
         }
         if (status === "working" || status === "blocked") {
           child.state = status;
           child.updatedAt = this.#now();
-          if (!await this.#saveMonitoredChild(child)) return;
+          if (!(await this.#saveMonitoredChild(child))) return;
           waitUntilUnblocked = status === "blocked";
           continue;
         }
@@ -1910,7 +2014,7 @@ export class SubagentOrchestrator {
           child.state = "stale";
           child.error = `Unexpected settled Herdr agent status: ${status}`;
           child.updatedAt = this.#now();
-          if (!await this.#saveMonitoredChild(child)) return;
+          if (!(await this.#saveMonitoredChild(child))) return;
           return;
         }
         await this.#monitorCompletionProof(child, controller.signal);
@@ -1929,17 +2033,15 @@ export class SubagentOrchestrator {
     }
   }
 
-  async #monitorCompleteFromSession(
-    child: ChildRecord,
-    signal: AbortSignal,
-  ): Promise<boolean> {
+  async #monitorCompleteFromSession(child: ChildRecord, signal: AbortSignal): Promise<boolean> {
     return this.#withChildRegistryLock(child.rootId, child.id, async () => {
       const current = this.#findChild(child.rootId, child.parentId, child.id);
       if (
         current.generation !== child.generation ||
         current.revision !== child.revision ||
         !ACTIVE_STATES.has(current.state)
-      ) return false;
+      )
+        return false;
       await this.#completeFromSession(child, signal);
       return true;
     });
@@ -1964,10 +2066,9 @@ export class SubagentOrchestrator {
       } catch (observeError) {
         if (!isPositiveAgentAbsence(observeError)) {
           child.state = "stale";
-          child.error =
-            `Could not observe Herdr agent while awaiting completion proof: ${errorMessage(observeError)}`;
+          child.error = `Could not observe Herdr agent while awaiting completion proof: ${errorMessage(observeError)}`;
           child.updatedAt = this.#now();
-          if (!await this.#saveMonitoredChild(child)) return;
+          if (!(await this.#saveMonitoredChild(child))) return;
           return;
         }
 
@@ -1995,24 +2096,24 @@ export class SubagentOrchestrator {
         child.state = "stale";
         child.error = errorMessage(error);
         child.updatedAt = this.#now();
-        if (!await this.#saveMonitoredChild(child)) return;
+        if (!(await this.#saveMonitoredChild(child))) return;
         return;
       }
       if (status === "working" || status === "blocked") {
         child.state = status;
         child.updatedAt = this.#now();
-        if (!await this.#saveMonitoredChild(child)) return;
+        if (!(await this.#saveMonitoredChild(child))) return;
         continue;
       }
       if (status === "idle" || status === "done") {
         child.updatedAt = this.#now();
-        if (!await this.#saveMonitoredChild(child)) return;
+        if (!(await this.#saveMonitoredChild(child))) return;
         continue;
       }
       child.state = "stale";
       child.error = `Unexpected Herdr agent status while awaiting completion proof: ${status}`;
       child.updatedAt = this.#now();
-      if (!await this.#saveMonitoredChild(child)) return;
+      if (!(await this.#saveMonitoredChild(child))) return;
       return;
     }
   }
@@ -2026,12 +2127,7 @@ export class SubagentOrchestrator {
     let lastError: CompletionNotProvenError | undefined;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       try {
-        await this.#completeFromSessionOnce(
-          child,
-          signal,
-          allowExistingResult,
-          cleanupSurface,
-        );
+        await this.#completeFromSessionOnce(child, signal, allowExistingResult, cleanupSurface);
         return;
       } catch (error) {
         if (!(error instanceof CompletionNotProvenError)) throw error;
@@ -2073,15 +2169,16 @@ export class SubagentOrchestrator {
       );
     }
     child.result = result.text;
-    child.state = result.stopReason === "aborted"
-      ? "cancelled"
-      : result.stopReason === "error"
-        ? "failed"
-        : "completed";
+    child.state =
+      result.stopReason === "aborted"
+        ? "cancelled"
+        : result.stopReason === "error"
+          ? "failed"
+          : "completed";
     child.error = result.stopReason === "error" ? result.errorMessage : undefined;
     child.updatedAt = this.#now();
     this.#saveChild(child);
-    if (await this.#deliver(child) && cleanupSurface) await this.#cleanupSurface(child);
+    if ((await this.#deliver(child)) && cleanupSurface) await this.#cleanupSurface(child);
   }
 
   async #deliver(child: ChildRecord): Promise<boolean> {
@@ -2109,42 +2206,83 @@ export class SubagentOrchestrator {
   ): Promise<void> {
     if (pane.pane_id !== identity.paneId) {
       if (typeof pane.pane_id === "string") {
-        throw new SurfaceOwnershipLostError(`Pane identity changed for ${identity.paneId}; preserving pane`);
+        throw new SurfaceOwnershipLostError(
+          `Pane identity changed for ${identity.paneId}; preserving pane`,
+        );
       }
       throw new SurfaceOwnershipUnprovenError(`Pane identity is unproven for ${identity.paneId}`);
     }
-    if (typeof pane.workspace_id !== "string" ||
-      (identity.tabId !== undefined && typeof pane.tab_id !== "string")) {
+    if (
+      typeof pane.workspace_id !== "string" ||
+      (identity.tabId !== undefined && typeof pane.tab_id !== "string")
+    ) {
       throw new SurfaceOwnershipUnprovenError(`Pane identity is unproven for ${identity.paneId}`);
     }
-    if (pane.workspace_id !== identity.workspaceId ||
-      (identity.tabId !== undefined && pane.tab_id !== identity.tabId)) {
-      throw new SurfaceOwnershipLostError(`Pane identity changed for ${identity.paneId}; preserving pane`);
+    if (
+      pane.workspace_id !== identity.workspaceId ||
+      (identity.tabId !== undefined && pane.tab_id !== identity.tabId)
+    ) {
+      throw new SurfaceOwnershipLostError(
+        `Pane identity changed for ${identity.paneId}; preserving pane`,
+      );
     }
     const session = sessionPathFromAgent(pane);
-    if ((pane.agent && pane.agent !== "pi") || (session && identity.sessionPath && session !== identity.sessionPath)) {
-      throw new SurfaceOwnershipLostError(`Current occupant session changed in ${identity.paneId}; preserving pane`);
+    if (
+      (pane.agent && pane.agent !== "pi") ||
+      (session && identity.sessionPath && session !== identity.sessionPath)
+    ) {
+      throw new SurfaceOwnershipLostError(
+        `Current occupant session changed in ${identity.paneId}; preserving pane`,
+      );
     }
     if (pane.agent || pane.agent_session) {
       if (pane.agent === "pi" && session && session === identity.sessionPath) return;
-      throw new SurfaceOwnershipUnprovenError(`Current occupant session is unproven in ${identity.paneId}`);
+      throw new SurfaceOwnershipUnprovenError(
+        `Current occupant session is unproven in ${identity.paneId}`,
+      );
     }
     // After an owned agent exits, only its empty foreground shell is safe to reuse or close.
-    const response = await this.#runJson(["pane", "process-info", "--pane", identity.paneId!], signal);
+    const response = await this.#runJson(
+      ["pane", "process-info", "--pane", identity.paneId!],
+      signal,
+    );
     const info = objectAt(objectAt(response, "result"), "process_info");
-    if (info.pane_id !== identity.paneId || typeof info.shell_pid !== "number" ||
-      !Number.isSafeInteger(info.shell_pid) || info.shell_pid <= 0 || !Array.isArray(info.foreground_processes)) {
-      throw new SurfaceOwnershipUnprovenError(`Foreground ownership is unproven in ${identity.paneId}`);
+    if (
+      info.pane_id !== identity.paneId ||
+      typeof info.shell_pid !== "number" ||
+      !Number.isSafeInteger(info.shell_pid) ||
+      info.shell_pid <= 0 ||
+      !Array.isArray(info.foreground_processes)
+    ) {
+      throw new SurfaceOwnershipUnprovenError(
+        `Foreground ownership is unproven in ${identity.paneId}`,
+      );
     }
     const processes = info.foreground_processes;
-    if (processes.length === 1 && isObject(processes[0]) && processes[0].pid === info.shell_pid) return;
-    if (processes.length > 0 && processes.every((entry) => isObject(entry) &&
-      typeof entry.pid === "number" && Number.isSafeInteger(entry.pid) && entry.pid > 0 &&
-      typeof entry.argv0 === "string" && entry.argv0.length > 0 && entry.argv0 !== "pi" &&
-      !/(?:^|\/)node(?:js)?$/.test(entry.argv0) && entry.name !== "node")) {
-      throw new SurfaceOwnershipLostError(`Another foreground command occupies ${identity.paneId}; preserving pane`);
+    if (processes.length === 1 && isObject(processes[0]) && processes[0].pid === info.shell_pid)
+      return;
+    if (
+      processes.length > 0 &&
+      processes.every(
+        (entry) =>
+          isObject(entry) &&
+          typeof entry.pid === "number" &&
+          Number.isSafeInteger(entry.pid) &&
+          entry.pid > 0 &&
+          typeof entry.argv0 === "string" &&
+          entry.argv0.length > 0 &&
+          entry.argv0 !== "pi" &&
+          !/(?:^|\/)node(?:js)?$/.test(entry.argv0) &&
+          entry.name !== "node",
+      )
+    ) {
+      throw new SurfaceOwnershipLostError(
+        `Another foreground command occupies ${identity.paneId}; preserving pane`,
+      );
     }
-    throw new SurfaceOwnershipUnprovenError(`Foreground ownership is unproven in ${identity.paneId}`);
+    throw new SurfaceOwnershipUnprovenError(
+      `Foreground ownership is unproven in ${identity.paneId}`,
+    );
   }
 
   async #cleanupSurface(child: ChildRecord): Promise<void> {

@@ -215,6 +215,51 @@ test("session credential aliases are redacted in URLs and URL-bearing headers", 
   assert.doesNotMatch(JSON.stringify(result), /(?:session|sid|java-session|php-session)-secret/);
 });
 
+test("JWT, OAuth assertion, and SAML credential aliases are redacted", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "POST",
+        url: "https://example.test/callback?jwt=jwt-secret&clientAssertion=oauth-secret&SAMLResponse=saml-secret&SAMLart=artifact-secret&view=keep",
+        resourceType: "fetch",
+        requestHeaders: {
+          "X-JWT": "header-jwt-secret",
+          XJWT: "compact-jwt-secret",
+          CfAccessJwtAssertion: "cloudflare-assertion-secret",
+          "X-SAML-Request": "saml-request-secret",
+          UpstreamSAMLResponse: "saml-response-secret",
+          "X-Assertion-Mode": "signed",
+        },
+      },
+    ],
+    true,
+    new Set([
+      "x-jwt",
+      "xjwt",
+      "cfaccessjwtassertion",
+      "x-saml-request",
+      "upstreamsamlresponse",
+      "x-assertion-mode",
+    ]),
+  );
+
+  assert.equal(
+    result.entries[0].url,
+    "https://example.test/callback?jwt=%5BREDACTED%5D&clientAssertion=%5BREDACTED%5D&SAMLResponse=%5BREDACTED%5D&SAMLart=%5BREDACTED%5D&view=keep",
+  );
+  assert.equal(result.entries[0].requestHeaders["X-JWT"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.XJWT, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.CfAccessJwtAssertion, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["X-SAML-Request"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.UpstreamSAMLResponse, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["X-Assertion-Mode"], "signed");
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /(?:jwt|oauth|saml|cloudflare|header-jwt|assertion)-secret/,
+  );
+});
+
 test("redacts credentials from OAuth and route-query URL fragments in rendered details", () => {
   const result = serializeNetworkEntries(
     [
