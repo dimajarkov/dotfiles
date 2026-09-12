@@ -180,7 +180,9 @@ test("completion rendering removes terminal controls and neutralizes unsafe link
     )
       .render(160)
       .join("\n");
+    // oxlint-disable-next-line no-control-regex -- Assert raw terminal controls are absent.
     assert.doesNotMatch(rendered, /terminal-secret|\x1b\]52;/u);
+    // oxlint-disable-next-line no-control-regex -- Assert unsafe OSC 8 links are absent.
     assert.doesNotMatch(rendered, /\x1b\]8;;(?:command|javascript):/u);
   }
   assert.equal(message.details.result, result);

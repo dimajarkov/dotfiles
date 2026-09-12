@@ -47,6 +47,7 @@ function isFullscreenTui(tui: TUI | undefined): tui is HookableTui {
 }
 
 function parseMouseEvent(data: string): MouseEvent | undefined {
+  // oxlint-disable-next-line no-control-regex -- Parse the terminal's literal CSI mouse report.
   const match = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(data);
   if (!match) return undefined;
 
@@ -183,6 +184,7 @@ class JumpToBottomComponent implements Component {
       FULLSCREEN_WHEEL_SCROLL_LINES,
     );
 
+    // oxlint-disable-next-line no-this-alias -- Preserve component and dynamic TUI receivers.
     const component = this;
     const originalHandler = original as ViewportInputHandler;
     const wrapped = function (
