@@ -84,7 +84,7 @@ test("passive browser URL outputs redact credentials", async () => {
       url: "https://app.test/source.ts?code=console-secret",
       lineNumber: 17,
     }),
-    text: () => "failure",
+    text: () => "GET /callback?access_token=console-text-secret failed",
     type: () => "error",
   });
   const consoleResult = await tools.get("browser_console").execute("call", {});
@@ -92,7 +92,11 @@ test("passive browser URL outputs redact credentials", async () => {
     consoleResult.details.entries[0].location,
     "https://app.test/source.ts?code=%5BREDACTED%5D:17",
   );
-  assert.doesNotMatch(JSON.stringify(consoleResult), /console-secret/);
+  assert.equal(
+    consoleResult.details.entries[0].text,
+    "GET /callback?access_token=%5BREDACTED%5D failed",
+  );
+  assert.doesNotMatch(JSON.stringify(consoleResult), /console(?:-text)?-secret/);
 
   const notifications = [];
   await commands.get("browser").handler("", {
