@@ -171,8 +171,8 @@ def run(mode):
         command("/widget-demo history")
         text = capture("active-over-history")
         assert "HISTORY-PARENT" in text and "ACTIVE-SIBLING" in text, "Completed descendants cannot hide active siblings"
-        assert text.count("done-history-") == 3 and "+1 more" in text, "History fills only spare widget capacity"
-        assert text.index("HISTORY-PARENT") < text.index("done-history-") < text.index("ACTIVE-SIBLING"), "Selected rows retain tree order"
+        assert "done-history-" not in text and "+4 more" in text, "Descendant history yields to active siblings"
+        assert text.index("HISTORY-PARENT") < text.index("ACTIVE-SIBLING"), "Selected rows retain tree order"
         command("/widget-demo many")
         text = capture("many")
         assert "+5 more" in text and "layout-review-7" in text, "Show overflow and prioritize blocked subtrees"

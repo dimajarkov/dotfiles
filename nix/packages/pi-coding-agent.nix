@@ -2,19 +2,29 @@
 
 pkgs.buildNpmPackage rec {
   pname = "pi-coding-agent";
-  version = "0.84.1";
+  version = "0.85.0";
 
   src = pkgs.fetchFromGitHub {
     owner = "earendil-works";
     repo = "pi";
-    rev = "2e4d23959485279aa2da1a45103de2ea22d46395";
-    hash = "sha256-Z92ZxL2WdbRl7H1mHbN2sWfH/9ndpqLtBxEv5+A5fbg=";
+    rev = "107d79f11072bbc8a3a757ed7fd69596bee7d68c";
+    hash = "sha256-gznGlneVCx3htxRiJq0/futm4qLR9Bzfv3UwP3ES9v0=";
   };
 
-  npmDepsHash = "sha256-GP8ksj6HJcK0id6VDr1c/WoHDwK1T50qJnYfj94ljDs=";
+  npmDepsHash = "sha256-K/KiukwTHwu4HE8hUu7ur3bxggwfO0WL+QDI0FtxP3I=";
 
-  postPatch = ''
-    tar -xzf ${../../vendor/pi-model-data-2e4d239.tar.gz}
+  # Native queue admission must be observable before acknowledging child control.
+  patches = [ ../patches/pi-native-message-admission.patch ];
+
+  postPatch = let
+    modelData = pkgs.fetchurl {
+      url = "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-${version}.tgz";
+      hash = "sha256-RhiL2stVWgdGagER85Y/IJMqFhmeTWz7jUSn/l/G40I=";
+    };
+  in ''
+    mkdir -p packages/ai/src/providers/data
+    tar -xzf ${modelData} --strip-components=4 \
+      -C packages/ai/src/providers/data package/dist/providers/data
   '';
   npmFlags = [ "--ignore-scripts" ];
   npmBuildScript = "build:offline";
@@ -36,6 +46,8 @@ pkgs.buildNpmPackage rec {
   installCheckPhase = ''
     runHook preInstallCheck
     "$out/bin/pi" --version
+    PI_OFFLINE=1 ${nodejs}/bin/node ${../tests/pi-message-admission.mjs} \
+      "$out/lib/pi-coding-agent/packages"
     echo "Checking Node worker file descriptor tracking"
     cat > "$TMPDIR/fd-worker.cjs" <<'EOF'
     const { closeSync, openSync, readSync } = require("node:fs");

@@ -6,6 +6,8 @@ import type { ChildRecord } from "./orchestrator.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 
+const terminalClipboardPattern = new RegExp(`${String.fromCharCode(27)}\\]52;`, "u");
+
 // This fixture exercises the UI boundary, not an orchestrator or a model.
 const children: ChildRecord[] = ["parent", "child"].map((id, index) => ({
   id,
@@ -249,6 +251,9 @@ test("non-TUI tree output sanitizes child metadata without changing records", as
   await inspector.show(ctx, unsafeRows);
 
   assert.equal(output, "└─ parent name [worker role] completed");
-  assert.doesNotMatch(output, /NAME-CONTROL|ROLE-CONTROL|\x1b\]52;/u);
+  assert.doesNotMatch(
+    output,
+    new RegExp(`NAME-CONTROL|ROLE-CONTROL|${terminalClipboardPattern.source}`, "u"),
+  );
   assert.deepEqual(unsafeChildren, saved);
 });

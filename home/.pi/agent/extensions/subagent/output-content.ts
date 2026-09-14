@@ -2,11 +2,7 @@ import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { hyperlink, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import {
-  isSafeExplicitUrl,
-  sanitizeOutput,
-  sanitizeRenderedOutput,
-} from "../lib/terminal-safety.ts";
+import { isSafeExplicitUrl, sanitizeOutput } from "../lib/terminal-safety.ts";
 
 export {
   sanitizeMetadata,

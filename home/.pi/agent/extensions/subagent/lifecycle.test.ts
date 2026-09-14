@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { CompletionDelivery } from "./completion-delivery.ts";
-import { completionSettlementAt, writeCompletionSettlement } from "./completion-protocol.ts";
+import {
+  childControlRequestFromPrompt,
+  completionSettlementAt,
+  writeCompletionSettlement,
+} from "./completion-protocol.ts";
 import { SubagentOrchestrator, type CommandExecution } from "./orchestrator.ts";
 
 async function within<T>(promise: Promise<T>): Promise<T> {
@@ -165,6 +169,28 @@ function scenario(options: ScenarioOptions = {}) {
               agent_session: { kind: "path", value: session },
             },
           };
+          const control =
+            args[1] === "prompt" ? childControlRequestFromPrompt(args[3] ?? "") : undefined;
+          if (control) {
+            const settlement = completionSettlementAt(
+              control.receiptPath.slice(0, -".control".length),
+            );
+            writeFileSync(
+              control.receiptPath,
+              `${JSON.stringify({
+                version: 1,
+                childId: control.childId,
+                generation: control.generation,
+                nonce: control.nonce,
+                action: control.action,
+                status: settlement?.phase === "candidate" ? "settling" : "accepted",
+                sessionPath: session,
+                ...(settlement?.phase === "running" && settlement.frontierEntryId
+                  ? { frontierEntryId: settlement.frontierEntryId }
+                  : {}),
+              })}\n`,
+            );
+          }
         } else {
           throw new Error(`Unexpected Herdr command: ${args.join(" ")}`);
         }

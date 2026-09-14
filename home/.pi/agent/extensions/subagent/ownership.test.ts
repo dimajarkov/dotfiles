@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
+import { childControlRequestFromPrompt, completionSettlementAt } from "./completion-protocol.ts";
 import { SubagentOrchestrator, type ChildRecord, type CommandExecution } from "./orchestrator.ts";
 
 async function scenario(
@@ -170,6 +171,28 @@ async function scenario(
             break;
           default:
             throw new Error(`Unexpected transport command: ${command}`);
+        }
+        const control =
+          command === "agent prompt" ? childControlRequestFromPrompt(args[3] ?? "") : undefined;
+        if (control) {
+          const settlement = completionSettlementAt(
+            control.receiptPath.slice(0, -".control".length),
+          );
+          writeFileSync(
+            control.receiptPath,
+            `${JSON.stringify({
+              version: 1,
+              childId: control.childId,
+              generation: control.generation,
+              nonce: control.nonce,
+              action: control.action,
+              status: settlement?.phase === "candidate" ? "settling" : "accepted",
+              sessionPath: session,
+              ...(settlement?.phase === "running" && settlement.frontierEntryId
+                ? { frontierEntryId: settlement.frontierEntryId }
+                : {}),
+            })}\n`,
+          );
         }
         return { code: 0, stdout: JSON.stringify({ result }), stderr: "" };
       },

@@ -7,6 +7,10 @@ import {
   type SubagentToolRenderTheme,
 } from "./tool-renderer.ts";
 
+const ESC = String.fromCharCode(27);
+const terminalClipboardPattern = new RegExp(`${ESC}\\]52;`, "u");
+const greenPattern = new RegExp(`${ESC}\\[32m`, "u");
+
 const theme: SubagentToolRenderTheme = {
   fg: (_color, text) => `\x1b[32m${text}\x1b[0m`,
   bold: (text) => `\x1b[1m${text}\x1b[22m`,
@@ -29,15 +33,21 @@ test("tool call rendering sanitizes streaming metadata without mutating argument
   const rendered = renderSubagentToolCall(args, theme).render(160).join("\n");
 
   assert.equal(visibleText(rendered), "subagent spawn next child name [workerrole]");
-  assert.doesNotMatch(rendered, /ACTION-CONTROL|NAME-CONTROL|command:unsafe|\x1b\]52;/u);
-  assert.match(rendered, /\x1b\[32m/u);
+  assert.doesNotMatch(
+    rendered,
+    new RegExp(
+      `ACTION-CONTROL|NAME-CONTROL|command:unsafe|${terminalClipboardPattern.source}`,
+      "u",
+    ),
+  );
+  assert.match(rendered, greenPattern);
   assert.deepEqual(args, saved);
 
   const partial = renderSubagentToolCall({ name: "partial\x1b]52;c;PARTIAL\x07" }, theme)
     .render(80)
     .join("\n");
   assert.equal(visibleText(partial), "subagent … partial");
-  assert.doesNotMatch(partial, /PARTIAL|\x1b\]52;/u);
+  assert.doesNotMatch(partial, new RegExp(`PARTIAL|${terminalClipboardPattern.source}`, "u"));
 });
 
 test("tool result rendering sanitizes summaries and errors without mutating results", () => {
@@ -54,7 +64,10 @@ test("tool result rendering sanitizes summaries and errors without mutating resu
   const rendered = renderSubagentToolResult(result, theme).render(160).join("\n");
 
   assert.match(visibleText(rendered), /✗ child \[worker\]\nError at output after/u);
-  assert.doesNotMatch(rendered, /RESULT-CONTROL|SAVED-CONTROL|\x1b\]52;/u);
-  assert.match(rendered, /\x1b\[32m/u);
+  assert.doesNotMatch(
+    rendered,
+    new RegExp(`RESULT-CONTROL|SAVED-CONTROL|${terminalClipboardPattern.source}`, "u"),
+  );
+  assert.match(rendered, greenPattern);
   assert.deepEqual(result, saved);
 });

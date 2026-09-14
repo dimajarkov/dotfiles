@@ -1,6 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { isCredentialName } from "../lib/credential-safety.ts";
+import { isCredentialName, isCredentialValue } from "../lib/credential-safety.ts";
 
 export interface ResolvedAddress {
   address: string;
@@ -32,6 +32,31 @@ const PUBLIC_CONTENT_PATHS = new Map<string, readonly RegExp[]>([
   ["www.rfc-editor.org", [/^\/rfc\//u]],
   ["datatracker.ietf.org", [/^\/doc\//u]],
 ]);
+
+// This deliberately belongs to the URL eligibility policy, not the shared
+// arbitrary-value classifier. Path labels and filenames may wrap a token
+// (`asset-glpat-...-label.md`) without changing the credential disclosure.
+const RECOGNIZABLE_CREDENTIAL_PREFIXES = [
+  /github_pat_[A-Za-z\d_]{8,}/u,
+  /gh[pousr]_[A-Za-z\d]{8,}/u,
+  /gl(?:agent|cbt|dt|ffct|ft|imt|oas|pat|ptt|rt|soat)-[A-Za-z\d_-]{8,}/u,
+  /xox[aboprs]-[A-Za-z\d-]{8,}/u,
+  /(?:sk|rk)_(?:live|test)_[A-Za-z\d]{8,}/u,
+  /sk-(?:proj-|svcacct-)?[A-Za-z\d_-]{8,}/u,
+  /AIza[A-Za-z\d_-]{8,}/u,
+  /(?:AKIA|ASIA|AIDA|AROA|ANPA|ANVA|ASCA)[A-Z\d]{8,}/u,
+  /pypi-[A-Za-z\d_-]{8,}/u,
+  /npm_[A-Za-z\d_-]{8,}/u,
+  /hf_[A-Za-z\d]{8,}/u,
+  /dop_v1_[A-Fa-f\d]{8,}/u,
+  /shp(?:at|ca|pa|ss)_[A-Fa-f\d]{8,}/u,
+  /SG\.[A-Za-z\d_-]{8,}\.[A-Za-z\d_-]{8,}/u,
+];
+
+function hasRecognizableCredentialPrefix(segment: string): boolean {
+  const normalized = segment.normalize("NFKC");
+  return RECOGNIZABLE_CREDENTIAL_PREFIXES.some((pattern) => pattern.test(normalized));
+}
 
 const resolveAddresses: ResolveAddresses = (hostname) =>
   lookup(hostname, { all: true, verbatim: true });
@@ -112,21 +137,8 @@ function isCredentialPathSegment(segment: string): boolean {
       normalized,
     ) ||
     /(?:accesskey|githubpat|privatekey|signed)$/u.test(compact) ||
-    /^(?:gh[pousr]_|github_pat_|sk_(?:live|test)_|xox[aboprs]-)/u.test(normalized)
-  );
-}
-
-function isOpaqueCredentialProof(segment: string): boolean {
-  const normalized = segment.normalize("NFKC");
-  if (/^[A-Za-z\d_-]{8,}(?:\.[A-Za-z\d_-]{2,}){2}(?:\.[A-Za-z\d_-]{2,}){0,2}$/u.test(normalized)) {
-    return true;
-  }
-  return (
-    normalized.length >= 32 &&
-    /^[A-Za-z\d+/_~-]+={0,2}$/u.test(normalized) &&
-    /[a-z]/u.test(normalized) &&
-    /[A-Z]/u.test(normalized) &&
-    /\d/u.test(normalized)
+    hasRecognizableCredentialPrefix(segment) ||
+    isCredentialValue(segment)
   );
 }
 
@@ -134,12 +146,7 @@ function hasCredentialPath(pathname: string): boolean {
   const variants = decodedPathVariants(pathname);
   if (!variants) return true;
   return variants.some((variant) =>
-    variant
-      .split(/[\\/]/u)
-      .some(
-        (segment) =>
-          segment && (isCredentialPathSegment(segment) || isOpaqueCredentialProof(segment)),
-      ),
+    variant.split(/[\\/]/u).some((segment) => segment && isCredentialPathSegment(segment)),
   );
 }
 

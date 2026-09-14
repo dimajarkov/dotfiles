@@ -1,0 +1,2 @@
+# Unified patch context prefixes upstream tabs and empty lines with a space.
+nix/patches/*.patch whitespace=-blank-at-eol,-space-before-tab

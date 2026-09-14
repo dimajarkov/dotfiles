@@ -1,9 +1,5 @@
 import { Text } from "@earendil-works/pi-tui";
-import {
-  sanitizeMetadata,
-  sanitizeOutput,
-  sanitizeRenderedLines,
-} from "../lib/terminal-safety.ts";
+import { sanitizeMetadata, sanitizeOutput, sanitizeRenderedLines } from "../lib/terminal-safety.ts";
 
 export interface SubagentToolRenderTheme {
   fg(color: string, text: string): string;

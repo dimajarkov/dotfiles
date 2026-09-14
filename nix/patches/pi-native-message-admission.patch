@@ -1,0 +1,132 @@
+diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
+index ac2bd4b..834f059 100644
+--- a/packages/coding-agent/src/core/agent-session.ts
++++ b/packages/coding-agent/src/core/agent-session.ts
+@@ -1466,6 +1466,45 @@ export class AgentSession {
+ 		}
+ 	}
+ 
++	/**
++	 * Native queue admission, not a promise of consumption or completion.
++	 * Keep this method synchronous: async wrappers hide even synchronous queue rejection.
++	 */
++	enqueueCustomMessage<T = unknown>(
++		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
++		options?: { deliverAs?: "steer" | "followUp" },
++	): { status: "queued" } {
++		if (this.isCompacting && !this.isStreaming) {
++			throw new Error("Cannot enqueue a custom message during idle compaction");
++		}
++		const appMessage = {
++			role: "custom" as const,
++			customType: message.customType,
++			content: message.content ?? [],
++			display: message.display,
++			details: message.details,
++			timestamp: Date.now(),
++		} satisfies CustomMessage<T>;
++		const running = this.isStreaming;
++		if (running && options?.deliverAs === "followUp") {
++			this.agent.followUp(appMessage);
++		} else {
++			// Idle follow-ups also precede the first provider call. An empty prompt
++			// starts the lifecycle and drains this steering queue before that call.
++			this.agent.steer(appMessage);
++		}
++		if (!running) {
++			void this._runAgentPrompt([]).catch((err) => {
++				this._extensionRunner.emitError({
++					extensionPath: "<runtime>",
++					event: "enqueue_message_run",
++					error: err instanceof Error ? err.message : String(err),
++				});
++			});
++		}
++		return { status: "queued" };
++	}
++
+ 	/**
+ 	 * Send a custom message to the session. Creates a CustomMessageEntry.
+ 	 *
+@@ -2572,6 +2611,7 @@ export class AgentSession {
+ 
+ 		runner.bindCore(
+ 			{
++				enqueueMessage: (message, options) => this.enqueueCustomMessage(message, options),
+ 				sendMessage: (message, options) => {
+ 					this.sendCustomMessage(message, options).catch((err) => {
+ 						runner.emitError({
+diff --git a/packages/coding-agent/src/core/extensions/loader.ts b/packages/coding-agent/src/core/extensions/loader.ts
+index 32ca6c9..7e87e71 100644
+--- a/packages/coding-agent/src/core/extensions/loader.ts
++++ b/packages/coding-agent/src/core/extensions/loader.ts
+@@ -187,6 +187,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
+ 	};
+ 
+ 	const runtime: ExtensionRuntime = {
++		enqueueMessage: notInitialized,
+ 		sendMessage: notInitialized,
+ 		sendUserMessage: notInitialized,
+ 		appendEntry: notInitialized,
+@@ -357,6 +358,11 @@ function createExtensionAPI(
+ 		},
+ 
+ 		// Action methods - delegate to shared runtime
++		enqueueMessage(message, options) {
++			assertActive();
++			return runtime.enqueueMessage(message, options);
++		},
++
+ 		sendMessage(message, options): void {
+ 			assertActive();
+ 			runtime.sendMessage(message, options);
+diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
+index 3346645..25a502b 100644
+--- a/packages/coding-agent/src/core/extensions/runner.ts
++++ b/packages/coding-agent/src/core/extensions/runner.ts
+@@ -324,6 +324,7 @@ export class ExtensionRunner {
+ 		},
+ 	): void {
+ 		// Copy actions into the shared runtime (all extension APIs reference this)
++		this.runtime.enqueueMessage = actions.enqueueMessage;
+ 		this.runtime.sendMessage = actions.sendMessage;
+ 		this.runtime.sendUserMessage = actions.sendUserMessage;
+ 		this.runtime.appendEntry = actions.appendEntry;
+diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
+index eaff3a8..d776292 100644
+--- a/packages/coding-agent/src/core/extensions/types.ts
++++ b/packages/coding-agent/src/core/extensions/types.ts
+@@ -1361,6 +1361,13 @@ export interface ExtensionAPI {
+ 	// Actions
+ 	// =========================================================================
+ 
++	/**
++	 * Synchronously enqueue a custom message and start an idle agent.
++	 * Returns only after native queue insertion, or throws without acknowledging it.
++	 * Consumption and completion are asynchronous and are not guaranteed by this receipt.
++	 */
++	enqueueMessage: EnqueueMessageHandler;
++
+ 	/** Send a custom message to the session. */
+ 	sendMessage<T = unknown>(
+ 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+@@ -1623,6 +1630,11 @@ export interface ExtensionShortcut {
+ 
+ type HandlerFn = (...args: unknown[]) => Promise<unknown>;
+ 
++export type EnqueueMessageHandler = <T = unknown>(
++	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
++	options?: { deliverAs?: "steer" | "followUp" },
++) => { status: "queued" };
++
+ export type SendMessageHandler = <T = unknown>(
+ 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+ 	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+@@ -1694,6 +1706,7 @@ export interface ExtensionRuntimeState {
+  * Provided to runner.initialize(), copied into the shared runtime.
+  */
+ export interface ExtensionActions {
++	enqueueMessage: EnqueueMessageHandler;
+ 	sendMessage: SendMessageHandler;
+ 	sendUserMessage: SendUserMessageHandler;
+ 	appendEntry: AppendEntryHandler;
