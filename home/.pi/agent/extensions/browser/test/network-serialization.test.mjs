@@ -543,7 +543,9 @@ test("sanitizes composite header bytes before format-specific redaction", () => 
     '2; url="/callback?code=%5BREDACTED%5D"suffix',
   );
   assert.equal(result.entries[2].responseHeaders.Link, "</asset?code=%5BREDACTED%5D>; rel=next");
-  assert.doesNotMatch(JSON.stringify(result), /\x1b|NO-URL|PREFIX|(?:unquoted|quoted|link)-secret/);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes("\x1b"), false);
+  assert.doesNotMatch(serialized, /NO-URL|PREFIX|(?:unquoted|quoted|link)-secret/);
 });
 
 test("redacts URL credentials from network failure diagnostics", () => {
@@ -600,6 +602,23 @@ test("redacts credential parameters from every diagnostic URL form", () => {
   assert.doesNotMatch(
     redactBrowserDiagnostic(diagnostic),
     /(?:bare|dot|parent|root|query|fragment|network|absolute|malformed)-secret/,
+  );
+});
+
+test("redacts authority credentials from URLs embedded in composite diagnostics", () => {
+  const diagnostic =
+    "request failed: url=https://user:password@example.test/callback, retry=https://safe.test";
+
+  assert.equal(
+    redactBrowserDiagnostic(diagnostic),
+    "request failed: url=https://%5BREDACTED%5D:%5BREDACTED%5D@example.test/callback, retry=https://safe.test",
+  );
+  assert.doesNotMatch(redactBrowserDiagnostic(diagnostic), /user|password/u);
+  assert.equal(
+    redactBrowserDiagnostic(
+      "attempts=https://safe.test,https://second-user:second-password@example.test/fail",
+    ),
+    "attempts=https://safe.test,https://%5BREDACTED%5D:%5BREDACTED%5D@example.test/fail",
   );
 });
 
@@ -667,6 +686,7 @@ test("strips terminal controls from structured and rendered network fields", () 
   assert.equal(result.entries[0].statusText, "Remote Error");
   assert.equal(result.entries[0].requestHeaders["X-Diagnostic"], "beforeafter");
   assert.equal(result.entries[0].failure, "failed safely");
-  assert.doesNotMatch(JSON.stringify(result), /(?:URL|STATUS|HEADER|FAILURE)-CONTROL|\x1b\]52;/u);
-  assert.doesNotMatch(result.text, /\x1b\]52;/u);
+  assert.doesNotMatch(JSON.stringify(result), /(?:URL|STATUS|HEADER|FAILURE)-CONTROL/u);
+  assert.equal(JSON.stringify(result).includes("\x1b]52;"), false);
+  assert.equal(result.text.includes("\x1b]52;"), false);
 });

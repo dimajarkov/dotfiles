@@ -17,6 +17,7 @@ import {
   type HerdrTransport,
 } from "./orchestrator.ts";
 import {
+  childControlReceiptPath,
   childControlRequestFromPrompt,
   completionSettlementAt,
   writeCompletionSettlement,
@@ -49,6 +50,7 @@ class FakeHerdrTransport implements HerdrTransport {
   readonly calls: string[][] = [];
   readonly responses: CommandExecution[];
   readonly ownershipReads: string[][] = [];
+  controlDispatchDelayMilliseconds = 0;
   controlReceiptDelayMilliseconds = 0;
   suppressControlReceipt = false;
   #runtimeAgents = new Map<string, unknown>();
@@ -162,6 +164,11 @@ class FakeHerdrTransport implements HerdrTransport {
       args[0] === "agent" && args[1] === "prompt"
         ? childControlRequestFromPrompt(args[3] ?? "")
         : undefined;
+    if (control && this.controlDispatchDelayMilliseconds > 0) {
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, this.controlDispatchDelayMilliseconds),
+      );
+    }
     if (control && !this.suppressControlReceipt) {
       const markerPath = control.receiptPath.slice(0, -".control".length);
       const settlement = completionSettlementAt(markerPath);
@@ -174,17 +181,25 @@ class FakeHerdrTransport implements HerdrTransport {
             generation: control.generation,
             nonce: control.nonce,
             action: control.action,
-            status: settlement?.phase === "candidate" ? "settling" : "accepted",
+            status:
+              settlement?.phase === "candidate"
+                ? "settling"
+                : control.action === "cancel"
+                  ? "cancelled"
+                  : "accepted",
             sessionPath: this.#runtimeSessionPath,
             ...(settlement?.phase === "running" && settlement.frontierEntryId
               ? { frontierEntryId: settlement.frontierEntryId }
               : {}),
           })}\n`,
         );
+      const writeUnexpiredReceipt = () => {
+        if (Date.now() < control.expiresAt) writeReceipt();
+      };
       if (this.controlReceiptDelayMilliseconds > 0) {
-        setTimeout(writeReceipt, this.controlReceiptDelayMilliseconds);
+        setTimeout(writeUnexpiredReceipt, this.controlReceiptDelayMilliseconds);
       } else {
-        writeReceipt();
+        writeUnexpiredReceipt();
       }
     }
     if (args[0] === "pane" && args[1] === "list" && body.result?.panes) {
@@ -2119,7 +2134,7 @@ test("active lifecycle controls reject a foreign Herdr session before mutation o
   assert.deepEqual(transport.calls, []);
 });
 
-test("cancel validates the reported pane and immutable session before accepting wait status", async () => {
+test("cancel persists the child claim before validating the reported settled surface", async () => {
   const directory = temporaryDirectory();
   const childSession = join(directory, "cancel-identity.jsonl");
   writeFileSync(
@@ -2169,7 +2184,9 @@ test("cancel validates the reported pane and immutable session before accepting 
     /pane identity changed/,
   );
 
-  assert.equal(orchestrator.list("parent-session")[0]?.state, "working");
+  const cancelled = orchestrator.list("parent-session")[0];
+  assert.equal(cancelled?.state, "cancelled");
+  assert.equal(cancelled?.surfaceState, "cleanup-pending");
   assert.equal(
     transport.calls.some((call) => call[1] === "close"),
     false,
@@ -2260,6 +2277,32 @@ for (const failure of ["timeout", "agent_blocked"]) {
     assert.deepEqual(orchestrator.list("parent-session")[0], before);
   });
 }
+
+test("control dispatch and receipt polling share one admission deadline", async () => {
+  const responses = successfulRootSpawnResponses();
+  responses.push({ id: "cli:agent:prompt", result: { type: "ok" } });
+  const transport = new FakeHerdrTransport(responses);
+  transport.controlDispatchDelayMilliseconds = 5_100;
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: temporaryDirectory(),
+    environment: { HERDR_ENV: "1", HERDR_WORKSPACE_ID: "w1", HERDR_PANE_ID: "w1:p1" },
+    id: () => "child-1",
+    monitor: false,
+  });
+  await orchestrator.spawn(spawnRequest());
+
+  const startedAt = Date.now();
+  await assert.rejects(
+    orchestrator.cancel("parent-session", "parent-session", "authentication"),
+    /did not acknowledge cancel control admission/,
+  );
+  const elapsed = Date.now() - startedAt;
+  const request = controlRequest(transport.calls.at(-1));
+  assert.ok(request.expiresAt <= startedAt + 5_500);
+  assert.ok(elapsed >= 5_000, `dispatch returned before the deadline: ${elapsed}ms`);
+  assert.ok(elapsed < 8_500, `receipt polling started a second deadline: ${elapsed}ms`);
+});
 
 test("pending child control prevents parent preflight from claiming its preceding response", async () => {
   const directory = temporaryDirectory();
@@ -2608,6 +2651,134 @@ test("recovery promotes an exact candidate with durable settlement evidence", as
   assert.equal(child?.result, "EXACT_CRASHED_PUBLISHER_RESULT");
   assert.equal(child?.surfaceState, "closed");
   assert.deepEqual(delivered, ["EXACT_CRASHED_PUBLISHER_RESULT"]);
+});
+
+test("recovery preserves provider failure separately from an unproven-candidate diagnostic", async () => {
+  const directory = temporaryDirectory();
+  const childSession = join(directory, "publisher-error-crash.jsonl");
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({
+      type: "message",
+      id: "assistant-error-before-publisher-crash",
+      parentId: null,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "EXACT_PARTIAL_RESULT" }],
+        stopReason: "error",
+        errorMessage: "EXACT_PROVIDER_ERROR",
+      },
+    })}\n`,
+  );
+  const responses = successfulRootSpawnResponses();
+  const started = responses[2] as {
+    result: { agent: { agent_session: { value: string } } };
+  };
+  started.result.agent.agent_session.value = childSession;
+  const environment = {
+    HERDR_ENV: "1",
+    HERDR_SESSION: "session-a",
+    HERDR_WORKSPACE_ID: "w1",
+    HERDR_PANE_ID: "w1:p1",
+  };
+  const initial = new SubagentOrchestrator({
+    transport: new FakeHerdrTransport(responses),
+    stateDirectory: directory,
+    environment,
+    id: () => "child-1",
+    monitor: false,
+  });
+  const active = await initial.spawn(spawnRequest());
+  writeCompletionSettlement(active.completionMarkerPath, {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "candidate",
+    stopReason: "error",
+    entryId: "assistant-error-before-publisher-crash",
+    sessionPath: childSession,
+  });
+  const recoveryTransport = new FakeHerdrTransport([
+    { id: "unused-agent-get", result: { type: "unused" } },
+    { id: "cli:pane:close", result: { type: "ok" } },
+  ]);
+  recoveryTransport.responses[0] = { code: 1, stdout: "", stderr: "agent_not_found" };
+  const delivered: Array<{ error?: string; recoveryError?: string; result?: string }> = [];
+  const recovered = new SubagentOrchestrator({
+    transport: recoveryTransport,
+    stateDirectory: directory,
+    environment,
+    monitor: false,
+    onCompletion: async (child) => {
+      delivered.push(child);
+      return true;
+    },
+  });
+
+  await recovered.recover("parent-session", "parent-session");
+
+  const child = recovered.list("parent-session")[0];
+  assert.equal(child?.state, "crashed");
+  assert.equal(child?.result, "EXACT_PARTIAL_RESULT");
+  assert.equal(child?.error, "EXACT_PROVIDER_ERROR");
+  assert.match(child?.recoveryError ?? "", /full settlement could not be proven/u);
+  assert.equal(delivered[0]?.error, "EXACT_PROVIDER_ERROR");
+  assert.match(delivered[0]?.recoveryError ?? "", /full settlement could not be proven/u);
+});
+
+test("recovery honors a child-published terminal cancellation claim", async () => {
+  const directory = temporaryDirectory();
+  const childSession = join(directory, "cancelled-before-parent-exit.jsonl");
+  writeFileSync(childSession, "");
+  const responses = successfulRootSpawnResponses();
+  const started = responses[2] as {
+    result: { agent: { agent_session: { value: string } } };
+  };
+  started.result.agent.agent_session.value = childSession;
+  const environment = {
+    HERDR_ENV: "1",
+    HERDR_SESSION: "session-a",
+    HERDR_WORKSPACE_ID: "w1",
+    HERDR_PANE_ID: "w1:p1",
+  };
+  const initial = new SubagentOrchestrator({
+    transport: new FakeHerdrTransport(responses),
+    stateDirectory: directory,
+    environment,
+    id: () => "child-1",
+    monitor: false,
+  });
+  const active = await initial.spawn(spawnRequest());
+  writeFileSync(
+    childControlReceiptPath(active.completionMarkerPath),
+    `${JSON.stringify({
+      version: 1,
+      childId: active.id,
+      generation: active.generation,
+      nonce: "56565656-5656-4565-8565-565656565656",
+      action: "cancel",
+      status: "cancelled",
+      sessionPath: childSession,
+    })}\n`,
+  );
+  const recoveryTransport = new FakeHerdrTransport([
+    { id: "cli:pane:close", result: { type: "ok" } },
+  ]);
+  const recovered = new SubagentOrchestrator({
+    transport: recoveryTransport,
+    stateDirectory: directory,
+    environment,
+    monitor: false,
+    onCompletion: async () => true,
+  });
+
+  await recovered.recover("parent-session", "parent-session");
+
+  const child = recovered.list("parent-session")[0];
+  assert.equal(child?.state, "cancelled");
+  assert.equal(child?.result, undefined);
+  assert.equal(child?.error, undefined);
+  assert.equal(child?.surfaceState, "closed");
 });
 
 test("live message admission failure leaves the owned agent monitored", async () => {

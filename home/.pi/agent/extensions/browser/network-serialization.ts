@@ -90,22 +90,28 @@ function redactFragment(hash: string): string {
 }
 
 function redactAuthorityCredentials(value: string): string {
-  const prefix = /^(?:[a-z][a-z\d+.-]*:)?\/\//i.exec(value)?.[0];
-  if (!prefix) return value;
+  const authorityPattern = /(?:[a-z][a-z\d+.-]*:)?\/\//gi;
+  let redacted = "";
+  let cursor = 0;
 
-  const authorityStart = prefix.length;
-  const authorityEndOffset = value.slice(authorityStart).search(/[/?#]/u);
-  const authorityEnd =
-    authorityEndOffset === -1 ? value.length : authorityStart + authorityEndOffset;
-  const authority = value.slice(authorityStart, authorityEnd);
-  const at = authority.lastIndexOf("@");
-  if (at === -1) return value;
+  for (const match of value.matchAll(authorityPattern)) {
+    const authorityStart = (match.index ?? 0) + match[0].length;
+    const authorityEndOffset = value.slice(authorityStart).search(/[/?#]/u);
+    const authorityEnd =
+      authorityEndOffset === -1 ? value.length : authorityStart + authorityEndOffset;
+    const authority = value.slice(authorityStart, authorityEnd);
+    const at = authority.lastIndexOf("@");
+    if (at === -1) continue;
 
-  const userInfo = authority.slice(0, at);
-  const replacement = userInfo.includes(":")
-    ? `${ENCODED_REDACTED}:${ENCODED_REDACTED}`
-    : ENCODED_REDACTED;
-  return `${value.slice(0, authorityStart)}${replacement}@${authority.slice(at + 1)}${value.slice(authorityEnd)}`;
+    const userInfo = authority.slice(0, at);
+    const replacement = userInfo.includes(":")
+      ? `${ENCODED_REDACTED}:${ENCODED_REDACTED}`
+      : ENCODED_REDACTED;
+    redacted += `${value.slice(cursor, authorityStart)}${replacement}@${authority.slice(at + 1)}`;
+    cursor = authorityEnd;
+  }
+
+  return cursor === 0 ? value : `${redacted}${value.slice(cursor)}`;
 }
 
 function redactMatchedUrl(value: string): string {

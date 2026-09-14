@@ -183,7 +183,12 @@ function scenario(options: ScenarioOptions = {}) {
                 generation: control.generation,
                 nonce: control.nonce,
                 action: control.action,
-                status: settlement?.phase === "candidate" ? "settling" : "accepted",
+                status:
+                  settlement?.phase === "candidate"
+                    ? "settling"
+                    : control.action === "cancel"
+                      ? "cancelled"
+                      : "accepted",
                 sessionPath: session,
                 ...(settlement?.phase === "running" && settlement.frontierEntryId
                   ? { frontierEntryId: settlement.frontierEntryId }

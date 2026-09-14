@@ -166,8 +166,8 @@ try {
   );
   assert.equal(
     aborted.receipt?.status,
-    "accepted",
-    "the blocked provider must abort through acknowledged admission",
+    "cancelled",
+    "the blocked provider must abort only after publishing its terminal cancellation claim",
   );
   assert.equal(
     Number(readFileSync(join(directory, "active-provider-child-calls"), "utf8")),

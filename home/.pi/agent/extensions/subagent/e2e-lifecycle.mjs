@@ -195,9 +195,13 @@ for (const action of (
         "\n  SCOUT_RESULT_1 \n\n",
         "recover exact concatenated persisted fragments",
       );
-      if (action === "publisher-bare")
-        assert.match(child.error, /full settlement could not be proven/);
-      else assert.equal(child.error, undefined);
+      if (action === "publisher-bare") {
+        assert.equal(child.error, undefined);
+        assert.match(child.recoveryError, /full settlement could not be proven/);
+      } else {
+        assert.equal(child.error, undefined);
+        assert.equal(child.recoveryError, undefined);
+      }
     } else assert.match(readFileSync(child.sessionPath, "utf8"), /SCOUT_RESULT_1/);
     const log = entries(session);
     const consumed = log.filter(

@@ -111,9 +111,10 @@ function protocolHarness(
   let shutdowns = 0;
   let aborts = 0;
   let leafId = "assistant-entry-2";
+  let pendingMessages = false;
   const branch: unknown[] = [];
   const ctx = {
-    hasPendingMessages: () => false,
+    hasPendingMessages: () => pendingMessages,
     sessionManager: {
       getBranch: () => branch,
       getLeafId: () => leafId,
@@ -147,6 +148,9 @@ function protocolHarness(
     aborts: () => aborts,
     setLeafId(value: string) {
       leafId = value;
+    },
+    setPendingMessages(value: boolean) {
+      pendingMessages = value;
     },
   };
 }
@@ -282,37 +286,67 @@ test("a claimed follow-up frontier cannot suppress a durable settlement candidat
   assert.equal(harness.shutdowns(), 1);
 });
 
-test("an unadmitted turn cannot supersede an unpublished settlement candidate", async () => {
+test("direct input behind a settlement candidate advances the response frontier", async () => {
   const harness = protocolHarness();
+  writeFileSync(
+    harness.sessionPath,
+    `${JSON.stringify({
+      type: "message",
+      id: "assistant-entry-2",
+      parentId: null,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "FIRST_CONCLUSION" }],
+        stopReason: "stop",
+      },
+    })}\n`,
+    { flag: "a" },
+  );
 
   await harness.endHandler(
-    {
-      messages: [{ role: "assistant", content: [], stopReason: "stop" }],
-    },
+    { messages: [{ role: "assistant", content: [], stopReason: "stop" }] },
     harness.ctx,
   );
-  await harness.beforeHandler({}, harness.ctx);
+  harness.setPendingMessages(true);
   await harness.settledHandler({}, harness.ctx);
+  assert.equal(existsSync(harness.markerPath), false);
 
+  harness.setPendingMessages(false);
+  await harness.beforeHandler({}, harness.ctx);
   assert.deepEqual(completionSettlementAt(harness.markerPath), {
     version: 1,
     childId: "child-1",
     generation: 1,
-    phase: "candidate",
-    stopReason: "stop",
-    entryId: "assistant-entry-2",
+    phase: "running",
+    frontierEntryId: "assistant-entry-2",
+    pendingControls: 0,
     sessionPath: harness.sessionPath,
-    settlementEvidence: {
-      version: 1,
-      blocked: false,
-      admittedMessages: 0,
-      pendingMessages: false,
-      pendingCompletions: false,
-      descendants: [],
-    },
   });
+
+  writeFileSync(
+    harness.sessionPath,
+    `${JSON.stringify({
+      type: "message",
+      id: "assistant-entry-3",
+      parentId: "assistant-entry-2",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "SECOND_CONCLUSION" }],
+        stopReason: "stop",
+      },
+    })}\n`,
+    { flag: "a" },
+  );
+  harness.setLeafId("assistant-entry-3");
+  await harness.endHandler(
+    { messages: [{ role: "assistant", content: [], stopReason: "stop" }] },
+    harness.ctx,
+  );
+  await harness.settledHandler({}, harness.ctx);
+
   assert.equal(existsSync(harness.markerPath), true);
   assert.equal(harness.shutdowns(), 1);
+  assert.equal(JSON.parse(readFileSync(harness.markerPath, "utf8")).entryId, "assistant-entry-3");
 });
 
 test("child admission accepts steering before persistence and advances only that turn", async () => {
@@ -511,9 +545,32 @@ test("child admission aborts only an open generation", async () => {
   );
 
   assert.deepEqual(result, { action: "handled" });
-  assert.equal(childControlReceiptAt(harness.markerPath)?.status, "accepted");
+  assert.equal(childControlReceiptAt(harness.markerPath)?.status, "cancelled");
   assert.equal(harness.queuedMessages.length, 0);
   assert.equal(harness.aborts(), 1);
+});
+
+test("expired cancellation cannot abort after delayed child-side admission", async () => {
+  const harness = protocolHarness();
+  await harness.beforeHandler({ prompt: "INITIAL" }, harness.ctx);
+  const result = await harness.inputHandler(
+    {
+      text: childControlPrompt({
+        version: 1,
+        childId: "child-1",
+        generation: 1,
+        nonce: "45454545-4545-4454-8454-454545454545",
+        action: "cancel",
+        receiptPath: childControlReceiptPath(harness.markerPath),
+        expiresAt: Date.now() - 1,
+      }),
+    },
+    harness.ctx,
+  );
+
+  assert.deepEqual(result, { action: "handled" });
+  assert.equal(childControlReceiptAt(harness.markerPath), undefined);
+  assert.equal(harness.aborts(), 0);
 });
 
 test("an unadmitted custom control cannot reach the model", async () => {

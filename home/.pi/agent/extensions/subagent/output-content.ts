@@ -250,7 +250,15 @@ function hrefForTarget(rawTarget: string, cwd: string, markdownPath = false): st
       const url = new URL(target);
       const protocol = url.protocol.toLowerCase();
       if (!isSafeExplicitUrl(target)) return undefined;
-      if (protocol === "file:") url.pathname = stripLineReference(url.pathname);
+      if (protocol === "file:") {
+        let pathname = url.pathname;
+        try {
+          pathname = decodeURIComponent(pathname);
+        } catch {
+          // Preserve malformed percent escapes as literal filename text.
+        }
+        url.pathname = stripLineReference(pathname);
+      }
       return url.href;
     } catch {
       return undefined;
@@ -270,12 +278,13 @@ function stripLineReference(target: string): string {
 function decodeMarkdownPath(target: string): string {
   const suffix = findFirstUnescapedCharacter(target, new Set(["?", "#"]));
   const rawPathname = suffix === -1 ? target : target.slice(0, suffix);
-  const pathname = decodeMarkdownEscapes(stripMarkdownLineReference(rawPathname));
+  let pathname = rawPathname;
   try {
-    return decodeURIComponent(pathname);
+    pathname = decodeURIComponent(pathname);
   } catch {
-    return pathname;
+    // Preserve malformed percent escapes as literal filename text.
   }
+  return decodeMarkdownEscapes(stripMarkdownLineReference(pathname));
 }
 
 function stripMarkdownLineReference(target: string): string {
@@ -326,7 +335,9 @@ function localFileHref(target: string, cwd: string): string | undefined {
         : target;
     const absolute =
       isAbsolute(expanded) || /^[A-Za-z]:[\\/]/u.test(expanded) ? expanded : resolve(cwd, expanded);
-    return pathToFileURL(absolute).href;
+    const href = pathToFileURL(absolute).href;
+    const fileAuthorityEnd = "file://".length;
+    return `${href.slice(0, fileAuthorityEnd)}${href.slice(fileAuthorityEnd).replaceAll(":", "%3A")}`;
   } catch {
     return undefined;
   }

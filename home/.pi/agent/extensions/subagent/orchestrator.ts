@@ -121,6 +121,7 @@ export interface ChildRecord {
   surfaceState?: SurfaceState;
   cleanupError?: string;
   lifecycleError?: string;
+  recoveryError?: string;
   state: ChildState;
   createdAt: number;
   updatedAt: number;
@@ -468,6 +469,13 @@ export class SubagentOrchestrator {
         return;
       }
     }
+    const cancellation = this.#recordTerminalCancellation(child);
+    if (cancellation) {
+      if (this.#isCurrentHerdrSession(cancellation) && !isRetiredSurface(cancellation)) {
+        await this.#cleanupSurface(cancellation);
+      }
+      return;
+    }
     child = await this.#retryPendingTerminalDelivery(rootId, ownerId, child);
     if (child.state === "completed" || child.state === "failed" || child.state === "crashed") {
       if (
@@ -784,6 +792,35 @@ export class SubagentOrchestrator {
     );
   }
 
+  #hasCurrentCancellationClaim(child: ChildRecord): boolean {
+    const receipt = childControlReceiptAt(child.completionMarkerPath);
+    return (
+      receipt?.childId === child.id &&
+      receipt.generation === child.generation &&
+      receipt.action === "cancel" &&
+      receipt.status === "cancelled" &&
+      receipt.sessionPath === child.sessionPath
+    );
+  }
+
+  #recordTerminalCancellation(child: ChildRecord): ChildRecord | undefined {
+    if (
+      (!ACTIVE_STATES.has(child.state) && child.state !== "stale") ||
+      !this.#hasCurrentCancellationClaim(child)
+    ) {
+      return undefined;
+    }
+    child.state = "cancelled";
+    child.result = undefined;
+    child.error = undefined;
+    child.recoveryError = undefined;
+    child.deliveredAt = this.#now();
+    child.updatedAt = child.deliveredAt;
+    if (child.paneId && !isRetiredSurface(child)) child.surfaceState = "cleanup-pending";
+    this.#saveChild(child);
+    return child;
+  }
+
   #hasCurrentSettlementCandidate(child: ChildRecord): boolean {
     const settlement = completionSettlementAt(child.completionMarkerPath);
     return (
@@ -895,6 +932,7 @@ export class SubagentOrchestrator {
     child.state = "starting";
     child.result = undefined;
     child.error = undefined;
+    child.recoveryError = undefined;
     child.deliveredAt = undefined;
     child.updatedAt = this.#now();
     this.#saveChild(child);
@@ -905,21 +943,24 @@ export class SubagentOrchestrator {
     child: ChildRecord,
     action: "message" | "cancel",
     nonce: string,
+    expiresAt: number,
     signal?: AbortSignal,
   ): Promise<ChildControlReceipt> {
-    const deadline = Date.now() + CONTROL_RECEIPT_TIMEOUT_MILLISECONDS;
     for (;;) {
+      if (Date.now() >= expiresAt) break;
       const receipt = childControlReceiptAt(child.completionMarkerPath);
+      const expectedStatus = action === "cancel" ? "cancelled" : "accepted";
       if (
         receipt?.childId === child.id &&
         receipt.generation === child.generation &&
         receipt.nonce === nonce &&
         receipt.action === action &&
+        (receipt.status === expectedStatus || receipt.status === "settling") &&
         receipt.sessionPath === child.sessionPath
       ) {
         return receipt;
       }
-      if (Date.now() >= deadline) break;
+      if (Date.now() >= expiresAt) break;
       await abortableDelay(CONTROL_RECEIPT_POLL_MILLISECONDS, signal);
     }
     throw new Error(
@@ -935,6 +976,7 @@ export class SubagentOrchestrator {
   ): Promise<ChildControlReceipt> {
     const nonce = crypto.randomUUID();
     const receiptPath = childControlReceiptPath(child.completionMarkerPath);
+    const expiresAt = Date.now() + CONTROL_RECEIPT_TIMEOUT_MILLISECONDS;
     await this.#runJson(
       [
         "agent",
@@ -947,6 +989,7 @@ export class SubagentOrchestrator {
           nonce,
           action,
           receiptPath,
+          expiresAt,
           ...(message === undefined ? {} : { message }),
         }),
       ],
@@ -956,7 +999,7 @@ export class SubagentOrchestrator {
     // child extension may not have processed input and written its receipt yet.
     // Wait for that durable admission receipt, but never resend or fall back to
     // raw terminal input when it does not arrive.
-    return this.#waitForChildControlReceipt(child, action, nonce, signal);
+    return this.#waitForChildControlReceipt(child, action, nonce, expiresAt, signal);
   }
 
   async #relaunchProvenCompletionForFollowUp(
@@ -1055,7 +1098,8 @@ export class SubagentOrchestrator {
       }
       current.result = result.text;
       current.state = "crashed";
-      current.error = `Recovered exact conclusion, but full settlement could not be proven: ${diagnostic}`;
+      current.error = result.stopReason === "error" ? result.errorMessage : undefined;
+      current.recoveryError = `Recovered exact conclusion, but full settlement could not be proven: ${diagnostic}`;
       current.updatedAt = this.#now();
       this.#saveChild(current);
       return { ...current };
@@ -1295,6 +1339,18 @@ export class SubagentOrchestrator {
         `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
       );
     }
+    if (receipt.status !== "cancelled") {
+      throw new Error(`Child ${child.herdrName} returned an invalid cancellation claim`);
+    }
+    child = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+      const current = this.#findChild(rootId, ownerId, child.id);
+      const cancelled = this.#recordTerminalCancellation(current);
+      if (!cancelled) {
+        throw new Error(`Child ${child.herdrName} cancellation claim could not be reconciled`);
+      }
+      return cancelled;
+    });
+
     const waited = await this.#runJson(
       [
         "agent",
@@ -1315,39 +1371,6 @@ export class SubagentOrchestrator {
       throw new Error(`Subagent ${child.semanticName} did not settle after cancellation`);
     }
 
-    const completionDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
-      child = this.#findChild(rootId, ownerId, child.id);
-      const preflight = this.#settlementPreflight(child);
-      if ("completed" in preflight || "settling" in preflight) return preflight;
-      child.state = "cancelled";
-      child.result = undefined;
-      child.error = undefined;
-      child.deliveredAt = this.#now();
-      child.updatedAt = child.deliveredAt;
-      if (child.paneId && !isRetiredSurface(child)) {
-        child.surfaceState = "cleanup-pending";
-      }
-      this.#saveChild(child);
-      return { cancelled: child } as const;
-    });
-    if ("completed" in completionDecision) {
-      const completedAfterInput = await this.#reconcileProvenCompletion(
-        rootId,
-        ownerId,
-        completionDecision.completed,
-        signal,
-      );
-      if (completedAfterInput) return completedAfterInput;
-      throw new CompletionNotProvenError(
-        `Child ${child.herdrName} completion proof disappeared after cancellation input`,
-      );
-    }
-    if ("settling" in completionDecision) {
-      throw new CompletionSettlementPendingError(
-        `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
-      );
-    }
-    child = completionDecision.cancelled;
     await this.#cleanupSurface(child);
     return { ...this.#findChild(rootId, ownerId, child.id) };
   }
@@ -2126,6 +2149,7 @@ export class SubagentOrchestrator {
     child.state = "starting";
     child.result = undefined;
     child.error = undefined;
+    child.recoveryError = undefined;
     child.deliveredAt = undefined;
     child.cleanupError = undefined;
     child.tabId = undefined;
@@ -2670,11 +2694,24 @@ export class SubagentOrchestrator {
     signal: AbortSignal,
     waitForProof = false,
   ): Promise<boolean> {
-    if (!waitForProof && !this.#hasCurrentCompletionProof(child)) return false;
+    if (
+      !this.#hasCurrentCancellationClaim(child) &&
+      !waitForProof &&
+      !this.#hasCurrentCompletionProof(child)
+    ) {
+      return false;
+    }
     return this.#withChildRegistryLock(child.rootId, child.id, async () => {
       const current = this.#findChild(child.rootId, child.parentId, child.id);
       if (current.generation !== child.generation) return false;
       if (!ACTIVE_STATES.has(current.state)) return true;
+      const cancellation = this.#recordTerminalCancellation(current);
+      if (cancellation) {
+        if (this.#isCurrentHerdrSession(cancellation) && !isRetiredSurface(cancellation)) {
+          await this.#cleanupSurface(cancellation);
+        }
+        return true;
+      }
       if (!waitForProof && !this.#hasCurrentCompletionProof(current)) return false;
       try {
         await this.#completeFromSession(current, signal);
@@ -2809,6 +2846,7 @@ export class SubagentOrchestrator {
           ? "failed"
           : "completed";
     child.error = result.stopReason === "error" ? result.errorMessage : undefined;
+    child.recoveryError = undefined;
     child.updatedAt = this.#now();
     this.#saveChild(child);
     if ((await this.#deliver(child)) && cleanupSurface && this.#isCurrentHerdrSession(child)) {

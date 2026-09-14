@@ -14,6 +14,7 @@ interface CompletionChild {
   sessionPath?: string;
   result?: string;
   error?: string;
+  recoveryError?: string;
 }
 
 interface CompletionMessage {
@@ -34,6 +35,7 @@ interface CompletionMessage {
     sessionPath?: string;
     result?: string;
     error?: string;
+    recoveryError?: string;
   };
 }
 
@@ -49,28 +51,48 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 function completionPresent(branch: readonly unknown[], runId: string): boolean {
-  return branch.some((entry) =>
-    isObject(entry) &&
-    entry.type === "custom_message" &&
-    entry.customType === COMPLETION_TYPE &&
-    isObject(entry.details) &&
-    entry.details.runId === runId
+  return branch.some(
+    (entry) =>
+      isObject(entry) &&
+      entry.type === "custom_message" &&
+      entry.customType === COMPLETION_TYPE &&
+      isObject(entry.details) &&
+      entry.details.runId === runId,
   );
 }
 
 function isCompletionMessage(value: unknown): value is CompletionMessage {
-  if (!isObject(value) || value.customType !== COMPLETION_TYPE ||
-    typeof value.content !== "string" || typeof value.display !== "boolean" || !isObject(value.details)) return false;
+  if (
+    !isObject(value) ||
+    value.customType !== COMPLETION_TYPE ||
+    typeof value.content !== "string" ||
+    typeof value.display !== "boolean" ||
+    !isObject(value.details)
+  )
+    return false;
   const details = value.details;
-  return (details.completionDataVersion === undefined || details.completionDataVersion === 1) &&
-    ["childId", "runId", "semanticName", "role", "state"].every((key) => typeof details[key] === "string") &&
-    ["workScope", "model", "thinking", "paneId", "sessionPath", "result", "error"].every((key) =>
-      details[key] === undefined || typeof details[key] === "string");
+  return (
+    (details.completionDataVersion === undefined || details.completionDataVersion === 1) &&
+    ["childId", "runId", "semanticName", "role", "state"].every(
+      (key) => typeof details[key] === "string",
+    ) &&
+    [
+      "workScope",
+      "model",
+      "thinking",
+      "paneId",
+      "sessionPath",
+      "result",
+      "error",
+      "recoveryError",
+    ].every((key) => details[key] === undefined || typeof details[key] === "string")
+  );
 }
 
 function outboxMessages(branch: readonly unknown[]): CompletionMessage[] {
   return branch.flatMap((entry) => {
-    if (!isObject(entry) || entry.type !== "custom" || entry.customType !== COMPLETION_OUTBOX_TYPE) return [];
+    if (!isObject(entry) || entry.type !== "custom" || entry.customType !== COMPLETION_OUTBOX_TYPE)
+      return [];
     const data = entry.data;
     const message = isObject(data) && data.version === 1 ? data.message : undefined;
     if (!isCompletionMessage(message)) {
@@ -81,7 +103,9 @@ function outboxMessages(branch: readonly unknown[]): CompletionMessage[] {
 }
 
 export function hasPendingCompletions(branch: readonly unknown[]): boolean {
-  return outboxMessages(branch).some((message) => !completionPresent(branch, message.details.runId));
+  return outboxMessages(branch).some(
+    (message) => !completionPresent(branch, message.details.runId),
+  );
 }
 
 /** Acknowledgement means durably enqueued, not consumed by the parent's model. */
@@ -104,15 +128,27 @@ export class CompletionDelivery {
     if (!message) {
       const output = child.result ?? "(no output)";
       const failure = child.error === undefined ? "" : `\n\nFailure: ${child.error}`;
+      const recovery =
+        child.recoveryError === undefined ? "" : `\n\nRecovery: ${child.recoveryError}`;
       message = {
         customType: COMPLETION_TYPE,
-        content: `Subagent ${child.semanticName} ${child.state}.\n\n${output}${failure}`,
+        content: `Subagent ${child.semanticName} ${child.state}.\n\n${output}${failure}${recovery}`,
         display: true,
         details: {
           completionDataVersion: 1,
-          childId: child.id, runId, semanticName: child.semanticName, role: child.role, state: child.state,
-          workScope: child.workScope, model: child.model, thinking: child.thinking,
-          paneId: child.paneId, sessionPath: child.sessionPath, result: child.result, error: child.error,
+          childId: child.id,
+          runId,
+          semanticName: child.semanticName,
+          role: child.role,
+          state: child.state,
+          workScope: child.workScope,
+          model: child.model,
+          thinking: child.thinking,
+          paneId: child.paneId,
+          sessionPath: child.sessionPath,
+          result: child.result,
+          error: child.error,
+          ...(child.recoveryError === undefined ? {} : { recoveryError: child.recoveryError }),
         },
       };
       // Pi's follow-up queue is volatile and cannot drain during an active tool.

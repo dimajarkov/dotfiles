@@ -58,6 +58,22 @@ function hasRecognizableCredentialPrefix(segment: string): boolean {
   return RECOGNIZABLE_CREDENTIAL_PREFIXES.some((pattern) => pattern.test(normalized));
 }
 
+const WRAPPED_PROOF_MARKER =
+  /(?:^|[-_.~])(?:access[-_]?token|assertion|bearer|client[-_]?assertion|dpop(?:[-_]?proof)?|jwt|saml(?:art|request|response)|secret|token)[-_.~]+/giu;
+
+function hasWrappedCredentialProof(segment: string): boolean {
+  const normalized = segment.normalize("NFKC");
+  for (const marker of normalized.matchAll(WRAPPED_PROOF_MARKER)) {
+    const tail = normalized.slice((marker.index ?? 0) + marker[0].length);
+    const candidates = [
+      /^[A-Za-z\d+/_~-]{32,}={0,2}/u.exec(tail)?.[0],
+      /^[A-Za-z\d_-]{8,}(?:\.[A-Za-z\d_-]{2,}){2,4}/u.exec(tail)?.[0],
+    ];
+    if (candidates.some((candidate) => candidate && isCredentialValue(candidate))) return true;
+  }
+  return false;
+}
+
 const resolveAddresses: ResolveAddresses = (hostname) =>
   lookup(hostname, { all: true, verbatim: true });
 
@@ -138,6 +154,7 @@ function isCredentialPathSegment(segment: string): boolean {
     ) ||
     /(?:accesskey|githubpat|privatekey|signed)$/u.test(compact) ||
     hasRecognizableCredentialPrefix(segment) ||
+    hasWrappedCredentialProof(segment) ||
     isCredentialValue(segment)
   );
 }

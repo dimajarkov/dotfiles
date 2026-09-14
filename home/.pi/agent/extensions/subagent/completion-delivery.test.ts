@@ -1,23 +1,43 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CompletionDelivery, COMPLETION_OUTBOX_TYPE, COMPLETION_TYPE } from "./completion-delivery.ts";
+import {
+  CompletionDelivery,
+  COMPLETION_OUTBOX_TYPE,
+  COMPLETION_TYPE,
+} from "./completion-delivery.ts";
 
 const child = {
-  id: "child-1", generation: 2, semanticName: "review", role: "reviewer", state: "completed",
-  paneId: "w1:p9", sessionPath: "/tmp/child.jsonl", result: "DONE",
+  id: "child-1",
+  generation: 2,
+  semanticName: "review",
+  role: "reviewer",
+  state: "completed",
+  paneId: "w1:p9",
+  sessionPath: "/tmp/child.jsonl",
+  result: "DONE",
 };
 
 function parent(branch: unknown[] = []) {
   const queued: Array<{
     customType: string;
     content: string;
-    details: { completionDataVersion: 1; runId: string; result?: string; error?: string };
+    details: {
+      completionDataVersion: 1;
+      runId: string;
+      result?: string;
+      error?: string;
+      recoveryError?: string;
+    };
   }> = [];
   const controller = new AbortController();
   const options = {
     getBranch: () => branch,
-    appendEntry: (customType: string, data: unknown) => { branch.push({ type: "custom", customType, data }); },
-    sendMessage: (message: typeof queued[number]) => { queued.push(message); },
+    appendEntry: (customType: string, data: unknown) => {
+      branch.push({ type: "custom", customType, data });
+    },
+    sendMessage: (message: (typeof queued)[number]) => {
+      queued.push(message);
+    },
     signal: controller.signal,
   };
   return { branch, queued, controller, options, delivery: new CompletionDelivery(options) };
@@ -34,9 +54,13 @@ test("delivery persists an outbox before enqueueing and does not wait for the ac
   });
   assert.equal(delivery.deliver(child), true);
   assert.equal(p.queued.length, 1);
-  assert.deepEqual(p.branch, [{
-    type: "custom", customType: COMPLETION_OUTBOX_TYPE, data: { version: 1, message: p.queued[0] },
-  }]);
+  assert.deepEqual(p.branch, [
+    {
+      type: "custom",
+      customType: COMPLETION_OUTBOX_TYPE,
+      data: { version: 1, message: p.queued[0] },
+    },
+  ]);
 });
 
 test("restart replays an unconsumed outbox even after the child record advances to another generation", () => {
@@ -45,7 +69,10 @@ test("restart replays an unconsumed outbox even after the child record advances 
   p.delivery.deliver({ ...child, generation: 3, result: "NEXT_RESULT" });
   const restarted = parent(JSON.parse(JSON.stringify(p.branch)));
   restarted.delivery.replay();
-  assert.deepEqual(restarted.queued.map((message) => message.details.runId), ["child-1:2", "child-1:3"]);
+  assert.deepEqual(
+    restarted.queued.map((message) => message.details.runId),
+    ["child-1:2", "child-1:3"],
+  );
   assert.match(restarted.queued[0].content, /DONE/);
   assert.match(restarted.queued[1].content, /NEXT_RESULT/);
 });
@@ -98,7 +125,9 @@ test("failed persistence prevents enqueueing and acknowledgement", () => {
   const p = parent();
   const delivery = new CompletionDelivery({
     ...p.options,
-    appendEntry: () => { throw new Error("Disk full"); },
+    appendEntry: () => {
+      throw new Error("Disk full");
+    },
   });
   assert.throws(() => delivery.deliver(child), /Disk full/);
   assert.deepEqual(p.queued, []);
@@ -108,7 +137,10 @@ test("failed persistence prevents enqueueing and acknowledgement", () => {
 test("a failed send retains the original result for retry", () => {
   const p = parent();
   const failing = new CompletionDelivery({
-    ...p.options, sendMessage: () => { throw new Error("Queue unavailable"); },
+    ...p.options,
+    sendMessage: () => {
+      throw new Error("Queue unavailable");
+    },
   });
   assert.throws(() => failing.deliver(child), /Queue unavailable/);
   assert.equal(p.branch.length, 1);
@@ -139,6 +171,28 @@ test("failed empty output carries result and error separately", () => {
   assert.equal(restarted.queued[0].details.error, "provider exploded");
 });
 
+test("crash recovery delivers provider and recovery errors as separate fields exactly once", () => {
+  const p = parent();
+  const providerError = "provider exploded";
+  const recoveryError = "Recovered exact conclusion, but full settlement could not be proven";
+
+  assert.equal(
+    p.delivery.deliver({
+      ...child,
+      state: "crashed",
+      result: "PARTIAL_RESULT",
+      error: providerError,
+      recoveryError,
+    }),
+    true,
+  );
+
+  assert.equal(p.queued[0].details.error, providerError);
+  assert.equal(p.queued[0].details.recoveryError, recoveryError);
+  assert.equal((p.queued[0].content.match(/provider exploded/gu) ?? []).length, 1);
+  assert.equal((p.queued[0].content.match(/Recovered exact conclusion/gu) ?? []).length, 1);
+});
+
 test("settling after a cleared volatile queue can replay its durable outbox", () => {
   const p = parent();
   p.delivery.deliver(child);
@@ -149,7 +203,9 @@ test("settling after a cleared volatile queue can replay its durable outbox", ()
 });
 
 test("legacy messages without an outbox remain acknowledged", () => {
-  const p = parent([{ type: "custom_message", customType: COMPLETION_TYPE, details: { runId: "child-1:2" } }]);
+  const p = parent([
+    { type: "custom_message", customType: COMPLETION_TYPE, details: { runId: "child-1:2" } },
+  ]);
   assert.equal(p.delivery.deliver(child), true);
   assert.deepEqual(p.queued, []);
   assert.equal(p.branch.length, 1);

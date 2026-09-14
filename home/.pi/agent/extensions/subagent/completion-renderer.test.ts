@@ -159,6 +159,38 @@ test("renders a nonempty failed output and its separate error exactly once", () 
   assert.deepEqual(message, saved);
 });
 
+test("renders provider and recovery errors as separate diagnostics exactly once", () => {
+  const message = {
+    content: "legacy text must not replace structured fields",
+    details: {
+      completionDataVersion: 1,
+      semanticName: "scout",
+      role: "researcher",
+      state: "crashed",
+      result: "partial result",
+      error: "provider exploded",
+      recoveryError: "full settlement could not be proven",
+    },
+  };
+
+  for (const expanded of [false, true]) {
+    const rendered = renderCompletionMessage(
+      message,
+      { expanded, outputPad: 1 },
+      theme,
+      markdownTheme,
+    )
+      .render(80)
+      .map(stripTerminalSequences)
+      .join("\n");
+    assert.equal((rendered.match(/Failure: provider exploded/gu) ?? []).length, 1);
+    assert.equal(
+      (rendered.match(/Recovery: full settlement could not be proven/gu) ?? []).length,
+      1,
+    );
+  }
+});
+
 test("structured missing output renders its failure once without legacy content fallback", () => {
   const message = {
     content: "Subagent scout crashed.\n\n(no output)\n\nFailure: provider exploded",

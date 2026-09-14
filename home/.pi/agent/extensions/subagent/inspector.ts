@@ -18,12 +18,18 @@ function outputLines(row: TreeRow, width: number): string[] {
     row.child.cwd,
     width,
   );
-  if (row.child.error === undefined) return lines;
-  return [
-    ...lines,
-    "",
-    ...renderOutputContent(`Failure: ${row.child.error}`, row.child.cwd, width),
+  const diagnostics = [
+    ...(row.child.error === undefined ? [] : [`Failure: ${row.child.error}`]),
+    ...(row.child.recoveryError === undefined ? [] : [`Recovery: ${row.child.recoveryError}`]),
   ];
+  return diagnostics.reduce(
+    (output, diagnostic) => [
+      ...output,
+      "",
+      ...renderOutputContent(diagnostic, row.child.cwd, width),
+    ],
+    lines,
+  );
 }
 
 /** Read-only inspection never focuses, resumes, or sends input to a child pane. */
@@ -94,10 +100,16 @@ export class SubagentInspector {
               showing === "output"
                 ? {
                     title: "Output",
-                    label:
-                      row.child.result === undefined
-                        ? `Final response not available${row.child.error ? " · failure details below" : ""}`
-                        : `Saved final response${row.child.error ? " · failure details below" : ""} · links open with system defaults`,
+                    label: (() => {
+                      const diagnosticLabel = row.child.recoveryError
+                        ? " · diagnostic details below"
+                        : row.child.error
+                          ? " · failure details below"
+                          : "";
+                      return row.child.result === undefined
+                        ? `Final response not available${diagnosticLabel}`
+                        : `Saved final response${diagnosticLabel} · links open with system defaults`;
+                    })(),
                     render: (width: number) => outputLines(row, width),
                   }
                 : undefined;

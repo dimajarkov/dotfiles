@@ -40,6 +40,7 @@ interface CompletionDetails {
   state?: string;
   result?: string;
   error?: string;
+  recoveryError?: string;
 }
 
 function completionDetails(details: unknown): CompletionDetails | undefined {
@@ -49,12 +50,14 @@ function completionDetails(details: unknown): CompletionDetails | undefined {
     structured:
       value.completionDataVersion === 1 ||
       typeof value.result === "string" ||
-      typeof value.error === "string",
+      typeof value.error === "string" ||
+      typeof value.recoveryError === "string",
     semanticName: typeof value.semanticName === "string" ? value.semanticName : undefined,
     role: typeof value.role === "string" ? value.role : undefined,
     state: typeof value.state === "string" ? value.state : undefined,
     result: typeof value.result === "string" ? value.result : undefined,
     error: typeof value.error === "string" ? value.error : undefined,
+    recoveryError: typeof value.recoveryError === "string" ? value.recoveryError : undefined,
   };
 }
 
@@ -77,6 +80,8 @@ export function renderCompletionMessage(
   const content = typeof message.content === "string" ? message.content : "Subagent finished";
   const output = details?.structured ? details.result : completionOutput(content);
   const error = details?.error === undefined ? undefined : sanitizeOutput(details.error);
+  const recoveryError =
+    details?.recoveryError === undefined ? undefined : sanitizeOutput(details.recoveryError);
   const safeOutput = sanitizeOutput(output ?? "");
   const container = new SafeCompletionContainer();
 
@@ -96,6 +101,11 @@ export function renderCompletionMessage(
     container.addChild(new Text(theme.fg("dim", `  ⎿  ${preview}${suffix}`), options.outputPad, 0));
     if (error) {
       container.addChild(new Text(theme.fg("error", `  Failure: ${error}`), options.outputPad, 0));
+    }
+    if (recoveryError) {
+      container.addChild(
+        new Text(theme.fg("warning", `  Recovery: ${recoveryError}`), options.outputPad, 0),
+      );
     }
     if (lineCount > 1) {
       container.addChild(
@@ -118,6 +128,12 @@ export function renderCompletionMessage(
   if (error) {
     container.addChild(new Spacer(1));
     container.addChild(new Text(theme.fg("error", `Failure: ${error}`), options.outputPad, 0));
+  }
+  if (recoveryError) {
+    container.addChild(new Spacer(1));
+    container.addChild(
+      new Text(theme.fg("warning", `Recovery: ${recoveryError}`), options.outputPad, 0),
+    );
   }
   return container;
 }

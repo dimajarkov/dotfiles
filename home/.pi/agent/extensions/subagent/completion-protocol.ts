@@ -59,8 +59,13 @@ export interface ChildControlRequest {
   nonce: string;
   action: "message" | "cancel";
   receiptPath: string;
+  expiresAt: number;
   message?: string;
 }
+
+type ChildControlPromptRequest = Omit<ChildControlRequest, "expiresAt"> & {
+  expiresAt?: number;
+};
 
 export interface ChildControlReceipt {
   version: 1;
@@ -68,7 +73,7 @@ export interface ChildControlReceipt {
   generation: number;
   nonce: string;
   action: "message" | "cancel";
-  status: "accepted" | "settling";
+  status: "accepted" | "settling" | "cancelled";
   sessionPath: string;
   frontierEntryId?: string;
 }
@@ -200,8 +205,12 @@ export function childControlReceiptPath(markerPath: string): string {
   return `${markerPath}.control`;
 }
 
-export function childControlPrompt(request: ChildControlRequest): string {
-  return `${CHILD_CONTROL_PREFIX}${Buffer.from(JSON.stringify(request)).toString("base64url")}`;
+export function childControlPrompt(request: ChildControlPromptRequest): string {
+  const expiringRequest: ChildControlRequest = {
+    ...request,
+    expiresAt: request.expiresAt ?? Date.now() + 5_000,
+  };
+  return `${CHILD_CONTROL_PREFIX}${Buffer.from(JSON.stringify(expiringRequest)).toString("base64url")}`;
 }
 
 function childControlRequestFromValue(value: unknown): ChildControlRequest | undefined {
@@ -214,6 +223,8 @@ function childControlRequestFromValue(value: unknown): ChildControlRequest | und
     !/^[a-f\d-]{36}$/u.test(value.nonce) ||
     (value.action !== "message" && value.action !== "cancel") ||
     typeof value.receiptPath !== "string" ||
+    !Number.isSafeInteger(value.expiresAt) ||
+    value.expiresAt <= 0 ||
     (value.action === "message" && typeof value.message !== "string") ||
     (value.action === "cancel" && value.message !== undefined)
   ) {
@@ -245,7 +256,9 @@ export function childControlReceiptAt(markerPath: string): ChildControlReceipt |
       !Number.isSafeInteger(parsed.generation) ||
       typeof parsed.nonce !== "string" ||
       (parsed.action !== "message" && parsed.action !== "cancel") ||
-      (parsed.status !== "accepted" && parsed.status !== "settling") ||
+      (parsed.status !== "accepted" &&
+        parsed.status !== "settling" &&
+        parsed.status !== "cancelled") ||
       typeof parsed.sessionPath !== "string" ||
       (parsed.frontierEntryId !== undefined && typeof parsed.frontierEntryId !== "string")
     ) {
@@ -526,6 +539,7 @@ export function registerChildCompletionProtocol(
       // blocked. Keep the durable receipt and settlement transition under the
       // same lock used by completion publication.
       await withRegistryLock(`${markerPath}.lock`, () => {
+        if (Date.now() >= request.expiresAt) return undefined;
         const records = registryRecords(registry);
         const child = records.find((record) => record.id === childId);
         const marker = completionMarkerAt(markerPath);
@@ -605,7 +619,7 @@ export function registerChildCompletionProtocol(
           generation,
           nonce: request.nonce,
           action: request.action,
-          status: settling ? "settling" : "accepted",
+          status: settling ? "settling" : request.action === "cancel" ? "cancelled" : "accepted",
           sessionPath,
           frontierEntryId,
         };
@@ -725,7 +739,34 @@ export function registerChildCompletionProtocol(
       // A private control is represented by a nonce-bearing custom message,
       // so unrelated direct input cannot consume its admission claim.
       if (admittedMessages.length > 0) return;
-      if (settlement?.phase === "candidate") return;
+      if (
+        settlement?.childId === childId &&
+        settlement.generation === generation &&
+        settlement.phase === "candidate" &&
+        settlement.sessionPath === sessionPath
+      ) {
+        const marker = completionMarkerAt(markerPath);
+        if (
+          marker?.childId === childId &&
+          marker.generation === generation &&
+          marker.sessionPath === sessionPath &&
+          marker.entryId === settlement.entryId
+        ) {
+          ctx.abort();
+          return;
+        }
+        lastOutcome = undefined;
+        writeCompletionSettlement(markerPath, {
+          version: 1,
+          childId,
+          generation,
+          phase: "running",
+          sessionPath,
+          frontierEntryId: settlement.entryId,
+          pendingControls: 0,
+        });
+        return;
+      }
       const frontierEntryId =
         typeof child.startedAfterEntryId === "string" ? child.startedAfterEntryId : undefined;
       lastOutcome = undefined;

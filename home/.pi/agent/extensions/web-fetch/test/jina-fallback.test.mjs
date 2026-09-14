@@ -141,12 +141,16 @@ test("recognized vendor credentials remain ineligible even when short or encoded
   assert.equal(resolverCalls, 0);
 });
 
-test("wrapped vendor credentials in filenames and labels remain ineligible", async () => {
+test("wrapped credential proofs in filenames and labels remain ineligible", async () => {
   for (const segment of [
     "asset-glpat-0123456789abcdefghij.md",
     "prefix-ghp_0123456789abcdef-suffix.json",
     "asset%2Dglpat%2D0123456789abcdefghij%2Dlabel.md",
     "prefix-%2567%2568%2570_%2530%2531%2532%2533%2534%2535%2536%2537%2538-suffix.txt",
+    "bearer-aB3dE5fG7hJ9kL1mN3pQ5rS7tV9xY2zA-label.md",
+    "report-jwt-eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl-label.md",
+    "prefix%2Dbearer%2DaB3dE5fG7hJ9kL1mN3pQ5rS7tV9xY2zA%2Dlabel.md",
+    "prefix%252Dbearer%252DaB3dE5fG7hJ9kL1mN3pQ5rS7tV9xY2zA%252Dlabel.md",
   ]) {
     assert.equal(
       await runEligibleJinaFallback(
