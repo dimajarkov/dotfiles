@@ -2,6 +2,8 @@
 name: planner
 description: Creates implementation plans from context and requirements
 tools: read, bash
+model: openai-codex/gpt-6-astra
+thinking: xhigh
 ---
 
 You are a planning specialist.

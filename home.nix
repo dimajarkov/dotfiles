@@ -3,7 +3,7 @@
 let
   dotfiles = "${config.home.homeDirectory}/.dotfiles";
   piUpstream = pkgs.callPackage ./nix/packages/pi-coding-agent.nix {};
-  piSubagentExtension = "${piUpstream}/lib/pi-coding-agent/packages/coding-agent/examples/extensions/subagent";
+  piSubagentExtension = "${dotfiles}/home/.pi/agent/extensions/subagent";
 in {
   home.username = user;
   home.homeDirectory = "/Users/${user}";
@@ -162,17 +162,91 @@ in {
       /bin/rm -- "$mcp_path"
     fi
 
-    onedark_theme_path="${config.home.homeDirectory}/.pi/agent/themes/onedark-wezterm.json"
-    onedark_theme_source="${dotfiles}/home/.pi/agent/themes/onedark-wezterm.json"
-    if [ -f "$onedark_theme_path" ] && [ ! -L "$onedark_theme_path" ] && /usr/bin/cmp -s "$onedark_theme_path" "$onedark_theme_source"; then
-      /bin/rm -- "$onedark_theme_path"
+    custom_header_path="${config.home.homeDirectory}/.pi/agent/extensions/custom-header.ts"
+    custom_header_source="${dotfiles}/home/.pi/agent/extensions/custom-header.ts"
+    if [ -f "$custom_header_path" ] && [ ! -L "$custom_header_path" ] && /usr/bin/cmp -s "$custom_header_path" "$custom_header_source"; then
+      /bin/rm -- "$custom_header_path"
     fi
+
+    for extension in browser web-fetch; do
+      extension_path="${config.home.homeDirectory}/.pi/agent/extensions/$extension"
+      extension_source="${dotfiles}/home/.pi/agent/extensions/$extension"
+
+      if [ -L "$extension_path" ] && [ "$(/usr/bin/readlink "$extension_path")" = "$extension_source" ]; then
+        migration_stage="$(/usr/bin/mktemp -d "$extension_path.migration.XXXXXX")"
+        moved_runtimes=""
+        for runtime in node_modules .profile .browsers; do
+          if [ -e "$extension_source/$runtime" ]; then
+            if /bin/mv -- "$extension_source/$runtime" "$migration_stage/$runtime"; then
+              moved_runtimes="$runtime $moved_runtimes"
+            else
+              for moved_runtime in $moved_runtimes; do
+                /bin/mv -- "$migration_stage/$moved_runtime" "$extension_source/$moved_runtime"
+              done
+              /bin/rmdir -- "$migration_stage"
+              false
+            fi
+          fi
+        done
+        if ! /bin/rm -- "$extension_path" || ! /bin/mv -- "$migration_stage" "$extension_path"; then
+          for moved_runtime in $moved_runtimes; do
+            /bin/mv -- "$migration_stage/$moved_runtime" "$extension_source/$moved_runtime"
+          done
+          /bin/rmdir -- "$migration_stage"
+          if [ ! -e "$extension_path" ]; then
+            /bin/ln -s -- "$extension_source" "$extension_path"
+          fi
+          false
+        fi
+      fi
+
+      if [ -d "$extension_path" ] && [ ! -L "$extension_path" ]; then
+        migration_ready=1
+        for file in .gitignore README.md index.ts jina-fallback.ts network-serialization.ts response-body.ts package.json package-lock.json; do
+          file_path="$extension_path/$file"
+          file_source="$extension_source/$file"
+          if [ -e "$file_path" ] && [ ! -L "$file_path" ]; then
+            if [ ! -f "$file_path" ] || [ ! -f "$file_source" ] || ! /usr/bin/cmp -s "$file_path" "$file_source"; then
+              migration_ready=0
+            fi
+          fi
+        done
+
+        if [ "$migration_ready" -eq 1 ]; then
+          for file in .gitignore README.md index.ts jina-fallback.ts network-serialization.ts response-body.ts package.json package-lock.json; do
+            file_path="$extension_path/$file"
+            file_source="$extension_source/$file"
+            if [ -f "$file_path" ] && [ ! -L "$file_path" ] && [ -f "$file_source" ] && /usr/bin/cmp -s "$file_path" "$file_source"; then
+              /bin/rm -- "$file_path"
+            fi
+          done
+        fi
+      fi
+    done
 
     agents_path="${config.home.homeDirectory}/AGENTS.md"
     agents_source="${dotfiles}/home/AGENTS.md"
     if [ -f "$agents_path" ] && [ ! -L "$agents_path" ] && /usr/bin/cmp -s "$agents_path" "$agents_source"; then
       /bin/rm -- "$agents_path"
     fi
+  '';
+
+  home.activation.installPiExtensionDependencies = config.lib.dag.entryAfter [ "linkGeneration" ] ''
+    install_pi_extension_dependencies() {
+      extension_path="$1"
+      lock_hash="$(${pkgs.coreutils}/bin/sha256sum "$extension_path/package-lock.json" | ${pkgs.coreutils}/bin/cut -d ' ' -f 1)"
+      stamp_path="$extension_path/node_modules/.home-manager-lock-hash"
+      if [ ! -f "$stamp_path" ] || [ "$(/bin/cat "$stamp_path")" != "$lock_hash" ]; then
+        ${pkgs.nodejs_22}/bin/npm ci --ignore-scripts --no-audit --no-fund --prefix "$extension_path"
+        printf '%s\n' "$lock_hash" > "$stamp_path"
+      fi
+    }
+
+    browser_path="${config.home.homeDirectory}/.pi/agent/extensions/browser"
+    install_pi_extension_dependencies "$browser_path"
+    install_pi_extension_dependencies "${config.home.homeDirectory}/.pi/agent/extensions/web-fetch"
+    PLAYWRIGHT_BROWSERS_PATH="${config.home.homeDirectory}/.pi/agent/extensions/browser/.browsers" \
+      "$browser_path/node_modules/.bin/playwright-core" install chromium
   '';
 
   home.activation.migrateLegacyHammerspoonConfig = config.lib.dag.entryBefore [ "checkFilesChanged" "checkLinkTargets" ] ''
@@ -201,12 +275,14 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/models.json";
   home.file.".pi/agent/mcp.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/mcp.json";
+  home.file.".pi/agent/skills/web-debug".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/skills/web-debug";
   home.file.".pi/agent/themes/catppuccin-latte.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/catppuccin-latte.json";
   home.file.".pi/agent/themes/catppuccin-mocha.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/catppuccin-mocha.json";
-  home.file.".pi/agent/themes/onedark-wezterm.json".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/onedark-wezterm.json";
+  home.file.".pi/agent/extensions/status-line.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/status-line.ts";
   home.file.".pi/agent/themes/prime.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/prime.json";
   home.file.".pi/agent/extensions/fullscreen-navigation.ts".source =
@@ -215,13 +291,50 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prime-style.ts";
   home.file.".pi/agent/extensions/prime-parity.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prime-parity.ts";
+  home.file.".pi/agent/extensions/prompt-snippets".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prompt-snippets";
+  home.file.".pi/agent/extensions/herdr-pane-name".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/herdr-pane-name";
   home.file.".pi/agent/extensions/terminal-status-title.js".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/terminal-status-title.js";
+  home.file.".pi/agent/extensions/mac-system-theme.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/mac-system-theme.ts";
   home.file.".pi/agent/extensions/supabase-keychain".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/supabase-keychain";
-  home.file.".pi/agent/extensions/subagent".source = piSubagentExtension;
+  home.file.".pi/agent/extensions/lib/herdr-blocked.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/lib/herdr-blocked.ts";
+  home.file.".pi/agent/extensions/subagent".source =
+    config.lib.file.mkOutOfStoreSymlink piSubagentExtension;
+  home.file.".pi/agent/extensions/browser/.gitignore".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/.gitignore";
+  home.file.".pi/agent/extensions/browser/README.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/README.md";
+  home.file.".pi/agent/extensions/browser/index.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/index.ts";
+  home.file.".pi/agent/extensions/browser/network-serialization.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/network-serialization.ts";
+  home.file.".pi/agent/extensions/browser/package.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/package.json";
+  home.file.".pi/agent/extensions/browser/package-lock.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/package-lock.json";
+  home.file.".pi/agent/extensions/web-fetch/.gitignore".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/.gitignore";
+  home.file.".pi/agent/extensions/web-fetch/index.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/index.ts";
+  home.file.".pi/agent/extensions/web-fetch/jina-fallback.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/jina-fallback.ts";
+  home.file.".pi/agent/extensions/web-fetch/response-body.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/response-body.ts";
+  home.file.".pi/agent/extensions/web-fetch/package.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/package.json";
+  home.file.".pi/agent/extensions/web-fetch/package-lock.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/package-lock.json";
+  home.file.".pi/agent/extensions/custom-header.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/custom-header.ts";
   home.file.".pi/agent/agents/planner.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/planner.md";
+  home.file.".pi/agent/agents/researcher.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/researcher.md";
   home.file.".pi/agent/agents/reviewer.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/reviewer.md";
   home.file.".pi/agent/agents/scout.md".source =
@@ -229,11 +342,11 @@ in {
   home.file.".pi/agent/agents/worker.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/worker.md";
   home.file.".pi/agent/prompts/implement-and-review.md".source =
-    "${piSubagentExtension}/prompts/implement-and-review.md";
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/prompts/implement-and-review.md";
   home.file.".pi/agent/prompts/implement.md".source =
-    "${piSubagentExtension}/prompts/implement.md";
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/prompts/implement.md";
   home.file.".pi/agent/prompts/scout-and-plan.md".source =
-    "${piSubagentExtension}/prompts/scout-and-plan.md";
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/prompts/scout-and-plan.md";
   home.file.".hammerspoon/init.lua".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.hammerspoon/init.lua";
   home.file.".config/gh/config.yml".source =

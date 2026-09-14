@@ -1,0 +1,15 @@
+{
+  "name": "pi-herdr-pane-name",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "lint": "oxlint --deny-warnings index.ts test",
+    "format": "oxfmt index.ts test package.json README.md",
+    "format:check": "oxfmt --check index.ts test package.json README.md"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.56.0",
+    "oxlint": "^1.14.0"
+  }
+}

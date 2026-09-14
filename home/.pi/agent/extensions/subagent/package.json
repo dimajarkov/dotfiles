@@ -1,0 +1,42 @@
+{
+  "name": "pi-herdr-subagents",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test *.test.ts",
+    "test:widget": "uv run --script e2e-widget.py",
+    "lint": "oxlint --deny-warnings index.ts inspector.ts prompt-view.ts output-content.ts completion-renderer.ts widget.ts inspector.test.ts prompt-view.test.ts output-content.test.ts completion-renderer.test.ts widget.test.ts test-fixtures/widget-demo.ts",
+    "format": "oxfmt inspector.ts prompt-view.ts output-content.ts completion-renderer.ts widget.ts inspector.test.ts prompt-view.test.ts output-content.test.ts completion-renderer.test.ts widget.test.ts test-fixtures/widget-demo.ts package.json",
+    "format:check": "oxfmt --check inspector.ts prompt-view.ts output-content.ts completion-renderer.ts widget.ts inspector.test.ts prompt-view.test.ts output-content.test.ts completion-renderer.test.ts widget.test.ts test-fixtures/widget-demo.ts package.json"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-tui": "0.85.0",
+    "oxfmt": "0.56.0",
+    "oxlint": "1.82.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

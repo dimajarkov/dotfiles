@@ -44,6 +44,23 @@
       ],
       "debug": false
     },
+    "stripe": {
+      "url": "https://mcp.stripe.com",
+      "auth": "oauth",
+      "oauth": {
+        "clientName": "Pi Stripe MCP"
+      },
+      "lifecycle": "lazy",
+      "requestTimeoutMs": 240000,
+      "exposeResources": false,
+      "directTools": false,
+      "excludeTools": [
+        "stripe_api_write",
+        "stripe_report",
+        "send_stripe_mcp_feedback"
+      ],
+      "debug": false
+    },
     "signalhouse": {
       "command": "infisical",
       "args": [

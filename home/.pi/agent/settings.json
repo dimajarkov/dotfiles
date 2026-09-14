@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/config/settings.schema.json",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-sol",
+  "defaultModel": "gpt-6-astra",
   "defaultThinkingLevel": "xhigh",
   "theme": "prime",
   "externalEditor": "nvim",
@@ -39,7 +39,6 @@
     "autoResize": true,
     "blockImages": false
   },
-  "lastChangelogVersion": "0.84.1",
   "packages": [
     "npm:@ryan_nookpi/pi-extension-codex-fast-mode@0.2.6",
     "npm:pi-mcp-adapter@2.11.0",
@@ -52,5 +51,6 @@
   "recentModels": [
     "openai-codex/gpt-5.6-luna"
   ],
-  "fullscreenScrollbar": "auto"
+  "fullscreenScrollbar": "auto",
+  "lastChangelogVersion": "0.85.0"
 }
