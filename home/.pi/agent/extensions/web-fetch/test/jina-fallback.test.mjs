@@ -101,6 +101,68 @@ test("authentication proof paths remain ineligible with explicit authorization",
   assert.equal(resolverCalls, 0);
 });
 
+test("recognized vendor credentials remain ineligible even when short or encoded", async () => {
+  let fallbackCalls = 0;
+  let resolverCalls = 0;
+  for (const credential of [
+    "glpat-0123456789abcdefghij",
+    "glrt-0123456789abcdef",
+    "ghp_0123456789abcdef",
+    "xoxb-12345678-abcdefgh",
+    "sk_live_0123456789abcdef",
+    "AIza0123456789abcdef",
+    "npm_0123456789abcdef",
+  ]) {
+    for (const segment of [
+      credential,
+      credential.replace(/[-_]/u, (delimiter) => `%25${delimiter.charCodeAt(0).toString(16)}`),
+    ]) {
+      assert.equal(
+        await runEligibleJinaFallback(
+          `https://docs.github.com/en/${segment}`,
+          async () => {
+            fallbackCalls += 1;
+            return "unexpected";
+          },
+          {
+            allowThirdPartyFallback: true,
+            resolve: async () => {
+              resolverCalls += 1;
+              return [{ address: "13.107.42.14", family: 4 }];
+            },
+          },
+        ),
+        null,
+        segment,
+      );
+    }
+  }
+  assert.equal(fallbackCalls, 0);
+  assert.equal(resolverCalls, 0);
+});
+
+test("wrapped vendor credentials in filenames and labels remain ineligible", async () => {
+  for (const segment of [
+    "asset-glpat-0123456789abcdefghij.md",
+    "prefix-ghp_0123456789abcdef-suffix.json",
+    "asset%2Dglpat%2D0123456789abcdefghij%2Dlabel.md",
+    "prefix-%2567%2568%2570_%2530%2531%2532%2533%2534%2535%2536%2537%2538-suffix.txt",
+  ]) {
+    assert.equal(
+      await runEligibleJinaFallback(
+        `https://docs.github.com/en/${segment}`,
+        async () => "unexpected",
+        {
+          allowThirdPartyFallback: true,
+          resolve: async () => [{ address: "13.107.42.14", family: 4 }],
+        },
+      ),
+      null,
+      segment,
+    );
+  }
+});
+
 test("DNS-private and mixed-resolution hosts fail closed", async () => {
   assert.equal(
     await eligibleJinaFallbackUrl("https://docs.github.com/en/get-started", async () => [
