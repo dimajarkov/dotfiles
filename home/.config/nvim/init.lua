@@ -123,6 +123,8 @@ vim.pack.add({
 	'https://github.com/MeanderingProgrammer/render-markdown.nvim',
 	'https://github.com/nvim-mini/mini.nvim',
 	'https://github.com/folke/which-key.nvim',
+	'https://github.com/nvim-lua/plenary.nvim',
+	'https://github.com/kdheepak/lazygit.nvim',
 	{ src = 'https://github.com/saghen/blink.cmp', version = vim.version.range('1.x') }, -- pinning so rust binary dependency automatically downloads
 	-- Colorschemes
 	'https://github.com/rebelot/kanagawa.nvim',
@@ -376,97 +378,6 @@ require("oil").setup({
 })
 vim.keymap.set("n", "-", open_oil, { desc = "Open parent directory" })
 
--- Hunk
-local function git_root_from_dir(dir)
-	if not dir or dir == '' then
-		return nil
-	end
-
-	local result = vim.fn.systemlist({ 'git', '-C', dir, 'rev-parse', '--show-toplevel' })
-	if vim.v.shell_error == 0 and result[1] and result[1] ~= '' then
-		return result[1]
-	end
-
-	return nil
-end
-
-local function hunk_root()
-	local candidates = {}
-	local buffer_name = vim.api.nvim_buf_get_name(0)
-
-	if buffer_name ~= '' then
-		local buffer_path = buffer_name
-		if buffer_name:match('^oil://') then
-			buffer_path = buffer_name:gsub('^oil://', '')
-		elseif buffer_name:match('^%w+://') then
-			buffer_path = nil
-		end
-
-		if buffer_path then
-			buffer_path = vim.fn.fnamemodify(buffer_path, ':p')
-			local buffer_dir = vim.fn.isdirectory(buffer_path) == 1 and buffer_path or vim.fn.fnamemodify(buffer_path, ':h')
-			table.insert(candidates, buffer_dir)
-		end
-	end
-
-	table.insert(candidates, vim.fn.getcwd())
-
-	for _, dir in ipairs(candidates) do
-		local root = git_root_from_dir(dir)
-		if root then
-			return root
-		end
-	end
-
-	return nil
-end
-
-local function open_hunk(args, cwd)
-	if vim.fn.executable('hunk') ~= 1 then
-		vim.notify('hunk is not installed. Install it with: npm i -g hunkdiff', vim.log.levels.ERROR)
-		return
-	end
-
-	local hunk_args = vim.list_extend({ 'hunk' }, args)
-	cwd = cwd or vim.fn.getcwd()
-
-	vim.cmd('tabnew')
-	vim.bo.buflisted = false
-	vim.bo.bufhidden = 'wipe'
-	pcall(vim.api.nvim_buf_set_name, 0, 'Hunk://' .. vim.fn.fnamemodify(cwd, ':t') .. '/' .. vim.fn.localtime())
-
-	local job_id = vim.fn.jobstart(hunk_args, { cwd = cwd, term = true })
-	if job_id <= 0 then
-		vim.notify('Failed to start hunk', vim.log.levels.ERROR)
-		vim.cmd('tabclose')
-		return
-	end
-
-	vim.cmd('startinsert')
-end
-
-vim.api.nvim_create_user_command('Hunk', function(opts)
-	local args = opts.fargs
-	local cwd = hunk_root()
-
-	if #args == 0 then
-		if not cwd then
-			vim.notify('Hunk needs a Git repo. Open Nvim from a checkout, :cd to one, or edit a file inside one.', vim.log.levels.ERROR)
-			return
-		end
-
-		args = { 'diff', '--watch' }
-	end
-
-	open_hunk(args, cwd)
-end, {
-	nargs = '*',
-	complete = function()
-		return { 'diff', 'show', 'patch', 'skill' }
-	end,
-	desc = 'Open Hunk',
-})
-
 local function git_line_history(start_line, end_line)
 	start_line, end_line = math.min(start_line, end_line), math.max(start_line, end_line)
 	local range = start_line .. ',' .. end_line .. ':' .. vim.fn.expand('%:t')
@@ -481,7 +392,7 @@ local function git_line_history(start_line, end_line)
 	vim.bo.modified = false
 end
 
-vim.keymap.set('n', '<leader>gg', '<cmd>Hunk<cr>', { desc = 'Hunk diff' })
+vim.keymap.set('n', '<leader>gg', '<cmd>LazyGit<cr>', { desc = 'Open LazyGit' })
 vim.keymap.set('n', '<leader>gb', function() vim.ui.open(vim.fn.systemlist('git remote get-url origin')[1]) end,
 	{ desc = 'Open git remote' })
 vim.keymap.set('n', '<leader>gl', function()
@@ -501,7 +412,6 @@ vim.keymap.set('n', '<leader>rh', '<cmd>CodeDiff HEAD~1<cr>', { desc = 'Code dif
 vim.keymap.set('n', '<leader>o', open_oil, { desc = 'Open file browser' })
 vim.keymap.set('n', '<leader>f', '<cmd>FzfLua files<cr>', { desc = 'Find files' })
 vim.keymap.set('n', '<leader>b', '<cmd>FzfLua buffers<cr>', { desc = 'Buffers' })
-vim.keymap.set('n', '<leader>g', '<cmd>Hunk<cr>', { desc = 'Hunk diff' })
 vim.keymap.set('n', '<leader>d', vim.diagnostic.open_float, { desc = 'Show diagnostics' })
 
 -- Home-row horizontal movement from the previous local setup.

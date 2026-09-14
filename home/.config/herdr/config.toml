@@ -5,7 +5,7 @@ shell_mode = "auto"
 new_cwd = "follow"
 
 [theme]
-name = "gruvbox-light"
+name = "dracula"
 auto_switch = false
 dark_name = "catppuccin"
 light_name = "catppuccin-latte"
@@ -52,4 +52,4 @@ delivery = "off"
 delay_seconds = 2
 
 [ui.sound]
-enabled = false
+enabled = true

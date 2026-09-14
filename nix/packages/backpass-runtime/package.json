@@ -1,0 +1,9 @@
+{
+  "name": "backpass-runtime",
+  "version": "0.1.22",
+  "private": true,
+  "dependencies": {
+    "acpx": "0.15.1",
+    "backpass": "0.1.22"
+  }
+}
