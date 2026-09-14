@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { serializeNetworkEntries } from "../network-serialization.ts";
+import {
+  redactBrowserDiagnostic,
+  redactBrowserUrl,
+  serializeNetworkEntries,
+} from "../network-serialization.ts";
 
 test("network output preserves header presence without exposing credentials", () => {
   const result = serializeNetworkEntries(
@@ -130,4 +134,559 @@ test("signature authentication headers are redacted in structured and rendered o
   assert.equal(result.entries[0].requestHeaders["x-hub-signature-256"], "[REDACTED]");
   assert.equal(result.entries[0].requestHeaders.signature256, "[REDACTED]");
   assert.doesNotMatch(JSON.stringify(result), /proof-secret/);
+});
+
+test("authentication metadata headers are redacted at the shared boundary", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/data",
+        resourceType: "fetch",
+        responseHeaders: {
+          "Authentication-Info": 'nextnonce="authentication-secret"',
+          "Proxy-Authentication-Info": 'nextnonce="proxy-secret"',
+        },
+      },
+    ],
+    true,
+    new Set(["authentication-info", "proxy-authentication-info"]),
+  );
+
+  assert.match(result.text, /Authentication-Info: \[REDACTED\]/);
+  assert.match(result.text, /Proxy-Authentication-Info: \[REDACTED\]/);
+  assert.equal(result.entries[0].responseHeaders["Authentication-Info"], "[REDACTED]");
+  assert.equal(result.entries[0].responseHeaders["Proxy-Authentication-Info"], "[REDACTED]");
+  assert.doesNotMatch(JSON.stringify(result), /(?:authentication|proxy)-secret/);
+});
+
+test("prefixed authorization and authentication headers are redacted", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/data",
+        resourceType: "fetch",
+        requestHeaders: {
+          "X-Authorization": "Bearer prefixed-authorization-secret",
+          "Upstream-Authentication": "prefixed-authentication-secret",
+          "Vendor-Authentication-Info": "prefixed-authentication-info-secret",
+        },
+      },
+    ],
+    true,
+    new Set(["x-authorization", "upstream-authentication", "vendor-authentication-info"]),
+  );
+
+  assert.equal(result.entries[0].requestHeaders["X-Authorization"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["Upstream-Authentication"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["Vendor-Authentication-Info"], "[REDACTED]");
+  assert.doesNotMatch(JSON.stringify(result), /prefixed-.*-secret/);
+});
+
+test("session credential aliases are redacted in URLs and URL-bearing headers", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/data?session=session-secret&sid=sid-secret&view=keep",
+        resourceType: "fetch",
+        responseHeaders: {
+          Location:
+            "/callback?jsessionid=java-session-secret&phpsessid=php-session-secret&state=keep",
+        },
+      },
+    ],
+    true,
+    new Set(["location"]),
+  );
+
+  assert.equal(
+    result.entries[0].url,
+    "https://example.test/data?session=%5BREDACTED%5D&sid=%5BREDACTED%5D&view=keep",
+  );
+  assert.equal(
+    result.entries[0].responseHeaders.Location,
+    "/callback?jsessionid=%5BREDACTED%5D&phpsessid=%5BREDACTED%5D&state=keep",
+  );
+  assert.doesNotMatch(JSON.stringify(result), /(?:session|sid|java-session|php-session)-secret/);
+});
+
+test("JWT, OAuth assertion, and SAML credential aliases are redacted", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "POST",
+        url: "https://example.test/callback?jwt=jwt-secret&clientAssertion=oauth-secret&SAMLResponse=saml-secret&SAMLart=artifact-secret&view=keep",
+        resourceType: "fetch",
+        requestHeaders: {
+          "X-JWT": "header-jwt-secret",
+          XJWT: "compact-jwt-secret",
+          CfAccessJwtAssertion: "cloudflare-assertion-secret",
+          "X-SAML-Request": "saml-request-secret",
+          UpstreamSAMLResponse: "saml-response-secret",
+          "X-Assertion-Mode": "signed",
+        },
+      },
+    ],
+    true,
+    new Set([
+      "x-jwt",
+      "xjwt",
+      "cfaccessjwtassertion",
+      "x-saml-request",
+      "upstreamsamlresponse",
+      "x-assertion-mode",
+    ]),
+  );
+
+  assert.equal(
+    result.entries[0].url,
+    "https://example.test/callback?jwt=%5BREDACTED%5D&clientAssertion=%5BREDACTED%5D&SAMLResponse=%5BREDACTED%5D&SAMLart=%5BREDACTED%5D&view=keep",
+  );
+  assert.equal(result.entries[0].requestHeaders["X-JWT"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.XJWT, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.CfAccessJwtAssertion, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["X-SAML-Request"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.UpstreamSAMLResponse, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["X-Assertion-Mode"], "signed");
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /(?:jwt|oauth|saml|cloudflare|header-jwt|assertion)-secret/,
+  );
+});
+
+test("bearer proof aliases share credential redaction across headers and URLs", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/callback?bearer=url-proof&view=keep",
+        resourceType: "fetch",
+        requestHeaders: {
+          "X-Bearer": "header-proof",
+          VendorBearer: "compact-proof",
+        },
+      },
+    ],
+    true,
+    new Set(["x-bearer", "vendorbearer"]),
+  );
+
+  assert.equal(
+    result.entries[0].url,
+    "https://example.test/callback?bearer=%5BREDACTED%5D&view=keep",
+  );
+  assert.deepEqual(result.entries[0].requestHeaders, {
+    "X-Bearer": "[REDACTED]",
+    VendorBearer: "[REDACTED]",
+  });
+  assert.doesNotMatch(JSON.stringify(result), /(?:url|header|compact)-proof/);
+});
+
+test("PKCE, device grant, and OAuth verifier aliases are redacted", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "POST",
+        url: "https://example.test/token?code_verifier=pkce-secret&pkceVerifier=pkce-alias-secret&deviceCode=device-secret&device_grant_code=grant-secret&user_code=user-secret&oauthVerifier=oauth-secret&view=keep",
+        resourceType: "fetch",
+        requestHeaders: {
+          "X-Code-Verifier": "header-pkce-secret",
+          PKCEVerifier: "header-pkce-alias-secret",
+          DeviceCode: "header-device-secret",
+          "X-Device-Grant-Code": "header-grant-secret",
+          AuthorizationCode: "header-authorization-secret",
+          OAuthVerifier: "header-oauth-secret",
+          "X-User-Code": "header-user-secret",
+          "X-Status-Code": "200",
+        },
+      },
+    ],
+    true,
+    new Set([
+      "x-code-verifier",
+      "pkceverifier",
+      "devicecode",
+      "x-device-grant-code",
+      "authorizationcode",
+      "oauthverifier",
+      "x-user-code",
+      "x-status-code",
+    ]),
+  );
+
+  assert.equal(
+    result.entries[0].url,
+    "https://example.test/token?code_verifier=%5BREDACTED%5D&pkceVerifier=%5BREDACTED%5D&deviceCode=%5BREDACTED%5D&device_grant_code=%5BREDACTED%5D&user_code=%5BREDACTED%5D&oauthVerifier=%5BREDACTED%5D&view=keep",
+  );
+  assert.equal(result.entries[0].requestHeaders["X-Code-Verifier"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.PKCEVerifier, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.DeviceCode, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["X-Device-Grant-Code"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.AuthorizationCode, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.OAuthVerifier, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["X-User-Code"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["X-Status-Code"], "200");
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /(?:pkce(?:-alias)?|device|grant|authorization|user|oauth)-secret/,
+  );
+});
+
+test("DPoP authentication proof aliases are redacted without hiding the public nonce", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "POST",
+        url: "https://example.test/token?dpop=url-proof-secret&view=keep",
+        resourceType: "fetch",
+        requestHeaders: {
+          DPoP: "canonical-proof-secret",
+          "X-DPoP": "prefixed-proof-secret",
+          VendorDpopProof: "vendor-proof-secret",
+          "DPoP-Nonce": "public-nonce",
+        },
+      },
+    ],
+    true,
+    new Set(["dpop", "x-dpop", "vendordpopproof", "dpop-nonce"]),
+  );
+
+  assert.equal(result.entries[0].url, "https://example.test/token?dpop=%5BREDACTED%5D&view=keep");
+  assert.equal(result.entries[0].requestHeaders.DPoP, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["X-DPoP"], "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders.VendorDpopProof, "[REDACTED]");
+  assert.equal(result.entries[0].requestHeaders["DPoP-Nonce"], "public-nonce");
+  assert.match(result.text, /DPoP: \[REDACTED\]/);
+  assert.match(result.text, /DPoP-Nonce: public-nonce/);
+  assert.doesNotMatch(JSON.stringify(result), /(?:url|canonical|prefixed|vendor)-proof-secret/);
+});
+
+test("redacts credentials from OAuth and route-query URL fragments in rendered details", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/oauth#access_token=oauth-hash-secret&state=keep-hash-state",
+        resourceType: "fetch",
+        responseHeaders: {
+          Location:
+            "/callback#/finish?refreshToken=relative-fragment-secret&idtoken=compact-fragment-secret&signature256=signature-fragment-secret&state=keep-route-state",
+        },
+      },
+    ],
+    true,
+    new Set(["location"]),
+  );
+
+  assert.match(
+    result.text,
+    /https:\/\/example\.test\/oauth#access_token=%5BREDACTED%5D&state=keep-hash-state/,
+  );
+  assert.match(
+    result.text,
+    /Location: \/callback#\/finish\?refreshToken=%5BREDACTED%5D&idtoken=%5BREDACTED%5D&signature256=%5BREDACTED%5D&state=keep-route-state/,
+  );
+  assert.equal(
+    result.entries[0].url,
+    "https://example.test/oauth#access_token=%5BREDACTED%5D&state=keep-hash-state",
+  );
+  assert.equal(
+    result.entries[0].responseHeaders.Location,
+    "/callback#/finish?refreshToken=%5BREDACTED%5D&idtoken=%5BREDACTED%5D&signature256=%5BREDACTED%5D&state=keep-route-state",
+  );
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /(?:oauth-hash|relative-fragment|compact-fragment|signature-fragment)-secret/,
+  );
+});
+
+test("preserves harmless URL anchors while serializing network details", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/docs#installation",
+        resourceType: "document",
+        responseHeaders: { location: "/docs#troubleshooting" },
+      },
+    ],
+    true,
+    new Set(["location"]),
+  );
+
+  assert.match(result.text, /https:\/\/example\.test\/docs#installation/);
+  assert.match(result.text, /location: \/docs#troubleshooting/);
+  assert.equal(result.entries[0].url, "https://example.test/docs#installation");
+  assert.equal(result.entries[0].responseHeaders.location, "/docs#troubleshooting");
+});
+
+test("redacts URL-bearing headers in structured and rendered network output", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/data",
+        resourceType: "fetch",
+        requestHeaders: {
+          Referer: "https://app.test/page?access_token=referer-secret&view=keep",
+        },
+        responseHeaders: {
+          "Content-Location": "next?refreshToken=content-secret&view=keep",
+        },
+      },
+    ],
+    true,
+    new Set(["referer", "content-location"]),
+  );
+
+  assert.match(
+    result.text,
+    /Referer: https:\/\/app\.test\/page\?access_token=%5BREDACTED%5D&view=keep/,
+  );
+  assert.match(result.text, /Content-Location: next\?refreshToken=%5BREDACTED%5D&view=keep/);
+  assert.equal(
+    result.entries[0].requestHeaders.Referer,
+    "https://app.test/page?access_token=%5BREDACTED%5D&view=keep",
+  );
+  assert.equal(
+    result.entries[0].responseHeaders["Content-Location"],
+    "next?refreshToken=%5BREDACTED%5D&view=keep",
+  );
+  assert.doesNotMatch(JSON.stringify(result), /(?:referer|content)-secret/);
+});
+
+test("redacts every URI in composite URL-bearing headers without changing their syntax", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/data",
+        resourceType: "fetch",
+        responseHeaders: {
+          Link: '<https://cdn.example/a?access_token=first-secret>; rel="next", </b?code=second-secret>; rel="alternate"',
+          Refresh: '5; URL = "https://app.example/callback?refreshToken=refresh-secret&state=keep"',
+          "WWW-Authenticate":
+            'Bearer authorization_uri="https://login.example/authorize?clientSecret=auth-secret"',
+        },
+      },
+    ],
+    true,
+    new Set(["link", "refresh", "www-authenticate"]),
+  );
+
+  assert.equal(
+    result.entries[0].responseHeaders.Link,
+    '<https://cdn.example/a?access_token=%5BREDACTED%5D>; rel="next", </b?code=%5BREDACTED%5D>; rel="alternate"',
+  );
+  assert.equal(
+    result.entries[0].responseHeaders.Refresh,
+    '5; URL = "https://app.example/callback?refreshToken=%5BREDACTED%5D&state=keep"',
+  );
+  assert.equal(
+    result.entries[0].responseHeaders["WWW-Authenticate"],
+    'Bearer authorization_uri="https://login.example/authorize?clientSecret=%5BREDACTED%5D"',
+  );
+  assert.doesNotMatch(JSON.stringify(result), /(?:first|second|refresh|auth)-secret/);
+});
+
+test("sanitizes composite header bytes before format-specific redaction", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/no-url",
+        resourceType: "document",
+        responseHeaders: { Refresh: "5; \x1b]52;c;NO-URL\x07reload" },
+      },
+      {
+        ts: 2,
+        method: "GET",
+        url: "https://example.test/unquoted",
+        resourceType: "document",
+        responseHeaders: {
+          Refresh: "\x1b[31m0; url=/callback?code=unquoted-secret \x1b[0m",
+        },
+      },
+      {
+        ts: 3,
+        method: "GET",
+        url: "https://example.test/quoted",
+        resourceType: "document",
+        responseHeaders: {
+          Refresh: '2; \x1b]52;c;PREFIX\x07url="/callback?code=quoted-secret"\x1b[2Jsuffix',
+          Link: "\x1b[31m</asset?code=link-secret>; rel=next\x1b[0m",
+        },
+      },
+    ],
+    true,
+    new Set(["refresh", "link"]),
+  );
+
+  assert.equal(result.entries[0].responseHeaders.Refresh, "5; reload");
+  assert.equal(result.entries[1].responseHeaders.Refresh, "0; url=/callback?code=%5BREDACTED%5D ");
+  assert.equal(
+    result.entries[2].responseHeaders.Refresh,
+    '2; url="/callback?code=%5BREDACTED%5D"suffix',
+  );
+  assert.equal(result.entries[2].responseHeaders.Link, "</asset?code=%5BREDACTED%5D>; rel=next");
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes("\x1b"), false);
+  assert.doesNotMatch(serialized, /NO-URL|PREFIX|(?:unquoted|quoted|link)-secret/);
+});
+
+test("redacts URL credentials from network failure diagnostics", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/data",
+        resourceType: "fetch",
+        failure: "request failed at https://dead.invalid/callback?access_token=failure-secret.",
+      },
+    ],
+    false,
+    new Set(),
+  );
+
+  assert.equal(
+    result.entries[0].failure,
+    "request failed at https://dead.invalid/callback?access_token=%5BREDACTED%5D.",
+  );
+  assert.doesNotMatch(JSON.stringify(result), /failure-secret/);
+});
+
+test("redacts credential parameters from every diagnostic URL form", () => {
+  const diagnostic = [
+    "GET callback?access_token=bare-secret failed",
+    "GET ./callback?refreshToken=dot-secret failed",
+    "GET ../callback?code=parent-secret failed",
+    "GET /callback?token=root-secret failed",
+    "GET ?clientSecret=query-secret failed",
+    "GET #idToken=fragment-secret failed",
+    "GET //app.test/callback?signature=network-secret failed",
+    "GET https://app.test/callback?key=absolute-secret failed",
+    "GET (/callback??access_token=malformed-secret).",
+    "GET /public?view=harmless unchanged",
+  ].join("\n");
+
+  assert.equal(
+    redactBrowserDiagnostic(diagnostic),
+    [
+      "GET callback?access_token=%5BREDACTED%5D failed",
+      "GET ./callback?refreshToken=%5BREDACTED%5D failed",
+      "GET ../callback?code=%5BREDACTED%5D failed",
+      "GET /callback?token=%5BREDACTED%5D failed",
+      "GET ?clientSecret=%5BREDACTED%5D failed",
+      "GET #idToken=%5BREDACTED%5D failed",
+      "GET //app.test/callback?signature=%5BREDACTED%5D failed",
+      "GET https://app.test/callback?key=%5BREDACTED%5D failed",
+      "GET (/callback??access_token=%5BREDACTED%5D).",
+      "GET /public?view=harmless unchanged",
+    ].join("\n"),
+  );
+  assert.doesNotMatch(
+    redactBrowserDiagnostic(diagnostic),
+    /(?:bare|dot|parent|root|query|fragment|network|absolute|malformed)-secret/,
+  );
+});
+
+test("redacts authority credentials from URLs embedded in composite diagnostics", () => {
+  const diagnostic =
+    "request failed: url=https://user:password@example.test/callback, retry=https://safe.test";
+
+  assert.equal(
+    redactBrowserDiagnostic(diagnostic),
+    "request failed: url=https://%5BREDACTED%5D:%5BREDACTED%5D@example.test/callback, retry=https://safe.test",
+  );
+  assert.doesNotMatch(redactBrowserDiagnostic(diagnostic), /user|password/u);
+  assert.equal(
+    redactBrowserDiagnostic(
+      "attempts=https://safe.test,https://second-user:second-password@example.test/fail",
+    ),
+    "attempts=https://safe.test,https://%5BREDACTED%5D:%5BREDACTED%5D@example.test/fail",
+  );
+});
+
+test("preserves URL forms while redacting malformed and credential-bearing values", () => {
+  assert.equal(redactBrowserUrl("next?state=1"), "next?state=1");
+  assert.equal(
+    redactBrowserUrl("//auth.example/callback?state=1"),
+    "//auth.example/callback?state=1",
+  );
+  assert.equal(redactBrowserUrl("/callback?state=1"), "/callback?state=1");
+  assert.equal(
+    redactBrowserUrl("https://example.test:bad/callback?access_token=invalid-secret&state=1"),
+    "https://example.test:bad/callback?access_token=%5BREDACTED%5D&state=1",
+  );
+  assert.equal(
+    redactBrowserUrl("https://user:password@example.test/callback?state=1"),
+    "https://%5BREDACTED%5D:%5BREDACTED%5D@example.test/callback?state=1",
+  );
+});
+
+test("redacts semicolon query and matrix credentials while preserving harmless parameters", () => {
+  assert.equal(
+    redactBrowserUrl("/callback?next=1;access_token=query-secret&view=keep"),
+    "/callback?next=1;access_token=%5BREDACTED%5D&view=keep",
+  );
+  assert.equal(
+    redactBrowserUrl("/account;session_id=matrix-secret/view;token=path-secret?view=keep"),
+    "/account;session_id=%5BREDACTED%5D/view;token=%5BREDACTED%5D?view=keep",
+  );
+  assert.equal(
+    redactBrowserUrl("callback??next=1;clientSecret=malformed-secret"),
+    "callback??next=1;clientSecret=%5BREDACTED%5D",
+  );
+  assert.equal(
+    redactBrowserUrl("/callback#next=1;refreshToken=fragment-secret"),
+    "/callback#next=1;refreshToken=%5BREDACTED%5D",
+  );
+  assert.equal(
+    redactBrowserUrl("/public;view=compact?next=1;display=full#section;mode=wide"),
+    "/public;view=compact?next=1;display=full#section;mode=wide",
+  );
+});
+
+test("strips terminal controls from structured and rendered network fields", () => {
+  const result = serializeNetworkEntries(
+    [
+      {
+        ts: 1,
+        method: "GET",
+        url: "https://example.test/path\x1b]52;c;URL-CONTROL\x07",
+        status: 500,
+        statusText: "Remote\x1b]52;c;STATUS-CONTROL\x07 Error",
+        resourceType: "fetch",
+        requestHeaders: {
+          "X-Diagnostic": "before\x1b]52;c;HEADER-CONTROL\x07after",
+        },
+        failure: "failed\x1b]52;c;FAILURE-CONTROL\x07 safely",
+      },
+    ],
+    true,
+    new Set(["x-diagnostic"]),
+  );
+
+  assert.equal(result.entries[0].url, "https://example.test/path");
+  assert.equal(result.entries[0].statusText, "Remote Error");
+  assert.equal(result.entries[0].requestHeaders["X-Diagnostic"], "beforeafter");
+  assert.equal(result.entries[0].failure, "failed safely");
+  assert.doesNotMatch(JSON.stringify(result), /(?:URL|STATUS|HEADER|FAILURE)-CONTROL/u);
+  assert.equal(JSON.stringify(result).includes("\x1b]52;"), false);
+  assert.equal(result.text.includes("\x1b]52;"), false);
 });

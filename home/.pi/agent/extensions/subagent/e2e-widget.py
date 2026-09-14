@@ -40,7 +40,8 @@ def run(mode):
     allowed_environment = {"PATH", "TMPDIR", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE"}
     environment = {key: value for key, value in os.environ.items() if key in allowed_environment}
     environment.update(HOME=str(config), PI_CODING_AGENT_DIR=str(config), PI_OFFLINE="1",
-                       SUBAGENT_WIDGET_E2E="1", TERM="xterm-256color", COLORTERM="truecolor")
+                       SUBAGENT_WIDGET_E2E="1", TERM="xterm-256color", TERM_PROGRAM="ghostty",
+                       COLORTERM="truecolor")
     # Intercept the system opener: exercise real hyperlink clicks without launching apps.
     opener = config / "bin"
     opener.mkdir()
@@ -167,6 +168,11 @@ def run(mode):
         text = capture("all-done")
         assert "Subagents" in text and "● done" in text and "nested-scout" in text, "Finished work never vanishes"
         assert "working" not in text and "blocked" not in text
+        command("/widget-demo history")
+        text = capture("active-over-history")
+        assert "HISTORY-PARENT" in text and "ACTIVE-SIBLING" in text, "Completed descendants cannot hide active siblings"
+        assert "done-history-" not in text and "+4 more" in text, "Descendant history yields to active siblings"
+        assert text.index("HISTORY-PARENT") < text.index("ACTIVE-SIBLING"), "Selected rows retain tree order"
         command("/widget-demo many")
         text = capture("many")
         assert "+5 more" in text and "layout-review-7" in text, "Show overflow and prioritize blocked subtrees"
@@ -186,7 +192,23 @@ def run(mode):
         command("/reload")
         text = capture("reloaded")
         assert text.count("Subagents") == 1 and "widget-reference" in text, "Reload must recreate one widget"
-        print(f"PASS {mode}: tree, retained done states, full prompt/output modals, links, paging, mouse, resize, picker, overflow, clearing, reload", flush=True)
+        command("/widget-demo empty")
+        resize(160, 48)
+        log.flush()
+        safety_start = (config / "terminal.ansi").stat().st_size
+        command("/completion-safety")
+        text = capture("completion-collapsed")
+        assert "SAFE-NAME wrapped [worker]" in text, "Metadata is safe single-line text"
+        key(b"\x0f")
+        text = capture("completion-expanded")
+        assert "SAFETY-LAST" in text and "safe reference" in text, "Native expanded completion is rendered"
+        log.flush()
+        safety_bytes = (config / "terminal.ansi").read_bytes()[safety_start:]
+        assert b"\x1b]52;" not in safety_bytes, "Completion metadata cannot emit clipboard controls"
+        assert b"\x1b]8;;command:" not in safety_bytes, "Reference links cannot bypass protocol allowlist"
+        assert b"\x1b]8;;https://example.com/safe-reference" in safety_bytes, "Safe parsed reference links stay clickable"
+        assert not opened.exists() or "unsafe-fixture" not in opened.read_text(), "Rendering never opens links"
+        print(f"PASS {mode}: tree, retained done states, full prompt/output modals, links, paging, mouse, resize, picker, overflow, clearing, reload, safe completion rendering", flush=True)
     finally:
         if process.poll() is None:
             process.terminate()

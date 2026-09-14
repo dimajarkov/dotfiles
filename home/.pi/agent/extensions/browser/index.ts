@@ -32,25 +32,16 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { sanitizeMetadata, sanitizeOutput } from "../lib/terminal-safety.ts";
 import {
+  redactBrowserDiagnostic,
+  redactBrowserUrl,
   serializeNetworkEntries,
   type NetworkEntry,
 } from "./network-serialization.ts";
-import type {
-  BrowserContext,
-  ConsoleMessage,
-  Page,
-  Request,
-} from "playwright-core";
+import type { BrowserContext, ConsoleMessage, Page, Request } from "playwright-core";
 
-const DEFAULT_BROWSERS_DIR = join(
-  homedir(),
-  ".pi",
-  "agent",
-  "extensions",
-  "browser",
-  ".browsers",
-);
+const DEFAULT_BROWSERS_DIR = join(homedir(), ".pi", "agent", "extensions", "browser", ".browsers");
 process.env.PLAYWRIGHT_BROWSERS_PATH ??= DEFAULT_BROWSERS_DIR;
 
 type ConsoleEntry = {
@@ -105,7 +96,10 @@ function pushBounded<T>(buf: T[], entry: T): void {
  */
 let opQueue: Promise<unknown> = Promise.resolve();
 function serialize<T>(fn: () => Promise<T>): Promise<T> {
-  const next = opQueue.then(fn, fn);
+  const next = opQueue.then(fn, fn).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(redactBrowserDiagnostic(message));
+  });
   opQueue = next.catch(() => {});
   return next;
 }
@@ -119,8 +113,7 @@ export default function browserExtension(pi: ExtensionAPI) {
   const profileDir =
     process.env.PI_BROWSER_PROFILE ??
     join(homedir(), ".pi", "agent", "extensions", "browser", ".profile");
-  const browsersDir =
-    process.env.PLAYWRIGHT_BROWSERS_PATH ?? DEFAULT_BROWSERS_DIR;
+  const browsersDir = process.env.PLAYWRIGHT_BROWSERS_PATH ?? DEFAULT_BROWSERS_DIR;
   const headless = !process.env.PI_BROWSER_HEADFUL;
 
   async function ensurePage(): Promise<Page> {
@@ -139,18 +132,19 @@ export default function browserExtension(pi: ExtensionAPI) {
 
     page.on("console", (msg: ConsoleMessage) => {
       const loc = msg.location();
+      const locationUrl = loc?.url ? redactBrowserUrl(loc.url) : undefined;
       pushBounded(consoleBuf, {
         ts: Date.now(),
         type: msg.type(),
-        text: msg.text(),
-        location: loc?.url ? `${loc.url}:${loc.lineNumber}` : undefined,
+        text: redactBrowserDiagnostic(msg.text()),
+        location: locationUrl ? `${locationUrl}:${loc.lineNumber}` : undefined,
       });
     });
     page.on("pageerror", (err) => {
       pushBounded(consoleBuf, {
         ts: Date.now(),
         type: "pageerror",
-        text: `${err.name}: ${err.message}`,
+        text: redactBrowserDiagnostic(`${err.name}: ${err.message}`),
       });
     });
     page.on("requestfinished", async (req: Request) => {
@@ -279,17 +273,30 @@ export default function browserExtension(pi: ExtensionAPI) {
     async execute(_id, params) {
       return serialize(async () => {
         const p = await ensurePage();
-        const resp = await p.goto(params.url, {
-          waitUntil: params.waitUntil ?? "domcontentloaded",
-          timeout: params.timeoutMs ?? 30_000,
-        });
-        const status = resp?.status();
-        return {
-          content: [
-            { type: "text", text: `${status ?? "?"} ${p.url()}` },
-          ],
-          details: { status, finalUrl: p.url() },
-        };
+        try {
+          const resp = await p.goto(params.url, {
+            waitUntil: params.waitUntil ?? "domcontentloaded",
+            timeout: params.timeoutMs ?? 30_000,
+          });
+          const status = resp?.status();
+          const finalUrl = redactBrowserUrl(p.url());
+          return {
+            content: [{ type: "text", text: `${status ?? "?"} ${finalUrl}` }],
+            details: { status, finalUrl },
+          };
+        } catch (error) {
+          const message = redactBrowserDiagnostic(
+            error instanceof Error ? error.message : String(error),
+          );
+          const finalUrl = redactBrowserUrl(p.url());
+          return {
+            content: [
+              { type: "text", text: `navigation error: ${message}\nfinal URL: ${finalUrl}` },
+            ],
+            details: { status: undefined, finalUrl, error: message },
+            isError: true,
+          };
+        }
       });
     },
   });
@@ -329,9 +336,9 @@ export default function browserExtension(pi: ExtensionAPI) {
             typeof result === "string"
               ? result
               : (JSON.stringify(result, null, 2) ?? String(result));
-          return { content: [{ type: "text", text }], details: { result } };
+          return { content: [{ type: "text", text: sanitizeOutput(text) }], details: { result } };
         } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
+          const msg = redactBrowserDiagnostic(e instanceof Error ? e.message : String(e));
           // Keep the success/error result shape identical so the tool's
           // inferred return type stays a single union member — the error
           // text already lives in `content[].text`, no need to duplicate it
@@ -370,9 +377,7 @@ export default function browserExtension(pi: ExtensionAPI) {
         const limit = params.limit ?? 100;
         const filter = params.filter;
         const filtered = filter
-          ? consoleBuf.filter(
-              (e) => e.text.includes(filter) || (e.location ?? "").includes(filter),
-            )
+          ? consoleBuf.filter((e) => e.text.includes(filter) || (e.location ?? "").includes(filter))
           : consoleBuf.slice();
         const out = filtered.slice(-limit);
         if (params.clear ?? true) consoleBuf.length = 0;
@@ -463,7 +468,7 @@ export default function browserExtension(pi: ExtensionAPI) {
         const p = await ensurePage();
         await p.fill(params.selector, params.value);
         return {
-          content: [{ type: "text", text: `filled ${params.selector}` }],
+          content: [{ type: "text", text: `filled ${sanitizeMetadata(params.selector)}` }],
           details: {},
         };
       });
@@ -485,7 +490,7 @@ export default function browserExtension(pi: ExtensionAPI) {
         const p = await ensurePage();
         await p.click(params.selector);
         return {
-          content: [{ type: "text", text: `clicked ${params.selector}` }],
+          content: [{ type: "text", text: `clicked ${sanitizeMetadata(params.selector)}` }],
           details: {},
         };
       });
@@ -520,8 +525,7 @@ export default function browserExtension(pi: ExtensionAPI) {
     name: "browser_close",
     label: "Browser Close",
     description: "Close the persistent browser context. Next browser_* call relaunches.",
-    promptSnippet:
-      "Tear down the headless browser (rarely needed; auto-cleans on session end)",
+    promptSnippet: "Tear down the headless browser (rarely needed; auto-cleans on session end)",
     parameters: Type.Object({}),
     async execute() {
       return serialize(async () => {
@@ -556,8 +560,7 @@ export default function browserExtension(pi: ExtensionAPI) {
       }
       // Bare /browser — status.
       const toolState = enabled ? "enabled" : "disabled (run /browser on)";
-      const procState =
-        page && !page.isClosed() ? `, open at ${page.url()}` : "";
+      const procState = page && !page.isClosed() ? `, open at ${redactBrowserUrl(page.url())}` : "";
       ctx.ui.notify(`browser tools: ${toolState}${procState}`, "info");
     },
   });

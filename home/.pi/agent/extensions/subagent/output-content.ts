@@ -1,15 +1,15 @@
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  hyperlink,
-  stripTerminalSequences,
-  truncateToWidth,
-  visibleWidth,
-  wrapTextWithAnsi,
-} from "@earendil-works/pi-tui";
+import { hyperlink, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { isSafeExplicitUrl, sanitizeOutput } from "../lib/terminal-safety.ts";
 
-const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "file:"]);
+export {
+  sanitizeMetadata,
+  sanitizeOutput,
+  sanitizeRenderedOutput,
+} from "../lib/terminal-safety.ts";
+
 const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
 const LOCAL_FILE_EXTENSION = /\.[A-Za-z0-9][A-Za-z0-9_-]{0,15}(?::\d+(?::\d+)?)?(?:[#?].*)?$/u;
 const MARKDOWN_LINK_START = /\[([^\]\n]+)\]\(/gu;
@@ -47,80 +47,6 @@ export function renderOutputContent(text: string, cwd: string, width: number): s
       visibleWidth(wrapped) <= safeWidth ? wrapped : truncateToWidth(wrapped, safeWidth, ""),
     );
   });
-}
-
-export function sanitizeOutput(text: string): string {
-  // Pi's helper removes CSI, OSC (including OSC 52), and APC sequences. Remove
-  // any remaining C0/C1 controls as well so malformed escapes cannot reach the
-  // generated OSC 8 links or the terminal.
-  const normalized = stripTerminalSequences(text)
-    .replace(/\r\n?/gu, "\n")
-    .replace(/\u2028|\u2029/gu, "\n")
-    .replace(/\t/gu, "    ");
-  let result = "";
-  for (const character of normalized) {
-    const codePoint = character.codePointAt(0)!;
-    const isControl =
-      codePoint <= 0x08 ||
-      (codePoint >= 0x0b && codePoint <= 0x0c) ||
-      (codePoint >= 0x0e && codePoint <= 0x1f) ||
-      (codePoint >= 0x7f && codePoint <= 0x9f);
-    const isBidiFormat =
-      (codePoint >= 0x202a && codePoint <= 0x202e) || (codePoint >= 0x2066 && codePoint <= 0x2069);
-    if (!isControl && !isBidiFormat) result += character;
-  }
-  return result;
-}
-
-export function sanitizeMarkdownOutput(text: string): string {
-  return neutralizeUnsafeAutolinks(neutralizeUnsafeMarkdownLinks(sanitizeOutput(text)));
-}
-
-function neutralizeUnsafeMarkdownLinks(text: string): string {
-  MARKDOWN_LINK_START.lastIndex = 0;
-  let result = "";
-  let position = 0;
-  let match: RegExpExecArray | null;
-  while ((match = MARKDOWN_LINK_START.exec(text)) !== null) {
-    const openingEnd = match.index + match[0].length;
-    let depth = 1;
-    let end = openingEnd;
-    for (; end < text.length; end++) {
-      const character = text[end];
-      if (character === "(") depth++;
-      if (character === ")" && --depth === 0) break;
-    }
-    if (depth !== 0) continue;
-    const target = markdownTarget(text.slice(openingEnd, end));
-    if (!safeExplicitUrl(target)) {
-      result += `${text.slice(position, match.index)}\\${text.slice(match.index, end + 1)}`;
-      position = end + 1;
-    }
-    MARKDOWN_LINK_START.lastIndex = end + 1;
-  }
-  return result + text.slice(position);
-}
-
-function neutralizeUnsafeAutolinks(text: string): string {
-  return text.replace(/<([A-Za-z][A-Za-z0-9+.-]*:[^<>\n]+)>/gu, (match, target: string) =>
-    safeExplicitUrl(target) ? match : `\\${match}`,
-  );
-}
-
-function safeExplicitUrl(target: string): boolean {
-  try {
-    const url = new URL(target);
-    const protocol = url.protocol.toLowerCase();
-    return (
-      SAFE_URL_PROTOCOLS.has(protocol) &&
-      (protocol !== "file:" ||
-        ((url.hostname === "" || url.hostname.toLowerCase() === "localhost") &&
-          url.username === "" &&
-          url.password === ""))
-    );
-  } catch {
-    return false;
-  }
 }
 
 function linkifyLine(line: string, cwd: string): string {
@@ -172,8 +98,16 @@ function collectMarkdownCandidates(line: string, cwd: string, candidates: LinkCa
     const openingEnd = match.index + match[0].length;
     let depth = 1;
     let end = openingEnd;
+    const firstContent = openingEnd + (line.slice(openingEnd).match(/^\s*/u)?.[0].length ?? 0);
+    let inAngleDestination = line[firstContent] === "<";
     for (; end < line.length; end++) {
       const character = line[end];
+      const escaped = isMarkdownEscaped(line, end);
+      if (inAngleDestination) {
+        if (character === ">" && !escaped) inAngleDestination = false;
+        continue;
+      }
+      if (escaped) continue;
       if (character === "(") depth++;
       if (character === ")" && --depth === 0) break;
     }
@@ -280,8 +214,9 @@ function collectPathCandidates(line: string, cwd: string, candidates: LinkCandid
 
 function markdownTarget(rawTarget: string): string {
   const target = rawTarget.trim();
-  if (target.startsWith("<") && target.endsWith(">")) {
-    return target.slice(1, -1);
+  if (target.startsWith("<")) {
+    const end = findUnescapedCharacter(target, ">", 1);
+    if (end !== -1) return target.slice(1, end);
   }
   // Titles are separated by whitespace for URL destinations. Preserve spaces in
   // relative local paths, which are common in generated child output.
@@ -291,12 +226,13 @@ function markdownTarget(rawTarget: string): string {
 }
 
 function hrefForTarget(rawTarget: string, cwd: string, markdownPath = false): string | undefined {
-  const target = rawTarget.trim();
-  if (!target || target.startsWith("#")) return undefined;
+  const sourceTarget = rawTarget.trim();
+  if (!sourceTarget || sourceTarget.startsWith("#")) return undefined;
+  const target = markdownPath ? decodeMarkdownEscapes(sourceTarget) : sourceTarget;
 
   if (/^[A-Za-z]:[\\/]/u.test(target)) {
     return localFileHref(
-      markdownPath ? decodeMarkdownPath(target) : stripLineReference(target),
+      markdownPath ? decodeMarkdownPath(sourceTarget) : stripLineReference(target),
       cwd,
     );
   }
@@ -308,21 +244,21 @@ function hrefForTarget(rawTarget: string, cwd: string, markdownPath = false): st
       !URL_SCHEME.test(referencedPath) &&
       looksLikeLocalPath(referencedPath)
     ) {
-      return localFileHref(markdownPath ? decodeMarkdownPath(target) : referencedPath, cwd);
+      return localFileHref(markdownPath ? decodeMarkdownPath(sourceTarget) : referencedPath, cwd);
     }
     try {
       const url = new URL(target);
       const protocol = url.protocol.toLowerCase();
-      if (!SAFE_URL_PROTOCOLS.has(protocol)) return undefined;
-      if (
-        protocol === "file:" &&
-        ((url.hostname !== "" && url.hostname.toLowerCase() !== "localhost") ||
-          url.username !== "" ||
-          url.password !== "")
-      ) {
-        return undefined;
+      if (!isSafeExplicitUrl(target)) return undefined;
+      if (protocol === "file:") {
+        let pathname = url.pathname;
+        try {
+          pathname = decodeURIComponent(pathname);
+        } catch {
+          // Preserve malformed percent escapes as literal filename text.
+        }
+        url.pathname = stripLineReference(pathname);
       }
-      if (protocol === "file:") url.pathname = stripLineReference(url.pathname);
       return url.href;
     } catch {
       return undefined;
@@ -331,7 +267,7 @@ function hrefForTarget(rawTarget: string, cwd: string, markdownPath = false): st
 
   if (!markdownPath && !looksLikeLocalPath(target)) return undefined;
   if (target.startsWith("//")) return undefined;
-  const path = markdownPath ? decodeMarkdownPath(target) : stripLineReference(target);
+  const path = markdownPath ? decodeMarkdownPath(sourceTarget) : stripLineReference(target);
   return localFileHref(path, cwd);
 }
 
@@ -340,14 +276,55 @@ function stripLineReference(target: string): string {
 }
 
 function decodeMarkdownPath(target: string): string {
-  // A default file handler opens the asset, not a Markdown heading or line anchor.
-  // Encoded ? and # are still literal filename characters, so split before decoding.
-  const pathname = stripLineReference(target.split(/[?#]/u, 1)[0]!);
+  const suffix = findFirstUnescapedCharacter(target, new Set(["?", "#"]));
+  const rawPathname = suffix === -1 ? target : target.slice(0, suffix);
+  let pathname = rawPathname;
   try {
-    return decodeURIComponent(pathname);
+    pathname = decodeURIComponent(pathname);
   } catch {
-    return pathname;
+    // Preserve malformed percent escapes as literal filename text.
   }
+  return decodeMarkdownEscapes(stripMarkdownLineReference(pathname));
+}
+
+function stripMarkdownLineReference(target: string): string {
+  const match = /:\d+(?::\d+)?$/u.exec(target);
+  return match && !isMarkdownEscaped(target, match.index) ? target.slice(0, match.index) : target;
+}
+
+function decodeMarkdownEscapes(value: string): string {
+  let result = "";
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!;
+    const next = value[index + 1];
+    if (character === "\\" && next !== undefined && /[!-/:-@[-`{-~]/u.test(next)) {
+      result += next;
+      index++;
+    } else {
+      result += character;
+    }
+  }
+  return result;
+}
+
+function isMarkdownEscaped(value: string, index: number): boolean {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor--) backslashes++;
+  return backslashes % 2 === 1;
+}
+
+function findUnescapedCharacter(value: string, character: string, start = 0): number {
+  for (let index = start; index < value.length; index++) {
+    if (value[index] === character && !isMarkdownEscaped(value, index)) return index;
+  }
+  return -1;
+}
+
+function findFirstUnescapedCharacter(value: string, characters: ReadonlySet<string>): number {
+  for (let index = 0; index < value.length; index++) {
+    if (characters.has(value[index]!) && !isMarkdownEscaped(value, index)) return index;
+  }
+  return -1;
 }
 
 function localFileHref(target: string, cwd: string): string | undefined {
@@ -358,7 +335,9 @@ function localFileHref(target: string, cwd: string): string | undefined {
         : target;
     const absolute =
       isAbsolute(expanded) || /^[A-Za-z]:[\\/]/u.test(expanded) ? expanded : resolve(cwd, expanded);
-    return pathToFileURL(absolute).href;
+    const href = pathToFileURL(absolute).href;
+    const fileAuthorityEnd = "file://".length;
+    return `${href.slice(0, fileAuthorityEnd)}${href.slice(fileAuthorityEnd).replaceAll(":", "%3A")}`;
   } catch {
     return undefined;
   }

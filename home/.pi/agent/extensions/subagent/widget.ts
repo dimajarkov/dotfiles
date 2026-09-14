@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { sanitizeMetadata } from "../lib/terminal-safety.ts";
 import type { ChildRecord } from "./orchestrator.ts";
 
 /** A child together with its rendered position in the subagent tree. */
@@ -43,10 +44,6 @@ function replaceControlCharacters(value: string): string {
       return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f) ? " " : character;
     })
     .join("");
-}
-
-function singleLine(value: string): string {
-  return replaceControlCharacters(stripTerminalSequences(value)).replace(/\s+/gu, " ").trim();
 }
 
 function safePrefix(value: string): string {
@@ -95,7 +92,7 @@ export function buildSubagentTree(
       if (lineage.has(child.id)) continue;
 
       const childPath = [...path, child.id];
-      const childDisplayPath = [...displayPath, singleLine(child.semanticName)];
+      const childDisplayPath = [...displayPath, sanitizeMetadata(child.semanticName)];
       const childLineage = new Set(lineage);
       childLineage.add(child.id);
       const descendants = evaluateChildren(
@@ -210,14 +207,53 @@ function pathParent(path: string): string {
 
 function selectVisibleRowIndexes(rows: readonly TreeRow[]): number[] {
   const visible: number[] = [];
+  const selectedIndexes = new Set<number>();
   const selectedPaths = new Set<string>();
-  for (let index = 0; index < rows.length && visible.length < MAX_VISIBLE_AGENTS; index += 1) {
+  const indexesByPath = new Map<string, number>();
+  for (let index = 0; index < rows.length; index += 1) {
+    // A duplicate path cannot be selected unambiguously. Keep the first row so
+    // the bounded renderer remains deterministic for malformed input.
+    if (!indexesByPath.has(rows[index]!.path)) indexesByPath.set(rows[index]!.path, index);
+  }
+
+  // Reserve space for active work and the completed ancestors needed to show
+  // it in context. Without this pass, a long completed branch can consume the
+  // cap before a later active sibling is reached in pre-order.
+  const priorityIndexes = new Set<number>();
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    if (!isActive(row.child)) continue;
+    priorityIndexes.add(index);
+    let ancestorPath = pathParent(row.path);
+    while (row.depth > 0 && ancestorPath) {
+      const ancestorIndex = indexesByPath.get(ancestorPath);
+      if (ancestorIndex === undefined) break;
+      priorityIndexes.add(ancestorIndex);
+      ancestorPath = pathParent(ancestorPath);
+    }
+  }
+
+  const select = (index: number): void => {
+    if (selectedIndexes.size >= MAX_VISIBLE_AGENTS || selectedIndexes.has(index)) return;
     const row = rows[index]!;
     // Tree rows from buildSubagentTree are pre-order. The guard also makes the
     // renderer safe if a caller accidentally supplies a child without context.
-    if (row.depth > 0 && !selectedPaths.has(pathParent(row.path))) continue;
-    visible.push(index);
+    if (row.depth > 0 && !selectedPaths.has(pathParent(row.path))) return;
+    selectedIndexes.add(index);
     selectedPaths.add(row.path);
+  };
+
+  // Keep all reachable active/blocked work ahead of terminal history, while
+  // emitting selected rows in their original pre-order for genuine hierarchy.
+  for (let index = 0; index < rows.length; index += 1) {
+    if (priorityIndexes.has(index)) select(index);
+  }
+  const lastPriorityIndex = Math.max(-1, ...priorityIndexes);
+  for (let index = 0; index < rows.length; index += 1) {
+    if (!priorityIndexes.has(index) && index > lastPriorityIndex) select(index);
+  }
+  for (let index = 0; index < rows.length; index += 1) {
+    if (selectedIndexes.has(index)) visible.push(index);
   }
   return visible;
 }
@@ -335,9 +371,9 @@ function renderRow(
   const prefix = theme.fg("borderMuted", safePrefix(row.prefix));
   const name = theme.fg(
     isActive(child) ? "text" : "muted",
-    theme.bold(singleLine(child.semanticName)),
+    theme.bold(sanitizeMetadata(child.semanticName)),
   );
-  const role = theme.fg("dim", ` (${singleLine(child.role)})`);
+  const role = theme.fg("dim", ` (${sanitizeMetadata(child.role)})`);
   const label = prefix + name + role;
   let content: string;
   if (contentWidth <= 0 || trailingWidth >= contentWidth) {

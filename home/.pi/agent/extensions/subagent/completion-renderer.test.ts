@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { stripTerminalSequences, visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
+import {
+  setCapabilityOverrides,
+  stripTerminalSequences,
+  visibleWidth,
+  type MarkdownTheme,
+} from "@earendil-works/pi-tui";
 import {
   completionOutput,
   renderCompletionMessage,
@@ -29,6 +34,8 @@ const theme: CompletionRenderTheme = {
   fg: (_color, text) => text,
   bold: (text) => text,
 };
+
+setCapabilityOverrides({ hyperlinks: true });
 
 test("removes only the completion status line from the markdown payload", () => {
   assert.equal(
@@ -121,6 +128,69 @@ test("renders failed empty output and its error as separate fields", () => {
   assert.match(expanded, /Failure: provider exploded/);
 });
 
+test("renders a nonempty failed output and its separate error exactly once", () => {
+  const message = {
+    content: "legacy text must not replace structured fields",
+    details: {
+      completionDataVersion: 1,
+      semanticName: "scout",
+      role: "researcher",
+      state: "failed",
+      result: "partial result",
+      error: "provider exploded",
+    },
+  };
+  const saved = structuredClone(message);
+
+  for (const expanded of [false, true]) {
+    const rendered = renderCompletionMessage(
+      message,
+      { expanded, outputPad: 1 },
+      theme,
+      markdownTheme,
+    )
+      .render(80)
+      .map(stripTerminalSequences)
+      .join("\n");
+    assert.match(rendered, /partial result/);
+    assert.equal((rendered.match(/Failure: provider exploded/gu) ?? []).length, 1);
+    assert.doesNotMatch(rendered, /legacy text/);
+  }
+  assert.deepEqual(message, saved);
+});
+
+test("renders provider and recovery errors as separate diagnostics exactly once", () => {
+  const message = {
+    content: "legacy text must not replace structured fields",
+    details: {
+      completionDataVersion: 1,
+      semanticName: "scout",
+      role: "researcher",
+      state: "crashed",
+      result: "partial result",
+      error: "provider exploded",
+      recoveryError: "full settlement could not be proven",
+    },
+  };
+
+  for (const expanded of [false, true]) {
+    const rendered = renderCompletionMessage(
+      message,
+      { expanded, outputPad: 1 },
+      theme,
+      markdownTheme,
+    )
+      .render(80)
+      .map(stripTerminalSequences)
+      .join("\n");
+    assert.equal((rendered.match(/Failure: provider exploded/gu) ?? []).length, 1);
+    assert.equal(
+      (rendered.match(/Recovery: full settlement could not be proven/gu) ?? []).length,
+      1,
+    );
+  }
+});
+
 test("structured missing output renders its failure once without legacy content fallback", () => {
   const message = {
     content: "Subagent scout crashed.\n\n(no output)\n\nFailure: provider exploded",
@@ -155,6 +225,58 @@ test("structured missing output renders its failure once without legacy content 
   assert.doesNotMatch(collapsed, /Subagent scout crashed/);
   assert.match(expanded, /\(no output\)/);
   assert.equal((expanded.match(/Failure: provider exploded/gu) ?? []).length, 1);
+});
+
+test("completion rendering validates parsed reference and encoded link destinations", () => {
+  const result = [
+    "[run][danger] [danger][] [danger] [encoded](command&#58;unsafe)",
+    "[danger]: command:unsafe",
+    "[remote](file://server/share/private) [mail](mailto:person@example.com)",
+    "[safe][docs] [local][file]",
+    "[docs]: https://example.com/document",
+    "[file]: file:///tmp/local.md",
+  ].join("\n\n");
+  const rendered = renderCompletionMessage(
+    { content: result },
+    { expanded: true, outputPad: 1 },
+    theme,
+    markdownTheme,
+  )
+    .render(160)
+    .join("\n");
+  // oxlint-disable-next-line no-control-regex -- Inspect actual emitted hyperlink destinations.
+  const targets = [...rendered.matchAll(/\x1b\]8;;([^\x1b\x07]*)(?:\x1b\\|\x07)/gu)]
+    .map((match) => match[1])
+    .filter(Boolean);
+  assert.deepEqual(
+    new Set(targets),
+    new Set(["https://example.com/document", "file:///tmp/local.md"]),
+  );
+  assert.match(stripTerminalSequences(rendered), /run/);
+  assert.match(stripTerminalSequences(rendered), /encoded/);
+});
+
+test("completion metadata is safe single-line text without changing the saved message", () => {
+  const message = {
+    content: "saved output",
+    details: {
+      semanticName: "SAFE-NAME\x1b]52;c;METADATA-CONTROL\x07\nwrapped",
+      role: "worker\x1b]52;c;ROLE-CONTROL\x07\nrole",
+      state: "completed",
+    },
+  };
+  const saved = structuredClone(message);
+  for (const expanded of [false, true]) {
+    const lines = renderCompletionMessage(
+      message,
+      { expanded, outputPad: 1 },
+      theme,
+      markdownTheme,
+    ).render(120);
+    assert.ok(!lines.join("\n").includes("\x1b]52;"));
+    assert.match(stripTerminalSequences(lines[0]!), /✓ SAFE-NAME wrapped \[worker role\]/u);
+  }
+  assert.deepEqual(message, saved);
 });
 
 test("completion rendering removes terminal controls and neutralizes unsafe links", () => {

@@ -171,6 +171,45 @@ test("layout keeps parent context under the cap and exposes output hit bounds", 
   assert.match(lines[output.y]!, /done \(worker\).*● done \[output\]/);
 });
 
+test("keeps an active sibling visible ahead of completed descendant history", () => {
+  const rows = buildSubagentTree(
+    [
+      child("active-a", "root", "working"),
+      child("a-history-1", "active-a", "completed"),
+      child("a-history-2", "active-a", "completed"),
+      child("a-history-3", "active-a", "completed"),
+      child("a-history-4", "active-a", "completed"),
+      child("active-b", "root", "working"),
+      child("h1", "root", "completed", { updatedAt: 10 }),
+      child("h2", "root", "completed", { updatedAt: 20 }),
+      child("h3", "root", "completed", { updatedAt: 30 }),
+    ],
+    "root",
+  );
+  for (const width of [36, 80]) {
+    const layout = getSubagentWidgetLayout(rows, width, theme);
+    assert.deepEqual(
+      layout.visibleRows.map((row) => row.child.id),
+      ["active-a", "active-b", "h3", "h2", "h1"],
+    );
+    assert.deepEqual(
+      layout.hiddenRows.map((row) => row.child.id),
+      ["a-history-1", "a-history-2", "a-history-3", "a-history-4"],
+    );
+    assert.equal(layout.activeCount, 2);
+    assert.equal(layout.doneCount, 7);
+    assert.equal(layout.hiddenBlockedCount, 0);
+    assert.equal(layout.lines?.length, 8);
+    const rendered = renderSubagentWidget(rows, width, theme).map(stripTerminalSequences);
+    const activeA = rendered.findIndex((line) => line.includes("active-a"));
+    const activeB = rendered.findIndex((line) => line.includes("active-b"));
+    const history = rendered.findIndex((line) => line.includes("h3"));
+    assert.ok(activeA > 0 && activeA < activeB && activeB < history);
+    assert.doesNotMatch(rendered.join("\n"), /a-history-/);
+    assert.match(rendered.join("\n"), /\+4 more · \/subagents/);
+  }
+});
+
 test("completed history remains visible, reports active and done counts, and offers the footer hint", () => {
   const rows = buildSubagentTree(
     [
@@ -237,8 +276,8 @@ test("sanitizes Unicode and terminal input while staying within every narrow wid
   const rows = buildSubagentTree(
     [
       child("weird", "root", "completed", {
-        semanticName: "研究👩‍💻 cafe\u0301\n\t\x1b[2Jinjected",
-        role: "\x1b]8;;https://example.com\x07reviewer\x1b]8;;\x07\r\nrole",
+        semanticName: "研究👩‍💻 cafe\u0301\u202einvisible\n\t\x1b[2Jinjected",
+        role: "\x1b]8;;https://example.com\x07reviewer\x1b]8;;\x07\u2066role\u2069\r\nkind",
         result: "done",
       }),
     ],
@@ -251,11 +290,12 @@ test("sanitizes Unicode and terminal input while staying within every narrow wid
       assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
       assert.doesNotMatch(line, /[\r\n\t]/);
       assert.ok(!line.includes("\x1b[2J") && !line.includes("\x1b]8;"));
+      assert.doesNotMatch(line, /[\u202a-\u202e\u2066-\u2069]/u);
       if (width >= 4) assert.equal(visibleWidth(line), width);
     }
   }
   const plain = renderSubagentWidget(rows, 120, styledTheme).map(stripTerminalSequences).join("\n");
-  assert.match(plain, /研究👩‍💻 café injected \(reviewer role\)/);
+  assert.match(plain, /研究👩‍💻 caféinvisible injected \(reviewerrole kind\)/);
   assert.match(plain, /● done \[output\]/);
 });
 

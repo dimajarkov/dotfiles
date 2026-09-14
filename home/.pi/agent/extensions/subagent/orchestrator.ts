@@ -1,13 +1,21 @@
 import { createHash } from "node:crypto";
-import {
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { atomicWriteText } from "./atomic-file.ts";
+import {
+  childControlPrompt,
+  childControlReceiptAt,
+  childControlReceiptPath,
+  completionMarkerAt,
+  type CompletionSettlementEvidence,
+  completionSettlementAt,
+  finalAssistantResult,
+  isConcludedStopReason,
+  promoteCompletionSettlement,
+  writeCompletionSettlement,
+  type ChildControlReceipt,
+} from "./completion-protocol.ts";
 import { withRegistryLock } from "./registry-lock.ts";
 
 export interface CommandExecution {
@@ -53,8 +61,9 @@ const CHILD_COMPLETION_EXTENSION = fileURLToPath(
   new URL("./completion-protocol.ts", import.meta.url),
 );
 const AGENT_START_TIMEOUT_MILLISECONDS = 60_000;
-const PLACEMENT_LOCK_TIMEOUT_SECONDS =
-  Math.ceil(AGENT_START_TIMEOUT_MILLISECONDS / 1_000) + 30;
+const CONTROL_RECEIPT_TIMEOUT_MILLISECONDS = 5_000;
+const CONTROL_RECEIPT_POLL_MILLISECONDS = 25;
+const PLACEMENT_LOCK_TIMEOUT_SECONDS = Math.ceil(AGENT_START_TIMEOUT_MILLISECONDS / 1_000) + 30;
 
 export type ChildState =
   | "starting"
@@ -112,6 +121,7 @@ export interface ChildRecord {
   surfaceState?: SurfaceState;
   cleanupError?: string;
   lifecycleError?: string;
+  recoveryError?: string;
   state: ChildState;
   createdAt: number;
   updatedAt: number;
@@ -121,6 +131,11 @@ export interface ChildRecord {
   startedAfterEntryId?: string;
   /** Monotonically increasing registry revision used for cross-process CAS writes. */
   revision?: number;
+}
+
+export interface ResumeResult {
+  action: "focused" | "reconciled";
+  child: ChildRecord;
 }
 
 interface JsonObject {
@@ -168,8 +183,11 @@ function isContentArtifact(value: unknown): value is ResolvedContentArtifact {
 }
 
 function isSafePiEnvironment(value: unknown): value is Record<string, string> {
-  return isObject(value) && Object.entries(value).every(
-    ([key, entry]) => SAFE_PI_ENVIRONMENT_KEY_SET.has(key) && typeof entry === "string",
+  return (
+    isObject(value) &&
+    Object.entries(value).every(
+      ([key, entry]) => SAFE_PI_ENVIRONMENT_KEY_SET.has(key) && typeof entry === "string",
+    )
   );
 }
 
@@ -196,8 +214,10 @@ function environmentsMatch(
   current: Record<string, string>,
 ): boolean {
   const savedEntries = Object.entries(saved);
-  return savedEntries.length === Object.keys(current).length &&
-    savedEntries.every(([key, value]) => current[key] === value);
+  return (
+    savedEntries.length === Object.keys(current).length &&
+    savedEntries.every(([key, value]) => current[key] === value)
+  );
 }
 
 function resolveLaunchLoadout(
@@ -252,9 +272,7 @@ function stringAt(value: unknown, key: string): string {
   return value[key];
 }
 
-function currentHerdrSession(
-  environment: Record<string, string | undefined>,
-): string {
+function currentHerdrSession(environment: Record<string, string | undefined>): string {
   return environment.HERDR_SESSION ?? "default";
 }
 
@@ -278,7 +296,11 @@ function slug(value: string): string {
 }
 
 function herdrName(semanticName: string, role: string, id: string): string {
-  const unique = id.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 6) || "child";
+  const unique =
+    id
+      .replace(/[^a-zA-Z0-9]/g, "")
+      .toLowerCase()
+      .slice(0, 6) || "child";
   const suffix = `-${slug(role).slice(0, 10)}-${unique}`;
   const available = Math.max(1, 32 - suffix.length);
   return `${slug(semanticName).slice(0, available)}${suffix}`.slice(0, 32);
@@ -302,6 +324,7 @@ function sessionPathFromAgent(agent: JsonObject): string | undefined {
 }
 
 class CompletionNotProvenError extends Error {}
+class CompletionSettlementPendingError extends Error {}
 class RuntimeIdentityError extends Error {}
 class SurfaceOwnershipLostError extends RuntimeIdentityError {}
 class SurfaceOwnershipUnprovenError extends RuntimeIdentityError {}
@@ -314,13 +337,17 @@ class StaleGenerationError extends Error {}
 class StaleRevisionError extends Error {}
 
 function isPositiveAgentAbsence(error: unknown): boolean {
-  return error instanceof Error &&
-    /(?:agent[ _]not[ _]found|unknown agent|no such agent)/i.test(error.message);
+  return (
+    error instanceof Error &&
+    /(?:agent[ _]not[ _]found|unknown agent|no such agent)/i.test(error.message)
+  );
 }
 
 function isPositivePaneAbsence(error: unknown): boolean {
-  return error instanceof Error &&
-    /(?:pane[ _]not[ _]found|unknown pane|no such pane)/i.test(error.message);
+  return (
+    error instanceof Error &&
+    /(?:pane[ _]not[ _]found|unknown pane|no such pane)/i.test(error.message)
+  );
 }
 
 function validateWorkScope(value: string | undefined): string | undefined {
@@ -331,37 +358,6 @@ function validateWorkScope(value: string | undefined): string | undefined {
     );
   }
   return value;
-}
-
-interface CompletionMarker {
-  version: 1;
-  childId: string;
-  generation: number;
-  stopReason: string;
-  entryId: string;
-  sessionPath: string;
-}
-
-function completionMarkerAt(path: string): CompletionMarker | undefined {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (
-      !isObject(parsed) ||
-      parsed.version !== 1 ||
-      typeof parsed.childId !== "string" ||
-      !Number.isSafeInteger(parsed.generation) ||
-      typeof parsed.stopReason !== "string" ||
-      typeof parsed.entryId !== "string" ||
-      typeof parsed.sessionPath !== "string" ||
-      parsed.stopReason === "aborted" ||
-      parsed.stopReason === "pending"
-    ) {
-      return undefined;
-    }
-    return parsed as unknown as CompletionMarker;
-  } catch {
-    return undefined;
-  }
 }
 
 async function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
@@ -379,45 +375,6 @@ async function abortableDelay(milliseconds: number, signal?: AbortSignal): Promi
   });
 }
 
-function finalAssistantResult(sessionPath: string): {
-  entryId: string;
-  text: string;
-  stopReason?: string;
-  errorMessage?: string;
-} {
-  const lines = readFileSync(sessionPath, "utf8")
-    .split("\n")
-    .filter(Boolean);
-  const entries = new Map<string, JsonObject>();
-  let leaf: JsonObject | undefined;
-  for (const line of lines) {
-    const parsed: unknown = JSON.parse(line);
-    if (!isObject(parsed) || parsed.type === "session") continue;
-    if (typeof parsed.id !== "string") continue;
-    entries.set(parsed.id, parsed);
-    leaf = parsed;
-  }
-
-  while (leaf) {
-    if (leaf.type === "message" && isObject(leaf.message) && leaf.message.role === "assistant") {
-      const message = leaf.message;
-      const content = Array.isArray(message.content) ? message.content : [];
-      const text = content
-        .filter((part): part is JsonObject => isObject(part) && part.type === "text")
-        .map((part) => (typeof part.text === "string" ? part.text : ""))
-        .join("");
-      return {
-        entryId: stringAt(leaf, "id"),
-        text,
-        stopReason: typeof message.stopReason === "string" ? message.stopReason : undefined,
-        errorMessage: typeof message.errorMessage === "string" ? message.errorMessage : undefined,
-      };
-    }
-    leaf = typeof leaf.parentId === "string" ? entries.get(leaf.parentId) : undefined;
-  }
-  throw new Error(`Child session has no assistant result: ${sessionPath}`);
-}
-
 async function finalAssistantResultWithRetry(
   sessionPath: string,
   startedAfterEntryId?: string,
@@ -433,7 +390,9 @@ async function finalAssistantResultWithRetry(
     try {
       const result = finalAssistantResult(sessionPath);
       if (result.entryId === startedAfterEntryId) {
-        throw new Error(`Child session has not persisted its next assistant result: ${sessionPath}`);
+        throw new Error(
+          `Child session has not persisted its next assistant result: ${sessionPath}`,
+        );
       }
       return result;
     } catch (error) {
@@ -484,24 +443,57 @@ export class SubagentOrchestrator {
   async recover(rootId: string, ownerId: string): Promise<ChildRecord[]> {
     const children = this.list(rootId).filter((child) => child.parentId === ownerId);
     for (const listedChild of children) {
-      this.#assertCurrentHerdrSession(listedChild);
       await this.#stopMonitor(listedChild.id);
       await this.#withChildRegistryLock(rootId, listedChild.id, () =>
-        this.#recoverChild(rootId, ownerId, listedChild.id));
+        this.#recoverChild(rootId, ownerId, listedChild.id),
+      );
     }
     return this.list(rootId);
   }
 
   async #recoverChild(rootId: string, ownerId: string, childId: string): Promise<void> {
-    const child = this.#findChild(rootId, ownerId, childId);
+    let child = this.#findChild(rootId, ownerId, childId);
+    if (ACTIVE_STATES.has(child.state) || child.state === "stale") {
+      const proven = await this.#reconcileProvenCompletion(
+        child.rootId,
+        child.parentId,
+        child,
+        undefined,
+        child.state === "stale",
+        false,
+      );
+      if (proven) {
+        if (this.#isCurrentHerdrSession(proven) && !isRetiredSurface(proven)) {
+          await this.#cleanupSurface(proven);
+        }
+        return;
+      }
+    }
+    const cancellation = this.#recordTerminalCancellation(child);
+    if (cancellation) {
+      if (this.#isCurrentHerdrSession(cancellation) && !isRetiredSurface(cancellation)) {
+        await this.#cleanupSurface(cancellation);
+      }
+      return;
+    }
+    child = await this.#retryPendingTerminalDelivery(rootId, ownerId, child);
+    if (child.state === "completed" || child.state === "failed" || child.state === "crashed") {
+      if (
+        child.deliveredAt !== undefined &&
+        this.#isCurrentHerdrSession(child) &&
+        !isRetiredSurface(child)
+      ) {
+        await this.#cleanupSurface(child);
+      }
+      return;
+    }
     this.#assertCurrentHerdrSession(child);
     if (child.surfaceState === "cleanup-pending") {
       const interruptedCleanup = ACTIVE_STATES.has(child.state);
       await this.#cleanupSurface(child);
       if (interruptedCleanup) {
         child.state = "failed";
-        child.error =
-          `Recovered interrupted cleanup for generation ${child.generation}`;
+        child.error = `Recovered interrupted cleanup for generation ${child.generation}`;
         child.updatedAt = this.#now();
         this.#saveChild(child);
         await this.#deliver(child);
@@ -516,16 +508,13 @@ export class SubagentOrchestrator {
       await this.#cleanupSurface(child);
       return;
     }
-    if (child.state === "completed" || child.state === "failed" || child.state === "crashed") {
-      if (await this.#deliver(child)) await this.#cleanupSurface(child);
-      return;
-    }
     if (!ACTIVE_STATES.has(child.state)) return;
 
     try {
       const response = await this.#runJson(["agent", "get", child.herdrName]);
       const agent = objectAt(objectAt(response, "result"), "agent");
       const status = this.#validatedAgentStatus(child, agent);
+      if (await this.#reconcileProvenCompletion(child.rootId, child.parentId, child)) return;
       if (status === "working" || status === "blocked") {
         child.state = status;
         child.updatedAt = this.#now();
@@ -549,6 +538,50 @@ export class SubagentOrchestrator {
       child.updatedAt = this.#now();
       this.#saveChild(child);
     } catch (error) {
+      const proven = await this.#reconcileProvenCompletion(
+        child.rootId,
+        child.parentId,
+        child,
+        undefined,
+        child.state === "stale",
+        false,
+      );
+      if (proven) {
+        if (this.#isCurrentHerdrSession(proven) && !isRetiredSurface(proven)) {
+          await this.#cleanupSurface(proven);
+        }
+        return;
+      }
+      if (error instanceof RuntimeIdentityError || isPositiveAgentAbsence(error)) {
+        const abandoned = await this.#reconcileAbandonedCompletion(
+          child.rootId,
+          child.parentId,
+          child,
+        );
+        if (abandoned) {
+          if (this.#isCurrentHerdrSession(abandoned) && !isRetiredSurface(abandoned)) {
+            await this.#cleanupSurface(abandoned);
+          }
+          return;
+        }
+        const crashedCandidate = await this.#reconcileUnprovenCandidate(
+          child.rootId,
+          child.parentId,
+          child,
+          errorMessage(error),
+        );
+        if (crashedCandidate) {
+          if (await this.#deliver(crashedCandidate)) {
+            if (
+              this.#isCurrentHerdrSession(crashedCandidate) &&
+              !isRetiredSurface(crashedCandidate)
+            ) {
+              await this.#cleanupSurface(crashedCandidate);
+            }
+          }
+          return;
+        }
+      }
       if (!(error instanceof RuntimeIdentityError) && child.sessionPath) {
         try {
           await this.#completeFromSession(child);
@@ -599,11 +632,11 @@ export class SubagentOrchestrator {
     }
     const agent = objectAt(objectAt(response, "result"), "agent");
     const status = this.#validatedAgentStatus(child, agent);
-    if (status === "blocked") child.state = "blocked";
-    else if (status === "working") child.state = "working";
-    child.updatedAt = this.#now();
-    this.#saveChild(child);
-    return { ...child };
+    const inspected = { ...child };
+    if (status === "blocked") inspected.state = "blocked";
+    else if (status === "working") inspected.state = "working";
+    inspected.updatedAt = this.#now();
+    return inspected;
   }
 
   async message(
@@ -630,60 +663,493 @@ export class SubagentOrchestrator {
     signal?: AbortSignal,
   ): Promise<ChildRecord> {
     let child = this.#findChild(rootId, ownerId, target);
-    this.#assertCurrentHerdrSession(child);
     await this.#stopMonitor(child.id);
     child = this.#findChild(rootId, ownerId, target);
-    if (CLEANUP_TERMINAL_STATES.has(child.state) && !isRetiredSurface(child)) {
-      await this.#cleanupSurface(child);
-      child = this.#findChild(rootId, ownerId, target);
-      if (!isRetiredSurface(child)) {
-        throw new Error(
-          `Cannot reactivate ${child.semanticName}: previous pane cleanup remains pending`,
-        );
+    if (ACTIVE_STATES.has(child.state) || child.state === "stale") {
+      const proven = await this.#reconcileProvenCompletion(
+        rootId,
+        ownerId,
+        child,
+        signal,
+        child.state === "stale",
+        false,
+      );
+      if (proven) {
+        child = await this.#retryPendingTerminalDelivery(rootId, ownerId, proven);
+        this.#assertCurrentHerdrSession(child);
+        const prepared = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, child);
+        return this.#relaunchClosedChild(prepared, message, signal);
       }
     }
-    if (isRetiredSurface(child)) {
+    child = await this.#retryPendingTerminalDelivery(rootId, ownerId, child);
+    this.#assertCurrentHerdrSession(child);
+    if (CLEANUP_TERMINAL_STATES.has(child.state) && child.state !== "stale") {
+      child = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, child);
       return this.#relaunchClosedChild(child, message, signal);
     }
-    await this.#assertLiveChild(child, signal);
+    if (isRetiredSurface(child)) return this.#relaunchClosedChild(child, message, signal);
+    let status: string;
+    try {
+      status = await this.#assertLiveChild(child, signal);
+    } catch (error) {
+      let proven = await this.#reconcileProvenCompletion(
+        rootId,
+        ownerId,
+        child,
+        signal,
+        false,
+        false,
+      );
+      if (!proven && (error instanceof RuntimeIdentityError || isPositiveAgentAbsence(error))) {
+        proven = await this.#reconcileAbandonedCompletion(rootId, ownerId, child, signal);
+        if (!proven) {
+          const crashedCandidate = await this.#reconcileUnprovenCandidate(
+            rootId,
+            ownerId,
+            child,
+            errorMessage(error),
+          );
+          if (crashedCandidate) {
+            const prepared = await this.#prepareTerminalChildForFollowUp(
+              rootId,
+              ownerId,
+              crashedCandidate,
+            );
+            return this.#relaunchClosedChild(prepared, message, signal);
+          }
+        }
+      }
+      if (!proven) throw error;
+      const prepared = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, proven);
+      return this.#relaunchClosedChild(prepared, message, signal);
+    }
+    if (status === "idle" || status === "done") {
+      await this.#completeFromSession(child, signal);
+      child = this.#findChild(rootId, ownerId, child.id);
+      child = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, child);
+      return this.#relaunchClosedChild(child, message, signal);
+    }
+    if (status !== "working" && status !== "blocked") {
+      throw new Error(`Cannot message ${child.semanticName}: unexpected Herdr state ${status}`);
+    }
+
+    const decision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+      child = this.#findChild(rootId, ownerId, child.id);
+      const preflight = this.#settlementPreflight(child);
+      if ("completed" in preflight || "settling" in preflight) return preflight;
+      return { open: child } as const;
+    });
+    if ("completed" in decision) {
+      const completedDuringPreflight = await this.#relaunchProvenCompletionForFollowUp(
+        rootId,
+        ownerId,
+        decision.completed,
+        message,
+        signal,
+      );
+      if (completedDuringPreflight) return completedDuringPreflight;
+      throw new CompletionNotProvenError(
+        `Child ${child.herdrName} completion proof disappeared during follow-up preflight`,
+      );
+    }
+    if ("settling" in decision) {
+      throw new CompletionSettlementPendingError(
+        `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
+      );
+    }
+    const receipt = await this.#requestChildControl(decision.open, "message", message, signal);
+    if (receipt.status === "settling") {
+      const completedDuringAdmission = await this.#relaunchProvenCompletionForFollowUp(
+        rootId,
+        ownerId,
+        child,
+        message,
+        signal,
+      );
+      if (completedDuringAdmission) return completedDuringAdmission;
+      throw new CompletionSettlementPendingError(
+        `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
+      );
+    }
+    return withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+      child = this.#findChild(rootId, ownerId, child.id);
+      this.#claimActiveChildMessage(child, receipt.frontierEntryId ?? child.startedAfterEntryId);
+      child.state = "working";
+      child.updatedAt = this.#now();
+      this.#saveChild(child);
+      if (this.#monitor) void this.#monitorChild(child);
+      return { ...child };
+    });
+  }
+
+  #hasCurrentCompletionProof(child: ChildRecord, allowExistingResult = false): boolean {
+    const marker = completionMarkerAt(child.completionMarkerPath);
+    return (
+      marker?.childId === child.id &&
+      marker.generation === child.generation &&
+      marker.sessionPath === child.sessionPath &&
+      (allowExistingResult || marker.entryId !== child.startedAfterEntryId)
+    );
+  }
+
+  #hasCurrentCancellationClaim(child: ChildRecord): boolean {
+    const receipt = childControlReceiptAt(child.completionMarkerPath);
+    return (
+      receipt?.childId === child.id &&
+      receipt.generation === child.generation &&
+      receipt.action === "cancel" &&
+      receipt.status === "cancelled" &&
+      receipt.sessionPath === child.sessionPath
+    );
+  }
+
+  #recordTerminalCancellation(child: ChildRecord): ChildRecord | undefined {
+    if (
+      (!ACTIVE_STATES.has(child.state) && child.state !== "stale") ||
+      !this.#hasCurrentCancellationClaim(child)
+    ) {
+      return undefined;
+    }
+    child.state = "cancelled";
+    child.result = undefined;
+    child.error = undefined;
+    child.recoveryError = undefined;
+    child.deliveredAt = this.#now();
+    child.updatedAt = child.deliveredAt;
+    if (child.paneId && !isRetiredSurface(child)) child.surfaceState = "cleanup-pending";
+    this.#saveChild(child);
+    return child;
+  }
+
+  #hasCurrentSettlementCandidate(child: ChildRecord): boolean {
+    const settlement = completionSettlementAt(child.completionMarkerPath);
+    return (
+      settlement?.childId === child.id &&
+      settlement.generation === child.generation &&
+      settlement.phase === "candidate" &&
+      settlement.sessionPath === child.sessionPath &&
+      isConcludedStopReason(settlement.stopReason)
+    );
+  }
+
+  #hasCurrentSettlementEvidence(child: ChildRecord): boolean {
+    const settlement = completionSettlementAt(child.completionMarkerPath);
+    if (
+      settlement?.childId !== child.id ||
+      settlement.generation !== child.generation ||
+      settlement.phase !== "candidate" ||
+      settlement.sessionPath !== child.sessionPath ||
+      settlement.settlementEvidence === undefined
+    ) {
+      return false;
+    }
+
+    let descendants: ChildRecord[];
+    try {
+      const records = this.#loadChildren(child.rootId);
+      const byId = new Map(records.map((record) => [record.id, record]));
+      descendants = records.filter((record) => {
+        let parentId = record.parentId;
+        const visited = new Set<string>();
+        while (parentId !== child.id) {
+          if (visited.has(parentId)) return false;
+          visited.add(parentId);
+          const parent = byId.get(parentId);
+          if (!parent) return false;
+          parentId = parent.parentId;
+        }
+        return record.id !== child.id;
+      });
+    } catch {
+      return false;
+    }
+
+    const evidence: CompletionSettlementEvidence = settlement.settlementEvidence;
+    if (evidence.descendants.length !== descendants.length) return false;
+    const actual = new Map(descendants.map((record) => [record.id, record]));
+    return evidence.descendants.every((saved) => {
+      const current = actual.get(saved.id);
+      return (
+        current !== undefined &&
+        current.generation === saved.generation &&
+        current.state === saved.state &&
+        current.deliveredAt === saved.deliveredAt &&
+        current.surfaceState === saved.surfaceState
+      );
+    });
+  }
+
+  #settlementPreflight(
+    child: ChildRecord,
+    allowExistingResult = false,
+  ):
+    | { completed: ChildRecord }
+    | { settling: ChildRecord }
+    | { open: ChildRecord; frontierEntryId: string | undefined } {
+    if (this.#hasCurrentCompletionProof(child, allowExistingResult)) return { completed: child };
+    const settlement = completionSettlementAt(child.completionMarkerPath);
+    if (this.#hasCurrentSettlementCandidate(child)) return { settling: child };
+    const running =
+      settlement?.childId === child.id &&
+      settlement.generation === child.generation &&
+      settlement.phase === "running" &&
+      settlement.sessionPath === child.sessionPath
+        ? settlement
+        : undefined;
+    const runningFrontier = running ? running.frontierEntryId : child.startedAfterEntryId;
+    // A persisted response can precede consumption of an acknowledged steer.
+    // Only the child's awaited consumption hook may advance that frontier.
+    if ((running?.pendingControls ?? 0) > 0) {
+      return { open: child, frontierEntryId: runningFrontier };
+    }
+    let frontierEntryId = runningFrontier;
     if (child.sessionPath) {
       try {
-        child.startedAfterEntryId = finalAssistantResult(child.sessionPath).entryId;
-      } catch {
-        child.startedAfterEntryId = undefined;
-      }
+        const result = finalAssistantResult(child.sessionPath);
+        if (result.entryId !== runningFrontier && isConcludedStopReason(result.stopReason)) {
+          writeCompletionSettlement(child.completionMarkerPath, {
+            version: 1,
+            childId: child.id,
+            generation: child.generation,
+            phase: "candidate",
+            stopReason: result.stopReason,
+            entryId: result.entryId,
+            sessionPath: child.sessionPath,
+          });
+          return { settling: child };
+        }
+        frontierEntryId = result.entryId;
+      } catch {}
     }
+    return { open: child, frontierEntryId };
+  }
+
+  #claimActiveChildMessage(
+    child: ChildRecord,
+    startedAfterEntryId: string | undefined,
+  ): ChildRecord {
+    child.startedAfterEntryId = startedAfterEntryId;
     child.state = "starting";
     child.result = undefined;
     child.error = undefined;
+    child.recoveryError = undefined;
     child.deliveredAt = undefined;
     child.updatedAt = this.#now();
     this.#saveChild(child);
-    try {
-      await this.#runJson(["agent", "prompt", child.herdrName, message], signal);
-    } catch (error) {
-      child.state = "failed";
-      child.error = errorMessage(error);
-      child.deliveredAt = this.#now();
-      child.updatedAt = child.deliveredAt;
-      if (child.paneId) child.surfaceState = "cleanup-pending";
-      this.#saveChild(child);
-      try {
-        await this.#assertLiveChild(child);
-        await this.#runJson(["agent", "send-keys", child.herdrName, "ctrl+c", "ctrl+c"]);
-      } catch (stopError) {
-        child.lifecycleError = `Failed to stop rejected follow-up: ${errorMessage(stopError)}`;
-        child.updatedAt = this.#now();
-        this.#saveChild(child);
+    return child;
+  }
+
+  async #waitForChildControlReceipt(
+    child: ChildRecord,
+    action: "message" | "cancel",
+    nonce: string,
+    expiresAt: number,
+    signal?: AbortSignal,
+  ): Promise<ChildControlReceipt> {
+    for (;;) {
+      if (Date.now() >= expiresAt) break;
+      const receipt = childControlReceiptAt(child.completionMarkerPath);
+      const expectedStatus = action === "cancel" ? "cancelled" : "accepted";
+      if (
+        receipt?.childId === child.id &&
+        receipt.generation === child.generation &&
+        receipt.nonce === nonce &&
+        receipt.action === action &&
+        (receipt.status === expectedStatus || receipt.status === "settling") &&
+        receipt.sessionPath === child.sessionPath
+      ) {
+        return receipt;
       }
-      await this.#cleanupSurface(child);
-      throw error;
+      if (Date.now() >= expiresAt) break;
+      await abortableDelay(CONTROL_RECEIPT_POLL_MILLISECONDS, signal);
     }
-    child.state = "working";
-    child.updatedAt = this.#now();
-    this.#saveChild(child);
-    if (this.#monitor) void this.#monitorChild(child);
-    return { ...child };
+    throw new Error(
+      `Child ${child.herdrName} did not acknowledge ${action} control admission before timeout`,
+    );
+  }
+
+  async #requestChildControl(
+    child: ChildRecord,
+    action: "message" | "cancel",
+    message: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<ChildControlReceipt> {
+    const nonce = crypto.randomUUID();
+    const receiptPath = childControlReceiptPath(child.completionMarkerPath);
+    const expiresAt = Date.now() + CONTROL_RECEIPT_TIMEOUT_MILLISECONDS;
+    await this.#runJson(
+      [
+        "agent",
+        "prompt",
+        child.herdrName,
+        childControlPrompt({
+          version: 1,
+          childId: child.id,
+          generation: child.generation,
+          nonce,
+          action,
+          receiptPath,
+          expiresAt,
+          ...(message === undefined ? {} : { message }),
+        }),
+      ],
+      signal,
+    );
+    // Herdr's agent.prompt acknowledgement means the prompt was enqueued; the
+    // child extension may not have processed input and written its receipt yet.
+    // Wait for that durable admission receipt, but never resend or fall back to
+    // raw terminal input when it does not arrive.
+    return this.#waitForChildControlReceipt(child, action, nonce, expiresAt, signal);
+  }
+
+  async #relaunchProvenCompletionForFollowUp(
+    rootId: string,
+    ownerId: string,
+    child: ChildRecord,
+    message: string,
+    signal?: AbortSignal,
+  ): Promise<ChildRecord | undefined> {
+    let completed = await this.#reconcileProvenCompletion(rootId, ownerId, child, signal);
+    if (!completed) return undefined;
+    completed = await this.#prepareTerminalChildForFollowUp(rootId, ownerId, completed);
+    return this.#relaunchClosedChild(completed, message, signal);
+  }
+
+  async #reconcileProvenCompletion(
+    rootId: string,
+    ownerId: string,
+    child: ChildRecord,
+    signal?: AbortSignal,
+    allowExistingResult = false,
+    cleanupSurface = true,
+  ): Promise<ChildRecord | undefined> {
+    if (!this.#hasCurrentCompletionProof(child, allowExistingResult)) return undefined;
+    await this.#completeFromSession(child, signal, allowExistingResult, cleanupSurface);
+    return this.#findChild(rootId, ownerId, child.id);
+  }
+
+  async #reconcileAbandonedCompletion(
+    rootId: string,
+    ownerId: string,
+    child: ChildRecord,
+    signal?: AbortSignal,
+    allowExistingResult = false,
+    cleanupSurface = false,
+  ): Promise<ChildRecord | undefined> {
+    const promoted = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+      const current = this.#findChild(rootId, ownerId, child.id);
+      if (this.#hasCurrentCompletionProof(current, allowExistingResult)) return current;
+      if (!this.#hasCurrentSettlementEvidence(current) || !current.sessionPath) return undefined;
+      try {
+        return promoteCompletionSettlement(
+          current.completionMarkerPath,
+          {
+            childId: current.id,
+            generation: current.generation,
+            sessionPath: current.sessionPath,
+            startedAfterEntryId: current.startedAfterEntryId,
+          },
+          allowExistingResult,
+        )
+          ? current
+          : undefined;
+      } catch {
+        return undefined;
+      }
+    });
+    return promoted
+      ? this.#reconcileProvenCompletion(
+          rootId,
+          ownerId,
+          promoted,
+          signal,
+          allowExistingResult,
+          cleanupSurface,
+        )
+      : undefined;
+  }
+
+  async #reconcileUnprovenCandidate(
+    rootId: string,
+    ownerId: string,
+    child: ChildRecord,
+    diagnostic: string,
+  ): Promise<ChildRecord | undefined> {
+    return withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+      const current = this.#findChild(rootId, ownerId, child.id);
+      const settlement = completionSettlementAt(current.completionMarkerPath);
+      if (
+        settlement?.childId !== current.id ||
+        settlement.generation !== current.generation ||
+        settlement.phase !== "candidate" ||
+        settlement.sessionPath !== current.sessionPath ||
+        !current.sessionPath
+      ) {
+        return undefined;
+      }
+      let result: ReturnType<typeof finalAssistantResult>;
+      try {
+        result = finalAssistantResult(current.sessionPath, settlement.entryId);
+      } catch {
+        return undefined;
+      }
+      if (result.entryId !== settlement.entryId || result.stopReason !== settlement.stopReason) {
+        return undefined;
+      }
+      current.result = result.text;
+      current.state = "crashed";
+      current.error = result.stopReason === "error" ? result.errorMessage : undefined;
+      current.recoveryError = `Recovered exact conclusion, but full settlement could not be proven: ${diagnostic}`;
+      current.updatedAt = this.#now();
+      this.#saveChild(current);
+      return { ...current };
+    });
+  }
+
+  async #prepareTerminalChildForFollowUp(
+    rootId: string,
+    ownerId: string,
+    initialChild: ChildRecord,
+  ): Promise<ChildRecord> {
+    let child = initialChild;
+    if (
+      child.deliveredAt === undefined &&
+      (child.state === "completed" || child.state === "failed" || child.state === "crashed")
+    ) {
+      await this.#deliver(child);
+      child = this.#findChild(rootId, ownerId, child.id);
+      if (child.deliveredAt === undefined) {
+        throw new Error(
+          `Cannot reactivate ${child.semanticName}: previous outcome is awaiting delivery`,
+        );
+      }
+    }
+    if (!isRetiredSurface(child)) {
+      await this.#cleanupSurface(child);
+      child = this.#findChild(rootId, ownerId, child.id);
+    }
+    if (!isRetiredSurface(child)) {
+      throw new Error(
+        `Cannot reactivate ${child.semanticName}: previous pane cleanup remains pending`,
+      );
+    }
+    return child;
+  }
+
+  async #retryPendingTerminalDelivery(
+    rootId: string,
+    ownerId: string,
+    initialChild: ChildRecord,
+  ): Promise<ChildRecord> {
+    const child = initialChild;
+    if (
+      child.deliveredAt === undefined &&
+      (child.state === "completed" || child.state === "failed" || child.state === "crashed")
+    ) {
+      await this.#deliver(child);
+      return this.#findChild(rootId, ownerId, child.id);
+    }
+    return child;
   }
 
   async cancel(
@@ -708,25 +1174,119 @@ export class SubagentOrchestrator {
     signal?: AbortSignal,
   ): Promise<ChildRecord> {
     let child = this.#findChild(rootId, ownerId, target);
-    this.#assertCurrentHerdrSession(child);
     await this.#stopMonitor(child.id);
     child = this.#findChild(rootId, ownerId, target);
+    const allowExistingResult = child.state === "stale";
+    if (ACTIVE_STATES.has(child.state) || child.state === "stale") {
+      const initialDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+        child = this.#findChild(rootId, ownerId, child.id);
+        return this.#settlementPreflight(child, allowExistingResult);
+      });
+      if ("completed" in initialDecision) {
+        const completed = await this.#reconcileProvenCompletion(
+          rootId,
+          ownerId,
+          initialDecision.completed,
+          signal,
+          allowExistingResult,
+          false,
+        );
+        if (!completed) {
+          throw new CompletionNotProvenError(
+            `Child ${child.herdrName} completion proof disappeared during cancellation preflight`,
+          );
+        }
+        if (this.#isCurrentHerdrSession(completed) && !isRetiredSurface(completed)) {
+          await this.#cleanupSurface(completed);
+        }
+        return { ...this.#findChild(rootId, ownerId, completed.id) };
+      }
+      if ("settling" in initialDecision) {
+        throw new CompletionSettlementPendingError(
+          `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
+        );
+      }
+      child = initialDecision.open;
+    }
+    child = await this.#retryPendingTerminalDelivery(rootId, ownerId, child);
+    if (child.state === "completed" || child.state === "failed" || child.state === "crashed") {
+      if (
+        child.deliveredAt !== undefined &&
+        this.#isCurrentHerdrSession(child) &&
+        !isRetiredSurface(child)
+      ) {
+        await this.#cleanupSurface(child);
+      }
+      return { ...this.#findChild(rootId, ownerId, child.id) };
+    }
+    this.#assertCurrentHerdrSession(child);
     if (ACTIVE_STATES.has(child.state)) {
       try {
         await this.#assertLiveChild(child, signal);
       } catch (error) {
         if (!(error instanceof RuntimeIdentityError) && !isPositiveAgentAbsence(error)) throw error;
-        child.state = "stale";
-        child.error = errorMessage(error);
-        child.updatedAt = this.#now();
-        this.#saveChild(child);
+        const abandoned = await this.#reconcileAbandonedCompletion(
+          rootId,
+          ownerId,
+          child,
+          signal,
+          allowExistingResult,
+        );
+        if (abandoned) {
+          if (!isRetiredSurface(abandoned)) await this.#cleanupSurface(abandoned);
+          return { ...this.#findChild(rootId, ownerId, abandoned.id) };
+        }
+        const crashedCandidate = await this.#reconcileUnprovenCandidate(
+          rootId,
+          ownerId,
+          child,
+          errorMessage(error),
+        );
+        if (crashedCandidate) {
+          await this.#deliver(crashedCandidate);
+          if (!isRetiredSurface(crashedCandidate)) await this.#cleanupSurface(crashedCandidate);
+          return { ...this.#findChild(rootId, ownerId, crashedCandidate.id) };
+        }
+        const staleDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+          child = this.#findChild(rootId, ownerId, child.id);
+          const preflight = this.#settlementPreflight(child, true);
+          if ("completed" in preflight || "settling" in preflight) return preflight;
+          child.state = "stale";
+          child.error = errorMessage(error);
+          child.updatedAt = this.#now();
+          this.#saveChild(child);
+          return { stale: child } as const;
+        });
+        if ("completed" in staleDecision) {
+          const completed = await this.#reconcileProvenCompletion(
+            rootId,
+            ownerId,
+            staleDecision.completed,
+            signal,
+            true,
+            false,
+          );
+          if (!completed) {
+            throw new CompletionNotProvenError(
+              `Child ${child.herdrName} completion proof disappeared during stale cancellation`,
+            );
+          }
+          if (!isRetiredSurface(completed)) await this.#cleanupSurface(completed);
+          return { ...this.#findChild(rootId, ownerId, completed.id) };
+        }
+        if ("settling" in staleDecision) {
+          throw new CompletionSettlementPendingError(
+            `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
+          );
+        }
+        child = staleDecision.stale;
       }
     }
     if (child.state === "stale") {
-      try {
-        await this.#completeFromSession(child, signal, true, false);
-      } catch (error) {
-        if (!(error instanceof CompletionNotProvenError)) throw error;
+      const staleDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+        child = this.#findChild(rootId, ownerId, child.id);
+        const preflight = this.#settlementPreflight(child, true);
+        if ("completed" in preflight || "settling" in preflight) return preflight;
         child.state = "cancelled";
         child.deliveredAt = this.#now();
         child.updatedAt = child.deliveredAt;
@@ -734,6 +1294,28 @@ export class SubagentOrchestrator {
           child.surfaceState = "cleanup-pending";
         }
         this.#saveChild(child);
+        return { cancelled: child } as const;
+      });
+      if ("completed" in staleDecision) {
+        const completedAfterStalePreflight = await this.#reconcileProvenCompletion(
+          rootId,
+          ownerId,
+          staleDecision.completed,
+          signal,
+          true,
+          false,
+        );
+        if (!completedAfterStalePreflight) {
+          throw new CompletionNotProvenError(
+            `Child ${child.herdrName} completion proof disappeared during stale cancellation`,
+          );
+        }
+      } else if ("settling" in staleDecision) {
+        throw new CompletionSettlementPendingError(
+          `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
+        );
+      } else {
+        child = staleDecision.cancelled;
       }
       child = this.#findChild(rootId, ownerId, child.id);
     }
@@ -741,7 +1323,34 @@ export class SubagentOrchestrator {
       if (!isRetiredSurface(child)) await this.#cleanupSurface(child);
       return { ...this.#findChild(rootId, ownerId, child.id) };
     }
-    await this.#runJson(["agent", "send-keys", child.herdrName, "escape"], signal);
+
+    // Neither a blocked transport nor an admission timeout authorizes a raw
+    // interrupt. Preserve the generation and surface until the child accepts.
+    const receipt = await this.#requestChildControl(child, "cancel", undefined, signal);
+    if (receipt.status === "settling") {
+      const completedBeforeInput = await this.#reconcileProvenCompletion(
+        rootId,
+        ownerId,
+        child,
+        signal,
+      );
+      if (completedBeforeInput) return completedBeforeInput;
+      throw new CompletionSettlementPendingError(
+        `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
+      );
+    }
+    if (receipt.status !== "cancelled") {
+      throw new Error(`Child ${child.herdrName} returned an invalid cancellation claim`);
+    }
+    child = await withRegistryLock(`${child.completionMarkerPath}.lock`, () => {
+      const current = this.#findChild(rootId, ownerId, child.id);
+      const cancelled = this.#recordTerminalCancellation(current);
+      if (!cancelled) {
+        throw new Error(`Child ${child.herdrName} cancellation claim could not be reconciled`);
+      }
+      return cancelled;
+    });
+
     const waited = await this.#runJson(
       [
         "agent",
@@ -761,15 +1370,7 @@ export class SubagentOrchestrator {
     if (status !== "idle" && status !== "done") {
       throw new Error(`Subagent ${child.semanticName} did not settle after cancellation`);
     }
-    child.state = "cancelled";
-    child.result = undefined;
-    child.error = undefined;
-    child.deliveredAt = this.#now();
-    child.updatedAt = child.deliveredAt;
-    if (child.paneId && !isRetiredSurface(child)) {
-      child.surfaceState = "cleanup-pending";
-    }
-    this.#saveChild(child);
+
     await this.#cleanupSurface(child);
     return { ...this.#findChild(rootId, ownerId, child.id) };
   }
@@ -779,9 +1380,10 @@ export class SubagentOrchestrator {
     ownerId: string,
     target: string,
     signal?: AbortSignal,
-  ): Promise<ChildRecord> {
+  ): Promise<ResumeResult> {
     return this.#withChildOperation(rootId, ownerId, target, () =>
-      this.#resumeUnlocked(rootId, ownerId, target, signal));
+      this.#resumeUnlocked(rootId, ownerId, target, signal),
+    );
   }
 
   async #resumeUnlocked(
@@ -789,17 +1391,82 @@ export class SubagentOrchestrator {
     ownerId: string,
     target: string,
     signal?: AbortSignal,
-  ): Promise<ChildRecord> {
-    const child = this.#findChild(rootId, ownerId, target);
+  ): Promise<ResumeResult> {
+    let child = this.#findChild(rootId, ownerId, target);
+    const proven =
+      ACTIVE_STATES.has(child.state) || child.state === "stale"
+        ? await this.#reconcileProvenCompletion(
+            rootId,
+            ownerId,
+            child,
+            signal,
+            child.state === "stale",
+            false,
+          )
+        : undefined;
+    if (proven) {
+      if (this.#isCurrentHerdrSession(proven) && !isRetiredSurface(proven)) {
+        await this.#cleanupSurface(proven);
+      }
+      return {
+        action: "reconciled",
+        child: { ...this.#findChild(rootId, ownerId, proven.id) },
+      };
+    }
+    child = await this.#retryPendingTerminalDelivery(rootId, ownerId, child);
+    if (child.state === "completed" || child.state === "failed" || child.state === "crashed") {
+      if (
+        child.deliveredAt !== undefined &&
+        this.#isCurrentHerdrSession(child) &&
+        !isRetiredSurface(child)
+      ) {
+        await this.#cleanupSurface(child);
+      }
+      return {
+        action: "reconciled",
+        child: { ...this.#findChild(rootId, ownerId, child.id) },
+      };
+    }
     this.#assertCurrentHerdrSession(child);
     if (isRetiredSurface(child)) {
       throw new Error(
         `Subagent ${child.semanticName} surface is ${child.surfaceState}; use message to reactivate it`,
       );
     }
-    await this.#assertLiveChild(child, signal);
-    await this.#runJson(["agent", "focus", child.herdrName], signal);
-    return { ...child };
+    const focusDecision = await withRegistryLock(`${child.completionMarkerPath}.lock`, async () => {
+      const current = this.#findChild(rootId, ownerId, child.id);
+      if (this.#hasCurrentCompletionProof(current)) return { completed: current } as const;
+      if (this.#hasCurrentSettlementCandidate(current)) return { settling: current } as const;
+      await this.#assertLiveChild(current, signal);
+      await this.#runJson(["agent", "focus", current.herdrName], signal);
+      return { focused: current } as const;
+    });
+    if ("completed" in focusDecision) {
+      const completed = await this.#reconcileProvenCompletion(
+        rootId,
+        ownerId,
+        focusDecision.completed,
+        signal,
+        false,
+        false,
+      );
+      if (!completed) {
+        throw new CompletionNotProvenError(
+          `Child ${child.herdrName} completion proof disappeared during resume preflight`,
+        );
+      }
+      if (!isRetiredSurface(completed)) await this.#cleanupSurface(completed);
+      return {
+        action: "reconciled",
+        child: { ...this.#findChild(rootId, ownerId, completed.id) },
+      };
+    }
+    if ("settling" in focusDecision) {
+      throw new CompletionSettlementPendingError(
+        `Child ${child.herdrName} settlement is pending; retry after its conclusion is published`,
+      );
+    }
+    return { action: "focused", child: { ...focusDecision.focused } };
   }
 
   async spawn(request: SpawnRequest, signal?: AbortSignal): Promise<ChildRecord> {
@@ -838,7 +1505,11 @@ export class SubagentOrchestrator {
     if (callerDepth > 0 && inheritedScope === undefined && requestedScope !== undefined) {
       throw new Error("A legacy scope-less child cannot choose a workScope");
     }
-    if (inheritedScope !== undefined && requestedScope !== undefined && requestedScope !== inheritedScope) {
+    if (
+      inheritedScope !== undefined &&
+      requestedScope !== undefined &&
+      requestedScope !== inheritedScope
+    ) {
       throw new Error(
         `Descendant workScope ${requestedScope} does not match inherited workScope ${inheritedScope}`,
       );
@@ -854,15 +1525,16 @@ export class SubagentOrchestrator {
       const existingChildren = this.#loadChildren(rootId);
       if (
         existingChildren.some(
-          (candidate) =>
-            candidate.parentId === parentId && candidate.semanticName === request.name,
+          (candidate) => candidate.parentId === parentId && candidate.semanticName === request.name,
         )
       ) {
         throw new Error(
           `A child named ${request.name} already exists for this parent; use message to continue it`,
         );
       }
-      const activeChildren = existingChildren.filter((candidate) => ACTIVE_STATES.has(candidate.state));
+      const activeChildren = existingChildren.filter((candidate) =>
+        ACTIVE_STATES.has(candidate.state),
+      );
       if (activeChildren.length >= 8) {
         throw new Error("Maximum of 8 live subagents per lineage reached");
       }
@@ -892,10 +1564,7 @@ export class SubagentOrchestrator {
         generation: 1,
         workspaceId: master.workspaceId,
         herdrSession: master.herdrSession,
-        completionMarkerPath: join(
-          this.#registryPath(rootId),
-          `${slug(id)}.generation-1.complete`,
-        ),
+        completionMarkerPath: join(this.#registryPath(rootId), `${slug(id)}.generation-1.complete`),
         launchLoadout,
         state: "starting",
         createdAt: now,
@@ -906,7 +1575,8 @@ export class SubagentOrchestrator {
     });
 
     return this.#withChildRegistryLock(child.rootId, child.id, () =>
-      this.#startReservedChild(child, callerDepth, signal));
+      this.#startReservedChild(child, callerDepth, signal),
+    );
   }
 
   async #startReservedChild(
@@ -919,29 +1589,33 @@ export class SubagentOrchestrator {
       await this.#withPlacementLock(child.rootId, async () => {
         await this.#createSurface(child, callerDepth, signal, true);
 
-        await this.#runJson([
-          "pane",
-          "rename",
-          child.paneId,
-          paneLabel(child.launchLoadout.role, child.semanticName),
-        ], signal);
+        await this.#runJson(
+          ["pane", "rename", child.paneId, paneLabel(child.launchLoadout.role, child.semanticName)],
+          signal,
+        );
 
         const piArguments = this.#piArguments(child);
-        child.sessionPath = await this.#startChildAgent([
-          "agent",
-          "start",
-          child.herdrName,
-          "--kind",
-          "pi",
-          "--pane",
-          child.paneId,
-          "--timeout",
-          String(AGENT_START_TIMEOUT_MILLISECONDS),
-          "--",
-          ...piArguments,
-        ], child, undefined, () => {
-          agentStarted = true;
-        }, signal);
+        child.sessionPath = await this.#startChildAgent(
+          [
+            "agent",
+            "start",
+            child.herdrName,
+            "--kind",
+            "pi",
+            "--pane",
+            child.paneId,
+            "--timeout",
+            String(AGENT_START_TIMEOUT_MILLISECONDS),
+            "--",
+            ...piArguments,
+          ],
+          child,
+          undefined,
+          () => {
+            agentStarted = true;
+          },
+          signal,
+        );
         child.updatedAt = this.#now();
         this.#saveChild(child);
       });
@@ -962,7 +1636,9 @@ export class SubagentOrchestrator {
           await this.#assertLiveChild(child);
           await this.#runJson(["agent", "send-keys", child.herdrName, "ctrl+c", "ctrl+c"]);
         } catch (cleanupError) {
-          cleanupErrors.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+          cleanupErrors.push(
+            cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          );
         }
       }
       if (child.paneId !== undefined) {
@@ -971,9 +1647,10 @@ export class SubagentOrchestrator {
       }
       child.state = "failed";
       const primaryError = error instanceof Error ? error.message : String(error);
-      child.error = cleanupErrors.length > 0
-        ? `${primaryError}; cleanup failed: ${cleanupErrors.join("; ")}`
-        : primaryError;
+      child.error =
+        cleanupErrors.length > 0
+          ? `${primaryError}; cleanup failed: ${cleanupErrors.join("; ")}`
+          : primaryError;
       child.deliveredAt = this.#now();
       child.updatedAt = child.deliveredAt;
       this.#saveChild(child);
@@ -994,11 +1671,16 @@ export class SubagentOrchestrator {
     try {
       const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
       if (
-        !isObject(parsed) || parsed.version !== 1 || parsed.rootId !== rootId ||
-        typeof parsed.herdrSession !== "string" || typeof parsed.workspaceId !== "string" ||
-        typeof parsed.masterPaneId !== "string" || typeof parsed.tabId !== "string" ||
+        !isObject(parsed) ||
+        parsed.version !== 1 ||
+        parsed.rootId !== rootId ||
+        typeof parsed.herdrSession !== "string" ||
+        typeof parsed.workspaceId !== "string" ||
+        typeof parsed.masterPaneId !== "string" ||
+        typeof parsed.tabId !== "string" ||
         (parsed.masterSessionPath !== undefined && typeof parsed.masterSessionPath !== "string") ||
-        !Number.isSafeInteger(parsed.createdAt) || !Number.isSafeInteger(parsed.updatedAt)
+        !Number.isSafeInteger(parsed.createdAt) ||
+        !Number.isSafeInteger(parsed.updatedAt)
       ) {
         throw new Error(`Malformed lineage master record: ${path}`);
       }
@@ -1012,13 +1694,7 @@ export class SubagentOrchestrator {
 
   #saveMaster(master: MasterIdentity): void {
     const path = this.#masterPath(master.rootId);
-    const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    mkdirSync(this.#registryPath(master.rootId), { recursive: true, mode: 0o700 });
-    writeFileSync(temporaryPath, `${JSON.stringify(master, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    renameSync(temporaryPath, path);
+    atomicWriteText(path, `${JSON.stringify(master, null, 2)}\n`);
   }
 
   #masterFromPane(
@@ -1031,24 +1707,34 @@ export class SubagentOrchestrator {
     const tabId = stringAt(pane, "tab_id");
     const workspaceId = stringAt(pane, "workspace_id");
     const herdrSession = currentHerdrSession(this.#environment);
-    if (existing && (
-      existing.rootId !== rootId ||
-      existing.herdrSession !== herdrSession ||
-      existing.workspaceId !== workspaceId ||
-      existing.masterPaneId !== paneId ||
-      existing.tabId !== tabId
-    )) {
+    if (
+      existing &&
+      (existing.rootId !== rootId ||
+        existing.herdrSession !== herdrSession ||
+        existing.workspaceId !== workspaceId ||
+        existing.masterPaneId !== paneId ||
+        existing.tabId !== tabId)
+    ) {
       throw new RuntimeIdentityError("Lineage master identity changed");
     }
     if (pane.agent !== "pi") {
       throw new RuntimeIdentityError("Lineage master pane is not occupied by Pi");
     }
     const observedSessionPath = sessionPathFromAgent(pane);
-    if (parentSessionFile !== undefined && observedSessionPath !== undefined && parentSessionFile !== observedSessionPath) {
-      throw new RuntimeIdentityError("Root parent session artifact differs from the current master pane");
+    if (
+      parentSessionFile !== undefined &&
+      observedSessionPath !== undefined &&
+      parentSessionFile !== observedSessionPath
+    ) {
+      throw new RuntimeIdentityError(
+        "Root parent session artifact differs from the current master pane",
+      );
     }
     const masterSessionPath = parentSessionFile ?? observedSessionPath;
-    if (existing?.masterSessionPath !== undefined && existing.masterSessionPath !== masterSessionPath) {
+    if (
+      existing?.masterSessionPath !== undefined &&
+      existing.masterSessionPath !== masterSessionPath
+    ) {
       throw new RuntimeIdentityError("Lineage master session artifact changed");
     }
     return {
@@ -1077,13 +1763,21 @@ export class SubagentOrchestrator {
       const response = await this.#runJson(["pane", "current", "--current"], signal);
       const pane = objectAt(objectAt(response, "result"), "pane");
       if (pane.pane_id !== this.#environment.HERDR_PANE_ID) {
-        throw new RuntimeIdentityError("Root caller pane differs from explicit Herdr pane identity");
+        throw new RuntimeIdentityError(
+          "Root caller pane differs from explicit Herdr pane identity",
+        );
       }
       if (pane.workspace_id !== this.#environment.HERDR_WORKSPACE_ID) {
-        throw new RuntimeIdentityError("Root caller workspace differs from explicit Herdr workspace identity");
+        throw new RuntimeIdentityError(
+          "Root caller workspace differs from explicit Herdr workspace identity",
+        );
       }
       const master = this.#masterFromPane(rootId, pane, persisted, parentSessionFile);
-      if (!persisted || master.tabId !== persisted.tabId || master.updatedAt !== persisted.updatedAt) {
+      if (
+        !persisted ||
+        master.tabId !== persisted.tabId ||
+        master.updatedAt !== persisted.updatedAt
+      ) {
         this.#saveMaster(master);
       }
       return master;
@@ -1098,8 +1792,14 @@ export class SubagentOrchestrator {
       masterSessionPath: this.#environment.HERDR_SUBAGENT_MASTER_SESSION_PATH,
     };
     if (
-      !expected.rootId || !expected.herdrSession || !expected.workspaceId || !expected.masterPaneId ||
-      !expected.masterTabId || !expected.masterSessionPath || !persisted || !persisted.masterSessionPath
+      !expected.rootId ||
+      !expected.herdrSession ||
+      !expected.workspaceId ||
+      !expected.masterPaneId ||
+      !expected.masterTabId ||
+      !expected.masterSessionPath ||
+      !persisted ||
+      !persisted.masterSessionPath
     ) {
       throw new RuntimeIdentityError(
         "Descendant cannot prove the persisted lineage master identity; reload the parent Pi agent",
@@ -1115,7 +1815,9 @@ export class SubagentOrchestrator {
       this.#environment.HERDR_WORKSPACE_ID !== persisted.workspaceId ||
       currentHerdrSession(this.#environment) !== persisted.herdrSession
     ) {
-      throw new RuntimeIdentityError("Descendant lineage master identity does not match its environment");
+      throw new RuntimeIdentityError(
+        "Descendant lineage master identity does not match its environment",
+      );
     }
     const response = await this.#runJson(["pane", "get", persisted.masterPaneId], signal);
     const pane = objectAt(objectAt(response, "result"), "pane");
@@ -1157,9 +1859,14 @@ export class SubagentOrchestrator {
       const width = entry.rect.width;
       const height = entry.rect.height;
       if (
-        typeof width !== "number" || !Number.isFinite(width) || width <= 0 ||
-        typeof height !== "number" || !Number.isFinite(height) || height <= 0
-      ) return [];
+        typeof width !== "number" ||
+        !Number.isFinite(width) ||
+        width <= 0 ||
+        typeof height !== "number" ||
+        !Number.isFinite(height) ||
+        height <= 0
+      )
+        return [];
       return [{ paneId: entry.pane_id, width, height, area: width * height }];
     });
     if (!panes.some((pane) => pane.paneId === master.masterPaneId)) {
@@ -1174,12 +1881,13 @@ export class SubagentOrchestrator {
     layout: PaneLayout,
     signal?: AbortSignal,
   ): Promise<PaneLayout["panes"]> {
-    const records = this.#loadChildren(child.rootId).filter((candidate) =>
-      candidate.id !== child.id &&
-      candidate.paneId !== undefined &&
-      candidate.workspaceId === master.workspaceId &&
-      candidate.herdrSession === master.herdrSession &&
-      !isRetiredSurface(candidate),
+    const records = this.#loadChildren(child.rootId).filter(
+      (candidate) =>
+        candidate.id !== child.id &&
+        candidate.paneId !== undefined &&
+        candidate.workspaceId === master.workspaceId &&
+        candidate.herdrSession === master.herdrSession &&
+        !isRetiredSurface(candidate),
     );
     const owned: PaneLayout["panes"] = [];
     for (const owner of records) {
@@ -1187,7 +1895,9 @@ export class SubagentOrchestrator {
         const response = await this.#runJson(["pane", "get", owner.paneId!], signal);
         const observed = objectAt(objectAt(response, "result"), "pane");
         if (typeof observed.tab_id !== "string" || observed.tab_id.length === 0) {
-          throw new SurfaceOwnershipUnprovenError(`Pane tab identity is unproven for ${owner.paneId}`);
+          throw new SurfaceOwnershipUnprovenError(
+            `Pane tab identity is unproven for ${owner.paneId}`,
+          );
         }
         if (observed.tab_id !== master.tabId) {
           throw new RuntimeIdentityError("An owned pane moved to another tab; refusing placement");
@@ -1200,9 +1910,12 @@ export class SubagentOrchestrator {
         if (pane) owned.push(pane);
       } catch (error) {
         if (error instanceof SurfaceOwnershipLostError) {
-          throw new RuntimeIdentityError(`An owned pane moved or was replaced; refusing placement (${error.message})`);
+          throw new RuntimeIdentityError(
+            `An owned pane moved or was replaced; refusing placement (${error.message})`,
+          );
         }
-        if (error instanceof SurfaceOwnershipUnprovenError || isPositivePaneAbsence(error)) continue;
+        if (error instanceof SurfaceOwnershipUnprovenError || isPositivePaneAbsence(error))
+          continue;
         throw error;
       }
     }
@@ -1234,32 +1947,36 @@ export class SubagentOrchestrator {
         layout.panes.find((pane) => pane.paneId === master.masterPaneId)!,
         ...owned,
       ];
-      const target = [...new Map(candidates.map((pane) => [pane.paneId, pane])).values()]
-        .sort((left, right) => right.area - left.area)[0];
+      const target = [...new Map(candidates.map((pane) => [pane.paneId, pane])).values()].sort(
+        (left, right) => right.area - left.area,
+      )[0];
       if (!target) throw new RuntimeIdentityError("Lineage master layout has no split candidate");
       const propagatedEnvironment = this.#propagatedEnvironment(child, master);
-      const created = await this.#runJson([
-        "pane",
-        "split",
-        "--pane",
-        target.paneId,
-        "--direction",
-        "down",
-        "--ratio",
-        "0.5",
-        "--cwd",
-        child.launchLoadout.cwd,
-        ...propagatedEnvironment.flatMap((value) => ["--env", value]),
-        "--no-focus",
-      ], signal);
+      const created = await this.#runJson(
+        [
+          "pane",
+          "split",
+          "--pane",
+          target.paneId,
+          "--direction",
+          "down",
+          "--ratio",
+          "0.5",
+          "--cwd",
+          child.launchLoadout.cwd,
+          ...propagatedEnvironment.flatMap((value) => ["--env", value]),
+          "--no-focus",
+        ],
+        signal,
+      );
       const pane = objectAt(objectAt(created, "result"), "pane");
       const paneId = stringAt(pane, "pane_id");
-      const reportedTabId = typeof pane.tab_id === "string" && pane.tab_id.length > 0
-        ? pane.tab_id
-        : undefined;
-      const workspaceId = typeof pane.workspace_id === "string" && pane.workspace_id.length > 0
-        ? pane.workspace_id
-        : undefined;
+      const reportedTabId =
+        typeof pane.tab_id === "string" && pane.tab_id.length > 0 ? pane.tab_id : undefined;
+      const workspaceId =
+        typeof pane.workspace_id === "string" && pane.workspace_id.length > 0
+          ? pane.workspace_id
+          : undefined;
       // Publish the pane before validating its identity. Any later failure can
       // then use the ordinary ownership-checked, pane-only cleanup path.
       // Record the expected lineage tab rather than an untrusted response tab,
@@ -1271,10 +1988,14 @@ export class SubagentOrchestrator {
       this.#saveChild(child);
       if (!reportedTabId) throw new Error("Malformed Herdr response: missing string tab_id");
       if (workspaceId !== undefined && workspaceId !== master.workspaceId) {
-        throw new RuntimeIdentityError("Subagent split created in a different workspace than the master pane");
+        throw new RuntimeIdentityError(
+          "Subagent split created in a different workspace than the master pane",
+        );
       }
       if (reportedTabId !== master.tabId) {
-        throw new RuntimeIdentityError("Subagent split created in a different tab than the master Pi pane");
+        throw new RuntimeIdentityError(
+          "Subagent split created in a different tab than the master Pi pane",
+        );
       }
       const verifiedLayout = this.#masterLayout(
         await this.#runJson(["pane", "layout", "--pane", master.masterPaneId], signal),
@@ -1299,6 +2020,10 @@ export class SubagentOrchestrator {
     }
   }
 
+  #isCurrentHerdrSession(child: ChildRecord): boolean {
+    return child.herdrSession === currentHerdrSession(this.#environment);
+  }
+
   #propagatedEnvironment(child: ChildRecord, master: MasterIdentity): string[] {
     return [
       `HERDR_SUBAGENT_DEPTH=${child.depth}`,
@@ -1311,15 +2036,15 @@ export class SubagentOrchestrator {
       `HERDR_SUBAGENT_MASTER_WORKSPACE_ID=${master.workspaceId}`,
       `HERDR_SUBAGENT_MASTER_PANE_ID=${master.masterPaneId}`,
       `HERDR_SUBAGENT_MASTER_TAB_ID=${master.tabId}`,
-      ...(master.masterSessionPath ? [`HERDR_SUBAGENT_MASTER_SESSION_PATH=${master.masterSessionPath}`] : []),
+      ...(master.masterSessionPath
+        ? [`HERDR_SUBAGENT_MASTER_SESSION_PATH=${master.masterSessionPath}`]
+        : []),
       ...(child.workScope ? [`HERDR_SUBAGENT_WORK_SCOPE=${child.workScope}`] : []),
       `HERDR_SUBAGENT_REGISTRY=${this.#registryPath(child.rootId)}`,
       `HERDR_SUBAGENT_COMPLETION_MARKER=${child.completionMarkerPath}`,
       `HERDR_SUBAGENT_ROLE=${child.launchLoadout.role}`,
       `HERDR_SUBAGENT_SPAWN_TARGETS=${child.launchLoadout.spawnTargets.join(",")}`,
-      ...Object.entries(child.launchLoadout.environment).map(
-        ([key, value]) => `${key}=${value}`,
-      ),
+      ...Object.entries(child.launchLoadout.environment).map(([key, value]) => `${key}=${value}`),
     ];
   }
 
@@ -1363,9 +2088,7 @@ export class SubagentOrchestrator {
     ) {
       throw new Error(`Cannot reactivate ${child.semanticName}: saved launch loadout is invalid`);
     }
-    if (
-      !environmentsMatch(loadout.environment, safePiEnvironment(this.#environment))
-    ) {
+    if (!environmentsMatch(loadout.environment, safePiEnvironment(this.#environment))) {
       throw new Error(
         `Cannot reactivate ${child.semanticName}: ` +
           "saved Pi environment no longer matches the current parent environment",
@@ -1426,6 +2149,7 @@ export class SubagentOrchestrator {
     child.state = "starting";
     child.result = undefined;
     child.error = undefined;
+    child.recoveryError = undefined;
     child.deliveredAt = undefined;
     child.cleanupError = undefined;
     child.tabId = undefined;
@@ -1438,27 +2162,31 @@ export class SubagentOrchestrator {
       await this.#withPlacementLock(child.rootId, async () => {
         await this.#createSurface(child, child.depth - 1, signal, true);
 
-        await this.#runJson([
-          "pane",
-          "rename",
-          child.paneId,
-          paneLabel(child.launchLoadout.role, child.semanticName),
-        ], signal);
-        child.sessionPath = await this.#startChildAgent([
-          "agent",
-          "start",
-          child.herdrName,
-          "--kind",
-          "pi",
-          "--pane",
-          child.paneId,
-          "--timeout",
-          String(AGENT_START_TIMEOUT_MILLISECONDS),
-          "--",
-          ...this.#piArguments(child, sessionPath),
-        ], child, sessionPath, () => {
-          agentStarted = true;
-        }, signal);
+        await this.#runJson(
+          ["pane", "rename", child.paneId, paneLabel(child.launchLoadout.role, child.semanticName)],
+          signal,
+        );
+        child.sessionPath = await this.#startChildAgent(
+          [
+            "agent",
+            "start",
+            child.herdrName,
+            "--kind",
+            "pi",
+            "--pane",
+            child.paneId,
+            "--timeout",
+            String(AGENT_START_TIMEOUT_MILLISECONDS),
+            "--",
+            ...this.#piArguments(child, sessionPath),
+          ],
+          child,
+          sessionPath,
+          () => {
+            agentStarted = true;
+          },
+          signal,
+        );
         child.updatedAt = this.#now();
         this.#saveChild(child);
       });
@@ -1587,8 +2315,10 @@ export class SubagentOrchestrator {
           `Refusing to overwrite generation ${current.generation} with ${child.generation}`,
         );
       }
-      if (current.revision !== undefined &&
-        (!Number.isSafeInteger(current.revision) || current.revision < 0)) {
+      if (
+        current.revision !== undefined &&
+        (!Number.isSafeInteger(current.revision) || current.revision < 0)
+      ) {
         throw new Error(`Malformed subagent registry revision: ${path}`);
       }
       currentRevision = typeof current.revision === "number" ? current.revision : 0;
@@ -1603,12 +2333,7 @@ export class SubagentOrchestrator {
       );
     }
     const next = { ...child, revision: currentRevision + 1 };
-    const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    renameSync(temporaryPath, path);
+    atomicWriteText(path, `${JSON.stringify(next, null, 2)}\n`);
     child.revision = next.revision;
   }
 
@@ -1623,9 +2348,9 @@ export class SubagentOrchestrator {
     return { ...matches[0] };
   }
 
-  async #assertLiveChild(child: ChildRecord, signal?: AbortSignal): Promise<void> {
+  async #assertLiveChild(child: ChildRecord, signal?: AbortSignal): Promise<string> {
     const response = await this.#runJson(["agent", "get", child.herdrName], signal);
-    this.#validatedAgentStatus(child, objectAt(objectAt(response, "result"), "agent"));
+    return this.#validatedAgentStatus(child, objectAt(objectAt(response, "result"), "agent"));
   }
 
   #validatedAgentStatus(child: ChildRecord, agent: JsonObject): string {
@@ -1711,18 +2436,17 @@ export class SubagentOrchestrator {
       started = await this.#startAgent(args, signal);
       markStarted();
     } catch (error) {
-      if (!(error instanceof Error) ||
-        error.message !== "Malformed Herdr JSON for command: herdr agent start") throw error;
+      if (
+        !(error instanceof Error) ||
+        error.message !== "Malformed Herdr JSON for command: herdr agent start"
+      )
+        throw error;
       malformedStartError = error;
       markStarted();
     }
 
     if (started !== undefined) {
-      const reportedSessionPath = this.#startedSessionPath(
-        child,
-        started,
-        expectedSessionPath,
-      );
+      const reportedSessionPath = this.#startedSessionPath(child, started, expectedSessionPath);
       if (reportedSessionPath !== undefined) return reportedSessionPath;
     }
 
@@ -1736,11 +2460,7 @@ export class SubagentOrchestrator {
         { cause: error },
       );
     }
-    const reconciledSessionPath = this.#startedSessionPath(
-      child,
-      reconciled,
-      expectedSessionPath,
-    );
+    const reconciledSessionPath = this.#startedSessionPath(child, reconciled, expectedSessionPath);
     if (reconciledSessionPath === undefined) {
       throw new RuntimeIdentityError(
         `Herdr did not report a persistent session for ${child.herdrName}`,
@@ -1752,7 +2472,9 @@ export class SubagentOrchestrator {
   async #runJson(args: string[], signal?: AbortSignal): Promise<JsonObject> {
     const execution = await this.#transport.run(args, signal);
     if (execution.code !== 0) {
-      throw new Error(execution.stderr.trim() || `Herdr command failed: herdr ${args.slice(0, 2).join(" ")}`);
+      throw new Error(
+        execution.stderr.trim() || `Herdr command failed: herdr ${args.slice(0, 2).join(" ")}`,
+      );
     }
     let parsed: unknown;
     try {
@@ -1765,12 +2487,14 @@ export class SubagentOrchestrator {
     }
     if ("error" in parsed) {
       const reportedError = parsed.error;
-      const code = isObject(reportedError) && typeof reportedError.code === "string"
-        ? reportedError.code
-        : undefined;
-      const message = isObject(reportedError) && typeof reportedError.message === "string"
-        ? reportedError.message
-        : undefined;
+      const code =
+        isObject(reportedError) && typeof reportedError.code === "string"
+          ? reportedError.code
+          : undefined;
+      const message =
+        isObject(reportedError) && typeof reportedError.message === "string"
+          ? reportedError.message
+          : undefined;
       throw new Error(
         [code, message].filter((part) => part !== undefined).join(": ") ||
           `Herdr command returned an error: herdr ${args.slice(0, 2).join(" ")}`,
@@ -1787,7 +2511,8 @@ export class SubagentOrchestrator {
           current.generation !== child.generation ||
           current.revision !== child.revision ||
           isRetiredSurface(current)
-        ) return false;
+        )
+          return false;
         this.#saveChild(child);
         return true;
       });
@@ -1805,7 +2530,27 @@ export class SubagentOrchestrator {
           current.generation !== child.generation ||
           current.revision !== child.revision ||
           !ACTIVE_STATES.has(current.state)
-        ) return false;
+        )
+          return false;
+        const completed = await this.#reconcileAbandonedCompletion(
+          current.rootId,
+          current.parentId,
+          current,
+          undefined,
+          false,
+          true,
+        );
+        if (completed) return true;
+        const crashedCandidate = await this.#reconcileUnprovenCandidate(
+          current.rootId,
+          current.parentId,
+          current,
+          error,
+        );
+        if (crashedCandidate) {
+          if (await this.#deliver(crashedCandidate)) await this.#cleanupSurface(crashedCandidate);
+          return true;
+        }
         current.state = "crashed";
         current.error = error;
         current.updatedAt = this.#now();
@@ -1867,6 +2612,7 @@ export class SubagentOrchestrator {
     try {
       let waitUntilUnblocked = child.state === "blocked";
       while (true) {
+        if (await this.#monitorCompleteFromSession(child, controller.signal)) return;
         let reported: JsonObject;
         try {
           reported = await this.#runJson(
@@ -1882,6 +2628,7 @@ export class SubagentOrchestrator {
           );
         } catch (waitError) {
           if (this.#disposed || controller.signal.aborted) return;
+          if (await this.#monitorCompleteFromSession(child, controller.signal, true)) return;
           try {
             reported = await this.#runJson(["agent", "get", child.herdrName], controller.signal);
           } catch (reconcileError) {
@@ -1893,13 +2640,14 @@ export class SubagentOrchestrator {
             child.state = "stale";
             child.error = `Could not reconcile failed Herdr wait: ${errorMessage(reconcileError)}`;
             child.updatedAt = this.#now();
-            if (!await this.#saveMonitoredChild(child)) return;
+            if (!(await this.#saveMonitoredChild(child))) return;
             return;
           }
         }
         if (this.#disposed || controller.signal.aborted) return;
         const current = this.#findChild(child.rootId, child.parentId, child.id);
         if (current.generation !== child.generation) return;
+        if (await this.#monitorCompleteFromSession(child, controller.signal)) return;
         const agent = objectAt(objectAt(reported, "result"), "agent");
         let status: string;
         try {
@@ -1908,13 +2656,13 @@ export class SubagentOrchestrator {
           child.state = "stale";
           child.error = errorMessage(error);
           child.updatedAt = this.#now();
-          if (!await this.#saveMonitoredChild(child)) return;
+          if (!(await this.#saveMonitoredChild(child))) return;
           return;
         }
         if (status === "working" || status === "blocked") {
           child.state = status;
           child.updatedAt = this.#now();
-          if (!await this.#saveMonitoredChild(child)) return;
+          if (!(await this.#saveMonitoredChild(child))) return;
           waitUntilUnblocked = status === "blocked";
           continue;
         }
@@ -1922,7 +2670,7 @@ export class SubagentOrchestrator {
           child.state = "stale";
           child.error = `Unexpected settled Herdr agent status: ${status}`;
           child.updatedAt = this.#now();
-          if (!await this.#saveMonitoredChild(child)) return;
+          if (!(await this.#saveMonitoredChild(child))) return;
           return;
         }
         await this.#monitorCompletionProof(child, controller.signal);
@@ -1944,16 +2692,34 @@ export class SubagentOrchestrator {
   async #monitorCompleteFromSession(
     child: ChildRecord,
     signal: AbortSignal,
+    waitForProof = false,
   ): Promise<boolean> {
+    if (
+      !this.#hasCurrentCancellationClaim(child) &&
+      !waitForProof &&
+      !this.#hasCurrentCompletionProof(child)
+    ) {
+      return false;
+    }
     return this.#withChildRegistryLock(child.rootId, child.id, async () => {
       const current = this.#findChild(child.rootId, child.parentId, child.id);
-      if (
-        current.generation !== child.generation ||
-        current.revision !== child.revision ||
-        !ACTIVE_STATES.has(current.state)
-      ) return false;
-      await this.#completeFromSession(child, signal);
-      return true;
+      if (current.generation !== child.generation) return false;
+      if (!ACTIVE_STATES.has(current.state)) return true;
+      const cancellation = this.#recordTerminalCancellation(current);
+      if (cancellation) {
+        if (this.#isCurrentHerdrSession(cancellation) && !isRetiredSurface(cancellation)) {
+          await this.#cleanupSurface(cancellation);
+        }
+        return true;
+      }
+      if (!waitForProof && !this.#hasCurrentCompletionProof(current)) return false;
+      try {
+        await this.#completeFromSession(current, signal);
+        return true;
+      } catch (error) {
+        if (error instanceof CompletionNotProvenError) return false;
+        throw error;
+      }
     });
   }
 
@@ -1962,12 +2728,7 @@ export class SubagentOrchestrator {
       const current = this.#findChild(child.rootId, child.parentId, child.id);
       if (current.generation !== child.generation || !ACTIVE_STATES.has(current.state)) return;
 
-      try {
-        if (await this.#monitorCompleteFromSession(child, signal)) return;
-        return;
-      } catch (error) {
-        if (!(error instanceof CompletionNotProvenError)) throw error;
-      }
+      if (await this.#monitorCompleteFromSession(child, signal, true)) return;
       signal.throwIfAborted();
 
       let reported: JsonObject;
@@ -1976,16 +2737,14 @@ export class SubagentOrchestrator {
       } catch (observeError) {
         if (!isPositiveAgentAbsence(observeError)) {
           child.state = "stale";
-          child.error =
-            `Could not observe Herdr agent while awaiting completion proof: ${errorMessage(observeError)}`;
+          child.error = `Could not observe Herdr agent while awaiting completion proof: ${errorMessage(observeError)}`;
           child.updatedAt = this.#now();
-          if (!await this.#saveMonitoredChild(child)) return;
+          if (!(await this.#saveMonitoredChild(child))) return;
           return;
         }
 
         try {
-          if (await this.#monitorCompleteFromSession(child, signal)) return;
-          return;
+          if (await this.#monitorCompleteFromSession(child, signal, true)) return;
         } catch (completionError) {
           if (!(completionError instanceof CompletionNotProvenError)) throw completionError;
         }
@@ -2007,24 +2766,24 @@ export class SubagentOrchestrator {
         child.state = "stale";
         child.error = errorMessage(error);
         child.updatedAt = this.#now();
-        if (!await this.#saveMonitoredChild(child)) return;
+        if (!(await this.#saveMonitoredChild(child))) return;
         return;
       }
       if (status === "working" || status === "blocked") {
         child.state = status;
         child.updatedAt = this.#now();
-        if (!await this.#saveMonitoredChild(child)) return;
+        if (!(await this.#saveMonitoredChild(child))) return;
         continue;
       }
       if (status === "idle" || status === "done") {
         child.updatedAt = this.#now();
-        if (!await this.#saveMonitoredChild(child)) return;
+        if (!(await this.#saveMonitoredChild(child))) return;
         continue;
       }
       child.state = "stale";
       child.error = `Unexpected Herdr agent status while awaiting completion proof: ${status}`;
       child.updatedAt = this.#now();
-      if (!await this.#saveMonitoredChild(child)) return;
+      if (!(await this.#saveMonitoredChild(child))) return;
       return;
     }
   }
@@ -2038,12 +2797,7 @@ export class SubagentOrchestrator {
     let lastError: CompletionNotProvenError | undefined;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       try {
-        await this.#completeFromSessionOnce(
-          child,
-          signal,
-          allowExistingResult,
-          cleanupSurface,
-        );
+        await this.#completeFromSessionOnce(child, signal, allowExistingResult, cleanupSurface);
         return;
       } catch (error) {
         if (!(error instanceof CompletionNotProvenError)) throw error;
@@ -2085,15 +2839,19 @@ export class SubagentOrchestrator {
       );
     }
     child.result = result.text;
-    child.state = result.stopReason === "aborted"
-      ? "cancelled"
-      : result.stopReason === "error"
-        ? "failed"
-        : "completed";
+    child.state =
+      result.stopReason === "aborted"
+        ? "cancelled"
+        : result.stopReason === "error"
+          ? "failed"
+          : "completed";
     child.error = result.stopReason === "error" ? result.errorMessage : undefined;
+    child.recoveryError = undefined;
     child.updatedAt = this.#now();
     this.#saveChild(child);
-    if (await this.#deliver(child) && cleanupSurface) await this.#cleanupSurface(child);
+    if ((await this.#deliver(child)) && cleanupSurface && this.#isCurrentHerdrSession(child)) {
+      await this.#cleanupSurface(child);
+    }
   }
 
   async #deliver(child: ChildRecord): Promise<boolean> {
@@ -2121,42 +2879,83 @@ export class SubagentOrchestrator {
   ): Promise<void> {
     if (pane.pane_id !== identity.paneId) {
       if (typeof pane.pane_id === "string") {
-        throw new SurfaceOwnershipLostError(`Pane identity changed for ${identity.paneId}; preserving pane`);
+        throw new SurfaceOwnershipLostError(
+          `Pane identity changed for ${identity.paneId}; preserving pane`,
+        );
       }
       throw new SurfaceOwnershipUnprovenError(`Pane identity is unproven for ${identity.paneId}`);
     }
-    if (typeof pane.workspace_id !== "string" ||
-      (identity.tabId !== undefined && typeof pane.tab_id !== "string")) {
+    if (
+      typeof pane.workspace_id !== "string" ||
+      (identity.tabId !== undefined && typeof pane.tab_id !== "string")
+    ) {
       throw new SurfaceOwnershipUnprovenError(`Pane identity is unproven for ${identity.paneId}`);
     }
-    if (pane.workspace_id !== identity.workspaceId ||
-      (identity.tabId !== undefined && pane.tab_id !== identity.tabId)) {
-      throw new SurfaceOwnershipLostError(`Pane identity changed for ${identity.paneId}; preserving pane`);
+    if (
+      pane.workspace_id !== identity.workspaceId ||
+      (identity.tabId !== undefined && pane.tab_id !== identity.tabId)
+    ) {
+      throw new SurfaceOwnershipLostError(
+        `Pane identity changed for ${identity.paneId}; preserving pane`,
+      );
     }
     const session = sessionPathFromAgent(pane);
-    if ((pane.agent && pane.agent !== "pi") || (session && identity.sessionPath && session !== identity.sessionPath)) {
-      throw new SurfaceOwnershipLostError(`Current occupant session changed in ${identity.paneId}; preserving pane`);
+    if (
+      (pane.agent && pane.agent !== "pi") ||
+      (session && identity.sessionPath && session !== identity.sessionPath)
+    ) {
+      throw new SurfaceOwnershipLostError(
+        `Current occupant session changed in ${identity.paneId}; preserving pane`,
+      );
     }
     if (pane.agent || pane.agent_session) {
       if (pane.agent === "pi" && session && session === identity.sessionPath) return;
-      throw new SurfaceOwnershipUnprovenError(`Current occupant session is unproven in ${identity.paneId}`);
+      throw new SurfaceOwnershipUnprovenError(
+        `Current occupant session is unproven in ${identity.paneId}`,
+      );
     }
     // After an owned agent exits, only its empty foreground shell is safe to reuse or close.
-    const response = await this.#runJson(["pane", "process-info", "--pane", identity.paneId!], signal);
+    const response = await this.#runJson(
+      ["pane", "process-info", "--pane", identity.paneId!],
+      signal,
+    );
     const info = objectAt(objectAt(response, "result"), "process_info");
-    if (info.pane_id !== identity.paneId || typeof info.shell_pid !== "number" ||
-      !Number.isSafeInteger(info.shell_pid) || info.shell_pid <= 0 || !Array.isArray(info.foreground_processes)) {
-      throw new SurfaceOwnershipUnprovenError(`Foreground ownership is unproven in ${identity.paneId}`);
+    if (
+      info.pane_id !== identity.paneId ||
+      typeof info.shell_pid !== "number" ||
+      !Number.isSafeInteger(info.shell_pid) ||
+      info.shell_pid <= 0 ||
+      !Array.isArray(info.foreground_processes)
+    ) {
+      throw new SurfaceOwnershipUnprovenError(
+        `Foreground ownership is unproven in ${identity.paneId}`,
+      );
     }
     const processes = info.foreground_processes;
-    if (processes.length === 1 && isObject(processes[0]) && processes[0].pid === info.shell_pid) return;
-    if (processes.length > 0 && processes.every((entry) => isObject(entry) &&
-      typeof entry.pid === "number" && Number.isSafeInteger(entry.pid) && entry.pid > 0 &&
-      typeof entry.argv0 === "string" && entry.argv0.length > 0 && entry.argv0 !== "pi" &&
-      !/(?:^|\/)node(?:js)?$/.test(entry.argv0) && entry.name !== "node")) {
-      throw new SurfaceOwnershipLostError(`Another foreground command occupies ${identity.paneId}; preserving pane`);
+    if (processes.length === 1 && isObject(processes[0]) && processes[0].pid === info.shell_pid)
+      return;
+    if (
+      processes.length > 0 &&
+      processes.every(
+        (entry) =>
+          isObject(entry) &&
+          typeof entry.pid === "number" &&
+          Number.isSafeInteger(entry.pid) &&
+          entry.pid > 0 &&
+          typeof entry.argv0 === "string" &&
+          entry.argv0.length > 0 &&
+          entry.argv0 !== "pi" &&
+          !/(?:^|\/)node(?:js)?$/.test(entry.argv0) &&
+          entry.name !== "node",
+      )
+    ) {
+      throw new SurfaceOwnershipLostError(
+        `Another foreground command occupies ${identity.paneId}; preserving pane`,
+      );
     }
-    throw new SurfaceOwnershipUnprovenError(`Foreground ownership is unproven in ${identity.paneId}`);
+    throw new SurfaceOwnershipUnprovenError(
+      `Foreground ownership is unproven in ${identity.paneId}`,
+    );
   }
 
   async #cleanupSurface(child: ChildRecord): Promise<void> {

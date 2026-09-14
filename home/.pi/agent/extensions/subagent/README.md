@@ -80,7 +80,7 @@ Only HTTP, HTTPS, and local file targets become links, and nothing opens until c
 
 `/subagents [name]` opens the prompt picker or a uniquely named agent's prompt in fullscreen and regular mode.
 `/subagent-output [name]` opens the corresponding output picker or response directly.
-In the picker, use arrows and Enter for the prompt or `o` for output.
+In either picker, use arrows to select an agent; Enter opens the mode requested by the command, `p` opens the prompt, and `o` opens output.
 In a detail modal, use arrows, Page Up/Down, or Home/End to navigate; `p` and `o` switch between prompt and output, and Escape closes it.
 The mouse wheel also scrolls the modal in fullscreen mode.
 The displayed prompt is the exact saved initial task, not a reconstructed system prompt or a concatenation of later steering messages.
@@ -91,6 +91,8 @@ Inspection is read-only and never resumes an agent, focuses its pane, or submits
 Completed children retain Pi session history while their owned terminal panes are cleaned up.
 Before acknowledging delivery, the extension saves the full completion in an outbox entry on the parent's active Pi session branch, then queues its model-visible follow-up.
 Exact final output and failure diagnostics remain separate fields so an empty failed response still shows its error.
+Completion messages retain native Markdown formatting, but terminal controls are removed and metadata stays on one line.
+The final rendered links, including Markdown reference links, are restricted to HTTP, HTTPS, and local files without changing saved response text.
 Lifecycle controls never wait for the parent model to consume that follow-up.
 Unconsumed outbox entries replay after restart or a cleared message queue; consumed completions are not replayed.
 `deliveredAt` means the completion was durably enqueued, not necessarily consumed by the parent model.
@@ -112,9 +114,24 @@ New allocations publish their pending owner under the lineage lock, and a persis
 Active message, focus, cancellation, and rejected-prompt stop paths validate runtime identity before sending controls.
 Failed control preflights do not abandon completion monitoring for children still working in the current Herdr session.
 
-These checks are observational, not atomic fencing.
-The current Herdr API has no expected-session or revision precondition for closing, splitting, prompting, or focusing.
-Lineage locks serialize cooperating controllers but cannot prevent an external actor from replacing a runtime between verification and a subsequent Herdr command.
+Active message and cancellation requests cross a generation-scoped control interface owned by the child extension.
+The child admits or rejects each request in the same event loop that observes session persistence and publishes settlement evidence, then writes a receipt before the parent changes lifecycle state.
+Message admission checks receipt writability, reserves the nonce, dispatches a hidden custom message, and only then publishes acceptance.
+Private message admission requires the synchronous `enqueueMessage()` capability shipped by `nix/packages/pi-coding-agent.nix` on the pinned Pi `0.85.0` runtime.
+Its maintained patch returns `{ status: "queued" }` only after native insertion and propagates native rejection directly to the caller.
+Stock Pi's void `sendMessage()` cannot prove queue admission, so unsupported runtimes fail closed without a compatibility fallback.
+An admission receipt is not proof of model consumption or successful completion; later run failures are reported separately as `enqueue_message_run` runtime errors.
+If queue insertion succeeds but acceptance publication fails, the unaccepted reservation remains a durable settlement guard, consumption aborts before another provider call, and the preceding response cannot become a successful completion.
+Native insertion rejection withdraws the reservation because no message entered the queue.
+Only the matching awaited `message_start` can consume a reservation, so an interleaved ordinary user message cannot claim or release it.
+The persisted pending-control count protects parent preflight during lock contention, and consumption advances the running frontier to the preceding response before another provider call can begin.
+Consumption never overwrites a newer request's receipt, and consumed nonces cannot be replayed within that child process.
+An admitted cancellation aborts the active low-level run directly instead of entering the model queue.
+If Herdr blocks the request or the five-second receipt deadline expires, cancellation returns an error without raw terminal input, lifecycle mutation, or surface cleanup.
+Resolve blocked input before retrying cancellation.
+Real Pi RPC coverage verifies receipt-before-provider-release admission, consumption locking, successive steering, and model-visible content without exposing the control envelope.
+Pane placement, cleanup, and focus checks remain observational because the current Herdr interface has no expected-session or revision precondition for those operations.
+Lineage locks serialize cooperating controllers but cannot prevent an external actor from replacing a runtime between verification and a later pane operation.
 
 Use `inspect`, `message`, `cancel`, or `resume` with the agent's semantic `name`.
 `message` can reactivate a finished child with its saved session and launch settings.
@@ -138,7 +155,23 @@ Reload old controllers before reusing their registries; do not manually rewrite 
 
 ## Regression checks
 
-From the dotfiles root:
+From the dotfiles root, build the deployment runtime without activating it:
+
+```bash
+export PI_E2E_RUNTIME="$(nix build --impure --no-link --print-out-paths --expr \
+  "let f = builtins.getFlake \"path:$PWD\"; pkgs = import f.inputs.nixpkgs { system = builtins.currentSystem; }; in pkgs.callPackage $PWD/nix/packages/pi-coding-agent.nix {}")"
+export PI_TEST_PACKAGES="$PI_E2E_RUNTIME/lib/pi-coding-agent/packages"
+export PATH="$PI_E2E_RUNTIME/bin:$PATH"
+export PI_OFFLINE=1
+node nix/tests/pi-message-admission.mjs
+node home/.pi/agent/extensions/subagent/e2e-native-queue-rejection.mjs
+```
+
+The package install check tests the real public extension binding and native queues, including idle and busy steering/follow-ups, post-run continuation, awaited consumption, compaction-state rejection, and later run failures.
+The SDK protocol regression injects native rejection and receipt publication failures while an offline provider is blocked, then verifies receipts, durable pending state, provider counts, cancellation authorization, and completion markers.
+These are deliberate fault injections, not claims of naturally occurring provider failures.
+
+Then run the extension regressions:
 
 ```bash
 npm --prefix home/.pi/agent/extensions/subagent ci --ignore-scripts
@@ -147,6 +180,7 @@ npm --prefix home/.pi/agent/extensions/subagent run lint
 npm --prefix home/.pi/agent/extensions/subagent run format:check
 uv run --script home/.pi/agent/extensions/subagent/e2e-widget.py
 node home/.pi/agent/extensions/subagent/e2e-roles.mjs
+node home/.pi/agent/extensions/subagent/e2e-control-admission.mjs
 ```
 
 The widget suite starts real Pi TUI processes in isolated PTYs with seeded child records, the Prime editor, and the custom footer.
@@ -163,18 +197,24 @@ It validates role wiring, not placement.
 Inside Herdr:
 
 ```bash
+node home/.pi/agent/extensions/subagent/e2e-active-cancellation.mjs
 node home/.pi/agent/extensions/subagent/e2e-lifecycle.mjs
 node home/.pi/agent/extensions/subagent/e2e-scopes.mjs
 ```
 
 Both live suites use actual extension/tool handlers, persistent Pi sessions, and Herdr controls with offline scripted models rather than provider inference.
 They create isolated test configurations and background surfaces, retain their evidence directories, and clean up only test-owned surfaces.
+With `PI_E2E_RUNTIME`, a test-only Herdr wrapper pins PATH on every created surface, including descendants; it delegates all controls to the real Herdr CLI without changing live configuration or production environment propagation.
+Each actual Pi process records its executable path, native-admission capability, and session path, which the suites verify against their saved sessions.
 Focus checks reject test surfaces taking focus while allowing unrelated human focus changes.
 
 The lifecycle suite covers nonblocking messaging/cancellation, generation-specific completion delivery, saved-session crash/replay, and continued parent usability.
+Its publisher-crash cases kill actual test-owned child processes immediately after candidate publication, before or after settlement attestation, but always before marker publication.
+They verify exact concatenated output recovery, conservative crashed status without attestation, successful completion only with attestation, once-only delivery, and ownership-safe cleanup.
 The scope suite covers concurrent descendant spawns from different workers, role permissions, inherited scopes, equal-label conversation isolation, horizontal full-width geometry at each count from three through eight agents, master-tab placement, sibling and human-pane preservation, saved-session reactivation, sequential stages, moved-pane safe rejection, and blocked cancellation.
 Its ownership case replaces an actual test child with another Pi session and verifies rejected stale controls, refused moved placement, durable release, fresh allocation, original-session reactivation, and preservation of the replacement's later shell.
 Run `SCOPE_CASES=ownership node home/.pi/agent/extensions/subagent/e2e-scopes.mjs` for that focused case.
+Run `SCOPE_CASES=blocked node home/.pi/agent/extensions/subagent/e2e-scopes.mjs` to verify blocked cancellation fails without interruption and preserves the eventual conclusion.
 Independent-process lock tests cover descriptor retention, contenders, holder death, inode stability, exceptional release, and legacy-directory preservation.
 Ownership unit tests explicitly cover uncertain observations, foreground commands, pending-cleanup recovery, moved panes, and failed-preflight monitoring.
 `e2e-herdr.sh` is a compatibility entry point for the offline scope suite.
@@ -183,7 +223,9 @@ Tests and fixtures under this directory are not auto-loaded as production extens
 ## Applying changes
 
 These files are linked into `~/.pi/agent/` through Home Manager's out-of-store symlinks.
-No Nix rebuild is needed for edits to the linked extension, role definitions, or workflow prompts.
+Ordinary edits to the linked extension, role definitions, or workflow prompts do not require a Nix rebuild.
+This version's private message-admission protocol additionally requires the packaged native-admission patch; rebuild and install the matching Nix runtime before loading it in production.
+A stock `0.85.0` executable is not sufficient, and `/reload` cannot add the runtime capability.
 Run `/reload` in an existing Pi session, or start a new Pi session, to load extension and prompt changes.
 Already-running child processes retain their loaded extension until they reload or restart.
 

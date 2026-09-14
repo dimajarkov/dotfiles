@@ -1,36 +1,27 @@
 import { resolve } from "node:path";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
-import {
-  getAgentDir,
-  getMarkdownTheme,
-  keyText,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, getMarkdownTheme, keyText } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { withHerdrBlocked } from "../lib/herdr-blocked.ts";
+import { sanitizeMetadata } from "../lib/terminal-safety.ts";
 import {
   discoverAgents,
   materializeSystemPrompt,
   resolveAgentSkills,
   type AgentScope,
 } from "./agents.ts";
-import {
-  COMPLETION_TYPE,
-  CompletionDelivery,
-} from "./completion-delivery.ts";
+import { COMPLETION_TYPE, CompletionDelivery } from "./completion-delivery.ts";
 import { renderCompletionMessage } from "./completion-renderer.ts";
+import { resumeResultText, summarizeChild } from "./child-summary.ts";
 import { buildSubagentTree, renderSubagentWidgetLayout, type TreeRow } from "./widget.ts";
 import { SubagentInspector } from "./inspector.ts";
 import {
   SubagentOrchestrator,
-  type ChildRecord,
   type CommandExecution,
   type HerdrTransport,
 } from "./orchestrator.ts";
+import { renderSubagentToolCall, renderSubagentToolResult } from "./tool-renderer.ts";
 
 const STATE_DIRECTORY = resolve(getAgentDir(), "herdr-subagents");
 const WIDGET_KEY = "herdr-subagents";
@@ -69,11 +60,15 @@ const Parameters = Type.Object({
   action: ActionSchema,
   agent: Type.Optional(Type.String({ description: "Agent role for spawn" })),
   name: Type.Optional(
-    Type.String({ description: "Stable semantic child name for spawn or target name for controls" }),
+    Type.String({
+      description: "Stable semantic child name for spawn or target name for controls",
+    }),
   ),
   task: Type.Optional(Type.String({ description: "Task for spawn" })),
   workScope: Type.Optional(
-    Type.String({ description: "Shared workstream slug. Required for root spawns; inherited by descendants." }),
+    Type.String({
+      description: "Shared workstream slug. Required for root spawns; inherited by descendants.",
+    }),
   ),
   cwd: Type.Optional(Type.String({ description: "Explicit child working directory" })),
   message: Type.Optional(Type.String({ description: "Steering or follow-up message" })),
@@ -97,24 +92,6 @@ function rootId(ctx: ExtensionContext): string {
 
 function currentParentId(ctx: ExtensionContext): string {
   return process.env.HERDR_SUBAGENT_AGENT_ID ?? ctx.sessionManager.getSessionId();
-}
-
-function stateSymbol(state: ChildRecord["state"]): string {
-  if (state === "completed") return "✓";
-  if (state === "failed" || state === "crashed") return "✗";
-  if (state === "blocked") return "!";
-  if (state === "cancelled") return "×";
-  return "○";
-}
-
-function summary(child: ChildRecord): string {
-  const location = child.tabId && child.paneId ? `${child.tabId}/${child.paneId}` : "starting";
-  const scope = child.workScope ? ` scope=${child.workScope}` : " unscoped";
-  const resolvedModel = child.model ?? child.launchLoadout?.model;
-  const resolvedThinking = child.thinking ?? child.launchLoadout?.thinking;
-  const model = resolvedModel ? ` model=${resolvedModel}` : "";
-  const thinking = resolvedThinking ? ` thinking=${resolvedThinking}` : "";
-  return `${stateSymbol(child.state)} ${child.semanticName} [${child.role}] ${child.state}${scope}${model}${thinking} ${location}`;
 }
 
 function textResult(text: string, details?: unknown) {
@@ -174,13 +151,19 @@ export default function herdrSubagents(pi: ExtensionAPI) {
             if (event.type !== "click" || event.button !== "left" || !layout) return undefined;
             const target = layout.targets.find((target) => target.y === event.y);
             if (target) {
-              const output = target.outputStart !== undefined && event.x >= target.outputStart && event.x < target.outputStart + "[output]".length;
-              void inspector.show(ctx, rows, output ? "output" : "prompt", "", target.row)
-                .catch((error) => ctx.ui.notify(String(error), "error"));
+              const output =
+                target.outputStart !== undefined &&
+                event.x >= target.outputStart &&
+                event.x < target.outputStart + "[output]".length;
+              void inspector
+                .show(ctx, rows, output ? "output" : "prompt", "", target.row)
+                .catch((error) => ctx.ui.notify(sanitizeMetadata(String(error)), "error"));
               return { handled: true };
             }
             if (event.y > (layout.targets.at(-1)?.y ?? -1)) {
-              void inspector.show(ctx, rows).catch((error) => ctx.ui.notify(String(error), "error"));
+              void inspector
+                .show(ctx, rows)
+                .catch((error) => ctx.ui.notify(sanitizeMetadata(String(error)), "error"));
               return { handled: true };
             }
             return undefined;
@@ -201,7 +184,8 @@ export default function herdrSubagents(pi: ExtensionAPI) {
     completionDelivery = new CompletionDelivery({
       getBranch: () => ctx.sessionManager.getBranch(),
       appendEntry: (customType, data) => pi.appendEntry(customType, data),
-      sendMessage: (message) => pi.sendMessage(message, { deliverAs: "followUp", triggerTurn: true }),
+      sendMessage: (message) =>
+        pi.sendMessage(message, { deliverAs: "followUp", triggerTurn: true }),
       signal: deliveryController.signal,
     });
     completionDelivery.replay();
@@ -284,7 +268,7 @@ export default function herdrSubagents(pi: ExtensionAPI) {
           .list(lineage)
           .filter((child) => child.parentId === currentParentId(ctx));
         return textResult(
-          children.length > 0 ? children.map(summary).join("\n") : "No subagents",
+          children.length > 0 ? children.map(summarizeChild).join("\n") : "No subagents",
           { children },
         );
       }
@@ -294,25 +278,36 @@ export default function herdrSubagents(pi: ExtensionAPI) {
 
       if (params.action === "inspect") {
         const child = await orchestrator.inspect(lineage, currentParentId(ctx), name, signal);
-        return textResult(summary(child), { child });
+        return textResult(summarizeChild(child), { child });
       }
       if (params.action === "message") {
         if (!params.message) throw new Error("message requires message text");
-        const child = await orchestrator.message(lineage, currentParentId(ctx), name, params.message, signal);
+        const child = await orchestrator.message(
+          lineage,
+          currentParentId(ctx),
+          name,
+          params.message,
+          signal,
+        );
         updateWidget(ctx);
-        return textResult(`Message sent to ${child.semanticName}`, { child });
+        return textResult(`Message sent to ${sanitizeMetadata(child.semanticName)}`, { child });
       }
       if (params.action === "cancel") {
         const child = await orchestrator.cancel(lineage, currentParentId(ctx), name, signal);
         updateWidget(ctx);
         return textResult(
-          child.state === "cancelled" ? `Cancelled ${child.semanticName}` : `Already ${child.state}: ${child.semanticName}`,
+          child.state === "cancelled"
+            ? `Cancelled ${sanitizeMetadata(child.semanticName)}`
+            : `Already ${sanitizeMetadata(child.state)}: ${sanitizeMetadata(child.semanticName)}`,
           { child },
         );
       }
       if (params.action === "resume") {
-        const child = await orchestrator.resume(lineage, currentParentId(ctx), name, signal);
-        return textResult(`Focused ${child.semanticName} in ${child.paneId}`, { child });
+        const resumed = await orchestrator.resume(lineage, currentParentId(ctx), name, signal);
+        return textResult(resumeResultText(resumed), {
+          child: resumed.child,
+          action: resumed.action,
+        });
       }
 
       if (!params.agent || !params.task) {
@@ -330,7 +325,7 @@ export default function herdrSubagents(pi: ExtensionAPI) {
       const agent = discovery.agents.find((candidate) => candidate.name === params.agent);
       if (!agent) {
         throw new Error(
-          `Unknown agent role ${params.agent}. Available: ${discovery.agents.map((candidate) => candidate.name).join(", ") || "none"}`,
+          `Unknown agent role ${sanitizeMetadata(params.agent)}. Available: ${discovery.agents.map((candidate) => sanitizeMetadata(candidate.name)).join(", ") || "none"}`,
         );
       }
       if (agent.source === "project") {
@@ -339,64 +334,59 @@ export default function herdrSubagents(pi: ExtensionAPI) {
         }
         const approved = await withHerdrBlocked(
           (event) => pi.events.emit("herdr:blocked", event),
-          `Approval: project agent ${agent.name}`,
-          () => ctx.ui.confirm(
-            "Run project-local agent?",
-            `Agent: ${agent.name}\nSource: ${agent.filePath}`,
-          ),
+          `Approval: project agent ${sanitizeMetadata(agent.name)}`,
+          () =>
+            ctx.ui.confirm(
+              "Run project-local agent?",
+              `Agent: ${sanitizeMetadata(agent.name)}\nSource: ${sanitizeMetadata(agent.filePath)}`,
+            ),
         );
         if (!approved) return textResult("Cancelled: project-local agent not approved");
       }
 
       const allowedWorkerTargets = new Set(["scout", "researcher", "planner", "reviewer"]);
-      const spawnTargets = agent.name === "worker"
-        ? agent.spawnTargets.filter((target) => allowedWorkerTargets.has(target))
-        : [];
+      const spawnTargets =
+        agent.name === "worker"
+          ? agent.spawnTargets.filter((target) => allowedWorkerTargets.has(target))
+          : [];
       const tools = agent.tools ? [...agent.tools] : [...pi.getActiveTools()];
       const withoutSubagent = tools.filter((tool) => tool !== "subagent");
-      const strictTools = spawnTargets.length > 0
-        ? [...new Set([...withoutSubagent, "subagent"])]
-        : withoutSubagent;
-      const child = await orchestrator.spawn({
-        name,
-        task: params.task,
-        cwd: resolve(ctx.cwd, params.cwd ?? ctx.cwd),
-        parentSessionId: ctx.sessionManager.getSessionId(),
-        parentSessionFile: ctx.sessionManager.getSessionFile(),
-        workScope: params.workScope,
-        agent: {
-          name: agent.name,
-          description: agent.description,
-          tools: strictTools,
-          model: agent.model ?? (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined),
-          thinking: agent.thinking ?? ctx.thinkingLevel,
-          systemPromptPath: materializeSystemPrompt(STATE_DIRECTORY, agent),
-          skillPaths: resolveAgentSkills(ctx.cwd, agent.skills),
-          spawnTargets,
+      const strictTools =
+        spawnTargets.length > 0 ? [...new Set([...withoutSubagent, "subagent"])] : withoutSubagent;
+      const child = await orchestrator.spawn(
+        {
+          name,
+          task: params.task,
+          cwd: resolve(ctx.cwd, params.cwd ?? ctx.cwd),
+          parentSessionId: ctx.sessionManager.getSessionId(),
+          parentSessionFile: ctx.sessionManager.getSessionFile(),
+          workScope: params.workScope,
+          agent: {
+            name: agent.name,
+            description: agent.description,
+            tools: strictTools,
+            model: agent.model ?? (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined),
+            thinking: agent.thinking ?? ctx.thinkingLevel,
+            systemPromptPath: materializeSystemPrompt(STATE_DIRECTORY, agent),
+            skillPaths: resolveAgentSkills(ctx.cwd, agent.skills),
+            spawnTargets,
+          },
         },
-      }, signal);
+        signal,
+      );
       updateWidget(ctx);
       return textResult(
-        `Spawned asynchronously: ${summary(child)} as ${child.herdrName}`,
+        `Spawned asynchronously: ${summarizeChild(child)} as ${sanitizeMetadata(child.herdrName)}`,
         { child },
       );
     },
 
     renderCall(args, theme) {
-      const params = args as ToolParameters;
-      const target = params.name ? ` ${params.name}` : "";
-      const role = params.agent ? ` [${params.agent}]` : "";
-      return new Text(
-        `${theme.fg("toolTitle", theme.bold("subagent"))} ${theme.fg("accent", params.action)}${theme.fg("muted", `${target}${role}`)}`,
-        0,
-        0,
-      );
+      return renderSubagentToolCall(args, theme);
     },
 
     renderResult(result, _options, theme) {
-      const first = result.content[0];
-      const text = first?.type === "text" ? first.text : "";
-      return new Text(theme.fg("toolOutput", text), 0, 0);
+      return renderSubagentToolResult(result, theme);
     },
   });
 }

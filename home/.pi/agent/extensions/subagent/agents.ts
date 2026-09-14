@@ -4,9 +4,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  renameSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -15,6 +13,7 @@ import {
   getAgentDir,
   parseFrontmatter,
 } from "@earendil-works/pi-coding-agent";
+import { atomicWriteText } from "./atomic-file.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -150,11 +149,6 @@ export function materializeSystemPrompt(
     .digest("hex")
     .slice(0, 20);
   const path = join(directory, `${safeName}-${contentHash}.md`);
-  const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  writeFileSync(temporaryPath, `${agent.systemPrompt}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  renameSync(temporaryPath, path);
+  atomicWriteText(path, `${agent.systemPrompt}\n`);
   return path;
 }

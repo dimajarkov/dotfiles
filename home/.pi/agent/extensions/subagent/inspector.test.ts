@@ -6,6 +6,8 @@ import type { ChildRecord } from "./orchestrator.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 
+const terminalClipboardPattern = new RegExp(`${String.fromCharCode(27)}\\]52;`, "u");
+
 // This fixture exercises the UI boundary, not an orchestrator or a model.
 const children: ChildRecord[] = ["parent", "child"].map((id, index) => ({
   id,
@@ -174,10 +176,18 @@ test("dispose closes pending inspection and duplicate names remain selectable", 
   await pending;
 });
 
-test("failed empty output preserves the result and displays failure details", async () => {
+test("failed empty output displays provider and recovery diagnostics separately", async () => {
   const inspector = new SubagentInspector();
   const failedRows = buildSubagentTree(
-    [{ ...children[0]!, state: "failed", result: "", error: "provider exploded" }],
+    [
+      {
+        ...children[0]!,
+        state: "failed",
+        result: "",
+        error: "provider exploded",
+        recoveryError: "settlement uncertain",
+      },
+    ],
     "root",
   );
   let screen = "";
@@ -203,8 +213,9 @@ test("failed empty output preserves the result and displays failure details", as
 
   await inspector.show(ctx, failedRows, "output", "", failedRows[0]);
 
-  assert.match(screen, /Saved final response · failure details below/);
-  assert.match(screen, /Failure: provider exploded/);
+  assert.match(screen, /Saved final response · diagnostic details below/);
+  assert.equal(screen.match(/Failure: provider exploded/gu)?.length, 1);
+  assert.equal(screen.match(/Recovery: settlement uncertain/gu)?.length, 1);
 });
 
 test("non-TUI uses a text tree fallback without opening a modal", async () => {
@@ -223,4 +234,35 @@ test("non-TUI uses a text tree fallback without opening a modal", async () => {
   assert.match(output, /child/);
   await inspector.show(ctx, []);
   assert.equal(output, "No subagents");
+});
+
+test("non-TUI tree output sanitizes child metadata without changing records", async () => {
+  const inspector = new SubagentInspector();
+  const unsafeChildren = [
+    {
+      ...children[0]!,
+      semanticName: "parent\x1b]52;c;NAME-CONTROL\x07\nname",
+      role: "worker\x1b]52;c;ROLE-CONTROL\x07\nrole",
+    },
+  ];
+  const saved = structuredClone(unsafeChildren);
+  const unsafeRows = buildSubagentTree(unsafeChildren, "root");
+  let output = "";
+  const ctx = {
+    mode: "rpc",
+    ui: {
+      notify: (text: string) => {
+        output = text;
+      },
+    },
+  } as unknown as ExtensionContext;
+
+  await inspector.show(ctx, unsafeRows);
+
+  assert.equal(output, "└─ parent name [worker role] completed");
+  assert.doesNotMatch(
+    output,
+    new RegExp(`NAME-CONTROL|ROLE-CONTROL|${terminalClipboardPattern.source}`, "u"),
+  );
+  assert.deepEqual(unsafeChildren, saved);
 });

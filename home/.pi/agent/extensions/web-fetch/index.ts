@@ -4,6 +4,11 @@ import { Text } from "@earendil-works/pi-tui";
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
+import {
+	sanitizeMetadata,
+	sanitizeOutput,
+	sanitizeRenderedLines,
+} from "../lib/terminal-safety.ts";
 import { runEligibleJinaFallback } from "./jina-fallback.ts";
 import { readResponseBytes, readResponseText } from "./response-body.ts";
 
@@ -28,6 +33,18 @@ interface FetchResult {
 	title: string;
 	content: string;
 	error: string | null;
+}
+
+class SafeWebFetchText extends Text {
+	override render(width: number): string[] {
+		return sanitizeRenderedLines(super.render(width));
+	}
+}
+
+function rendererText(lastComponent: unknown): SafeWebFetchText {
+	return lastComponent instanceof SafeWebFetchText
+		? lastComponent
+		: new SafeWebFetchText("", 0, 0);
 }
 
 // ── PDF Extraction ───────────────────────────────────────────────────
@@ -582,10 +599,8 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, context) {
-			const text =
-				(context.lastComponent as Text | undefined) ??
-				new Text("", 0, 0);
-			const { url } = args as { url?: string };
+			const text = rendererText(context.lastComponent);
+			const url = sanitizeMetadata((args as { url?: unknown }).url);
 			if (!url) {
 				text.setText(
 					theme.fg("toolTitle", theme.bold("fetch ")) +
@@ -603,9 +618,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderResult(result, { expanded, isPartial }, theme, context) {
-			const text =
-				(context.lastComponent as Text | undefined) ??
-				new Text("", 0, 0);
+			const text = rendererText(context.lastComponent);
 
 			if (isPartial) {
 				text.setText(theme.fg("warning", "Fetching…"));
@@ -613,20 +626,24 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (context.isError) {
-				const msg =
+				const rawMessage =
 					result.content.find((c) => c.type === "text")?.text ||
 					"Error";
+				const msg = sanitizeOutput(rawMessage);
 				text.setText(theme.fg("error", msg));
 				return text;
 			}
 
 			const details = result.details as {
-				title?: string;
-				chars?: number;
+				title?: unknown;
+				chars?: unknown;
 			};
 
-			const title = details?.title || "Untitled";
-			const chars = details?.chars ?? 0;
+			const title = sanitizeMetadata(details?.title) || "Untitled";
+			const chars =
+				typeof details?.chars === "number" && Number.isFinite(details.chars)
+					? Math.max(0, Math.trunc(details.chars))
+					: 0;
 			const status =
 				theme.fg("success", title) +
 				theme.fg("muted", ` (${chars} chars)`);
@@ -636,8 +653,9 @@ export default function (pi: ExtensionAPI) {
 				return text;
 			}
 
-			const content =
+			const rawContent =
 				result.content.find((c) => c.type === "text")?.text || "";
+			const content = sanitizeOutput(rawContent);
 			const preview =
 				content.length > 500
 					? content.slice(0, 500) + "..."

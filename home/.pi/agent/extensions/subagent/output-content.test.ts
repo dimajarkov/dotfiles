@@ -87,6 +87,37 @@ test("local Markdown links open assets rather than treating anchors as filename 
   );
 });
 
+test("resolves escaped Markdown destinations without changing their literal display", () => {
+  const output = [
+    "[escaped](./report\\(final\\).md)",
+    "[angle](<./angle\\(final\\).md>)",
+    "[closing](./closing\\).md)",
+    "[even](./even\\\\(nested).md)",
+    "[hash](./report\\#draft.md#heading)",
+    "[query](./report\\?draft.md?download=1)",
+    "[line](./report\\(final\\).ts:42:7)",
+    "[remote](https://example.com/report\\(final\\).md)",
+    "[unsafe](command\\:danger)",
+  ].join("\n");
+  const rendered = renderOutputContent(output, "/tmp/child", 160).join("\n");
+
+  assert.equal(stripTerminalSequences(rendered), output);
+  assert.ok(
+    rendered.includes(`${OSC8_OPEN}file:///tmp/child/report(final).md${OSC8_CLOSE}escaped`),
+  );
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/angle(final).md${OSC8_CLOSE}angle`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/closing).md${OSC8_CLOSE}closing`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/even%5C(nested).md${OSC8_CLOSE}even`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/report%23draft.md${OSC8_CLOSE}hash`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/report%3Fdraft.md${OSC8_CLOSE}query`));
+  assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/report(final).ts${OSC8_CLOSE}line`));
+  assert.ok(
+    rendered.includes(`${OSC8_OPEN}https://example.com/report(final).md${OSC8_CLOSE}remote`),
+  );
+  assert.ok(!rendered.includes(`${OSC8_OPEN}command:danger`));
+  assert.ok(!rendered.includes(`${OSC8_CLOSE}unsafe`));
+});
+
 test("local line references open files while preserving exact labels", () => {
   const output = [
     "review.ts:42",
@@ -97,6 +128,9 @@ test("local line references open files while preserving exact labels", () => {
     "`backtick.ts:13:4`",
     "[source](./markdown file.ts:14:5)",
     "[bare-source](markdown.ts:14:5)",
+    "[encoded-source](./encoded.ts%3A17%3A6)",
+    "[encoded-file-url](file:///tmp/child/encoded-url.ts%3A18%3A7)",
+    "[escaped-colon](./literal.ts\\:19)",
     "[query](./query.ts:16?download=1#heading)",
     "file:///tmp/child/url.ts:15:6",
     "https://example.com/page:42",
@@ -131,6 +165,15 @@ test("local line references open files while preserving exact labels", () => {
     rendered.includes(`${OSC8_OPEN}file:///tmp/child/markdown%20file.ts${OSC8_CLOSE}source`),
   );
   assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/markdown.ts${OSC8_CLOSE}bare-source`));
+  assert.ok(
+    rendered.includes(`${OSC8_OPEN}file:///tmp/child/encoded.ts${OSC8_CLOSE}encoded-source`),
+  );
+  assert.ok(
+    rendered.includes(`${OSC8_OPEN}file:///tmp/child/encoded-url.ts${OSC8_CLOSE}encoded-file-url`),
+  );
+  assert.ok(
+    rendered.includes(`${OSC8_OPEN}file:///tmp/child/literal.ts%3A19${OSC8_CLOSE}escaped-colon`),
+  );
   assert.ok(rendered.includes(`${OSC8_OPEN}file:///tmp/child/query.ts${OSC8_CLOSE}query`));
   assert.ok(
     rendered.includes(

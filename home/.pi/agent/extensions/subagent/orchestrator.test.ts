@@ -16,6 +16,12 @@ import {
   type CommandExecution,
   type HerdrTransport,
 } from "./orchestrator.ts";
+import {
+  childControlReceiptPath,
+  childControlRequestFromPrompt,
+  completionSettlementAt,
+  writeCompletionSettlement,
+} from "./completion-protocol.ts";
 import { withRegistryLock } from "./registry-lock.ts";
 
 const temporaryDirectories: string[] = [];
@@ -44,6 +50,9 @@ class FakeHerdrTransport implements HerdrTransport {
   readonly calls: string[][] = [];
   readonly responses: CommandExecution[];
   readonly ownershipReads: string[][] = [];
+  controlDispatchDelayMilliseconds = 0;
+  controlReceiptDelayMilliseconds = 0;
+  suppressControlReceipt = false;
   #runtimeAgents = new Map<string, unknown>();
   #runtimePaneId: string | undefined;
   #runtimeSessionPath: string | undefined;
@@ -60,7 +69,11 @@ class FakeHerdrTransport implements HerdrTransport {
 
   async run(args: string[], _signal?: AbortSignal): Promise<CommandExecution> {
     let nextId: string | undefined;
-    try { nextId = JSON.parse(this.responses[0]?.stdout ?? "{}").id; } catch { /* Scripted malformed responses remain intact. */ }
+    try {
+      nextId = JSON.parse(this.responses[0]?.stdout ?? "{}").id;
+    } catch {
+      /* Scripted malformed responses remain intact. */
+    }
     let observation: unknown;
     // The fake transport supplies stable master observations and an initial
     // layout without consuming scripted lifecycle responses.
@@ -100,9 +113,24 @@ class FakeHerdrTransport implements HerdrTransport {
           ],
         },
       };
-    } else if (args[0] === "pane" && args[1] === "process-info" && nextId !== "cli:pane:process_info") {
-      observation = { process_info: { pane_id: args[3], shell_pid: 100, foreground_processes: [{ pid: 100, argv0: "zsh" }] } };
-    } else if (args[0] === "agent" && args[1] === "get" && ["cli:agent:prompt", "cli:agent:send-keys", "cli:agent:focus"].includes(nextId ?? "") && this.#runtimeAgents.has(args[2]!)) {
+    } else if (
+      args[0] === "pane" &&
+      args[1] === "process-info" &&
+      nextId !== "cli:pane:process_info"
+    ) {
+      observation = {
+        process_info: {
+          pane_id: args[3],
+          shell_pid: 100,
+          foreground_processes: [{ pid: 100, argv0: "zsh" }],
+        },
+      };
+    } else if (
+      args[0] === "agent" &&
+      args[1] === "get" &&
+      ["cli:agent:prompt", "cli:agent:send-keys", "cli:agent:focus"].includes(nextId ?? "") &&
+      this.#runtimeAgents.has(args[2]!)
+    ) {
       observation = { agent: this.#runtimeAgents.get(args[2]!) };
     }
     if (observation) {
@@ -128,6 +156,52 @@ class FakeHerdrTransport implements HerdrTransport {
     } catch {
       return response;
     }
+    const agent = body.result?.agent;
+    if (agent?.agent_session?.kind === "path") {
+      this.#runtimeSessionPath = agent.agent_session.value;
+    }
+    const control =
+      args[0] === "agent" && args[1] === "prompt"
+        ? childControlRequestFromPrompt(args[3] ?? "")
+        : undefined;
+    if (control && this.controlDispatchDelayMilliseconds > 0) {
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, this.controlDispatchDelayMilliseconds),
+      );
+    }
+    if (control && !this.suppressControlReceipt) {
+      const markerPath = control.receiptPath.slice(0, -".control".length);
+      const settlement = completionSettlementAt(markerPath);
+      const writeReceipt = () =>
+        writeFileSync(
+          control.receiptPath,
+          `${JSON.stringify({
+            version: 1,
+            childId: control.childId,
+            generation: control.generation,
+            nonce: control.nonce,
+            action: control.action,
+            status:
+              settlement?.phase === "candidate"
+                ? "settling"
+                : control.action === "cancel"
+                  ? "cancelled"
+                  : "accepted",
+            sessionPath: this.#runtimeSessionPath,
+            ...(settlement?.phase === "running" && settlement.frontierEntryId
+              ? { frontierEntryId: settlement.frontierEntryId }
+              : {}),
+          })}\n`,
+        );
+      const writeUnexpiredReceipt = () => {
+        if (Date.now() < control.expiresAt) writeReceipt();
+      };
+      if (this.controlReceiptDelayMilliseconds > 0) {
+        setTimeout(writeUnexpiredReceipt, this.controlReceiptDelayMilliseconds);
+      } else {
+        writeUnexpiredReceipt();
+      }
+    }
     if (args[0] === "pane" && args[1] === "list" && body.result?.panes) {
       for (const pane of body.result.panes) pane.workspace_id ??= "w1";
       return { ...response, stdout: JSON.stringify(body) };
@@ -136,21 +210,25 @@ class FakeHerdrTransport implements HerdrTransport {
     if (args[0] === "pane" && args[1] === "split" && pane?.pane_id) {
       this.#runtimePaneId = pane.pane_id;
     }
-    const agent = body.result?.agent;
-    if (args[0] === "agent" && (args[1] === "start" || args[1] === "get") && agent) {
-      this.#runtimeAgents.set(args[2]!, agent);
-    }
     if (args[0] === "agent" && args[1] === "start" && agent) {
       this.#runtimePaneId = agent.pane_id;
-      this.#runtimeSessionPath = agent.agent_session?.kind === "path"
-        ? agent.agent_session.value
-        : undefined;
+      this.#runtimeSessionPath =
+        agent.agent_session?.kind === "path" ? agent.agent_session.value : undefined;
     }
     if (args[0] === "agent" && args[1] === "wait" && agent) {
       agent.pane_id ??= this.#runtimePaneId;
       agent.agent_session ??= this.#runtimeSessionPath
         ? { kind: "path", value: this.#runtimeSessionPath }
         : undefined;
+    }
+    if (args[0] === "agent" && ["start", "get", "prompt", "wait"].includes(args[1]!) && agent) {
+      const current = this.#runtimeAgents.get(args[2]!);
+      this.#runtimeAgents.set(args[2]!, {
+        ...(typeof current === "object" && current !== null ? current : {}),
+        ...agent,
+      });
+    }
+    if (args[0] === "agent" && args[1] === "wait" && agent) {
       return { ...response, stdout: `${JSON.stringify(body)}\n` };
     }
     return response;
@@ -187,6 +265,13 @@ function successfulRootSpawnResponses(): unknown[] {
   ];
 }
 
+function controlRequest(call: string[] | undefined) {
+  assert.deepEqual(call?.slice(0, 3), ["agent", "prompt", "authentication-worker-child1"]);
+  const request = childControlRequestFromPrompt(call?.[3] ?? "");
+  assert.ok(request);
+  return request;
+}
+
 function writeCompletionMarker(
   stateDirectory: string,
   rootId: string,
@@ -196,23 +281,24 @@ function writeCompletionMarker(
   entryId?: string,
   sessionPath?: string,
 ): string {
-  const inferredSessionPath = sessionPath ?? readdirSync(stateDirectory)
-    .filter((entry) => entry.endsWith(".jsonl"))
-    .map((entry) => join(stateDirectory, entry))
-    .at(-1);
+  const inferredSessionPath =
+    sessionPath ??
+    readdirSync(stateDirectory)
+      .filter((entry) => entry.endsWith(".jsonl"))
+      .map((entry) => join(stateDirectory, entry))
+      .at(-1);
   assert.ok(inferredSessionPath, "completion marker requires a session artifact");
-  const inferredEntryId = entryId ?? readFileSync(inferredSessionPath, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as { id?: string; message?: { role?: string } })
-    .filter((entry) => entry.message?.role === "assistant")
-    .at(-1)?.id;
+  const inferredEntryId =
+    entryId ??
+    readFileSync(inferredSessionPath, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { id?: string; message?: { role?: string } })
+      .filter((entry) => entry.message?.role === "assistant")
+      .at(-1)?.id;
   assert.ok(inferredEntryId, "completion marker requires an assistant entry");
   const registryDirectory = join(stateDirectory, rootId);
-  const markerPath = join(
-    registryDirectory,
-    `${childId}.generation-${generation}.complete`,
-  );
+  const markerPath = join(registryDirectory, `${childId}.generation-${generation}.complete`);
   mkdirSync(registryDirectory, { recursive: true });
   writeFileSync(
     markerPath,
@@ -238,17 +324,20 @@ function writeLineageIdentity(
 ): void {
   const registry = join(stateDirectory, rootId);
   mkdirSync(registry, { recursive: true });
-  writeFileSync(join(registry, ".lineage.json"), `${JSON.stringify({
-    version: 1,
-    rootId,
-    herdrSession: session,
-    workspaceId,
-    masterPaneId,
-    tabId,
-    masterSessionPath: "/tmp/parent.jsonl",
-    createdAt: 1,
-    updatedAt: 1,
-  })}\n`);
+  writeFileSync(
+    join(registry, ".lineage.json"),
+    `${JSON.stringify({
+      version: 1,
+      rootId,
+      herdrSession: session,
+      workspaceId,
+      masterPaneId,
+      tabId,
+      masterSessionPath: "/tmp/parent.jsonl",
+      createdAt: 1,
+      updatedAt: 1,
+    })}\n`,
+  );
 }
 
 function spawnRequest() {
@@ -277,7 +366,13 @@ function spawnRequest() {
 }
 
 test("spawns always split horizontally regardless of pane dimensions", async (t) => {
-  for (const [width, height] of [[240, 60], [120, 60], [89, 30], [89, 10], [40, 8]]) {
+  for (const [width, height] of [
+    [240, 60],
+    [120, 60],
+    [89, 30],
+    [89, 10],
+    [40, 8],
+  ]) {
     await t.test(`${width} columns by ${height} rows`, async () => {
       const transport = new FakeHerdrTransport([
         {
@@ -363,51 +458,63 @@ test("zoomed master spawns never issue focus-changing zoom restoration", async (
 
   await orchestrator.spawn(spawnRequest());
 
-  assert.deepEqual(transport.calls
-    .filter((call) => !(call[0] === "pane" && call[1] === "layout"))
-    .map((call) => call.slice(0, 2)), [
+  assert.deepEqual(
+    transport.calls
+      .filter((call) => !(call[0] === "pane" && call[1] === "layout"))
+      .map((call) => call.slice(0, 2)),
+    [
       ["pane", "split"],
       ["pane", "rename"],
       ["agent", "start"],
       ["agent", "prompt"],
-    ]);
-  assert.equal(transport.calls.some((call) => call[0] === "pane" && call[1] === "zoom"), false);
-  assert.equal(transport.calls.some((call) => call[0] === "agent" && call[1] === "focus"), false);
+    ],
+  );
+  assert.equal(
+    transport.calls.some((call) => call[0] === "pane" && call[1] === "zoom"),
+    false,
+  );
+  assert.equal(
+    transport.calls.some((call) => call[0] === "agent" && call[1] === "focus"),
+    false,
+  );
 });
 
 test("does not restore a background zoomed tab and steal unrelated focus", async () => {
   const lifecycle = successfulRootSpawnResponses();
-  const transport = new FakeHerdrTransport([
-    {
-      id: "cli:pane:layout",
-      result: {
-        layout: {
-          tab_id: "w1:t1",
-          workspace_id: "w1",
-          focused_pane_id: "w1:p1",
-          zoomed: true,
-          panes: [{ pane_id: "w1:p1", rect: { width: 120, height: 60 } }],
+  const transport = new FakeHerdrTransport(
+    [
+      {
+        id: "cli:pane:layout",
+        result: {
+          layout: {
+            tab_id: "w1:t1",
+            workspace_id: "w1",
+            focused_pane_id: "w1:p1",
+            zoomed: true,
+            panes: [{ pane_id: "w1:p1", rect: { width: 120, height: 60 } }],
+          },
         },
       },
-    },
-    lifecycle[0],
-    {
-      id: "cli:pane:layout",
-      result: {
-        layout: {
-          tab_id: "w1:t1",
-          workspace_id: "w1",
-          focused_pane_id: "w1:p1",
-          zoomed: false,
-          panes: [
-            { pane_id: "w1:p1", rect: { width: 120, height: 30 } },
-            { pane_id: "w1:p9", rect: { width: 120, height: 30 } },
-          ],
+      lifecycle[0],
+      {
+        id: "cli:pane:layout",
+        result: {
+          layout: {
+            tab_id: "w1:t1",
+            workspace_id: "w1",
+            focused_pane_id: "w1:p1",
+            zoomed: false,
+            panes: [
+              { pane_id: "w1:p1", rect: { width: 120, height: 30 } },
+              { pane_id: "w1:p9", rect: { width: 120, height: 30 } },
+            ],
+          },
         },
       },
-    },
-    ...lifecycle.slice(1),
-  ], "w1:p-other");
+      ...lifecycle.slice(1),
+    ],
+    "w1:p-other",
+  );
   const orchestrator = new SubagentOrchestrator({
     transport,
     stateDirectory: temporaryDirectory(),
@@ -423,8 +530,14 @@ test("does not restore a background zoomed tab and steal unrelated focus", async
 
   await orchestrator.spawn(spawnRequest());
 
-  assert.equal(transport.calls.some((call) => call[0] === "pane" && call[1] === "zoom"), false);
-  assert.equal(transport.calls.some((call) => call[0] === "agent" && call[1] === "focus"), false);
+  assert.equal(
+    transport.calls.some((call) => call[0] === "pane" && call[1] === "zoom"),
+    false,
+  );
+  assert.equal(
+    transport.calls.some((call) => call[0] === "agent" && call[1] === "focus"),
+    false,
+  );
 });
 
 test("resume uses explicit focus only when requested", async () => {
@@ -444,10 +557,15 @@ test("resume uses explicit focus only when requested", async () => {
   });
 
   const child = await orchestrator.spawn(spawnRequest());
-  await orchestrator.resume("parent-session", "parent-session", child.id);
+  const resumed = await orchestrator.resume("parent-session", "parent-session", child.id);
 
+  assert.equal(resumed.action, "focused");
+  assert.equal(resumed.child.id, child.id);
   assert.deepEqual(transport.calls.at(-1), ["agent", "focus", child.herdrName]);
-  assert.equal(transport.calls.filter((call) => call[0] === "agent" && call[1] === "focus").length, 1);
+  assert.equal(
+    transport.calls.filter((call) => call[0] === "agent" && call[1] === "focus").length,
+    1,
+  );
 });
 
 test("depth zero spawn splits the master pane and prompts a ready persistent Pi", async () => {
@@ -482,14 +600,7 @@ test("depth zero spawn splits the master pane and prompts a ready persistent Pi"
   );
 
   const [create, rename, start, prompt] = transport.calls;
-  assert.deepEqual(create.slice(0, 6), [
-    "pane",
-    "split",
-    "--pane",
-    "w1:p1",
-    "--direction",
-    "down",
-  ]);
+  assert.deepEqual(create.slice(0, 6), ["pane", "split", "--pane", "w1:p1", "--direction", "down"]);
   assert.ok(create.includes("--no-focus"));
   assert.ok(create.includes("HERDR_SUBAGENT_DEPTH=1"));
   assert.ok(create.includes("HERDR_SUBAGENT_PARENT_ID=parent-session"));
@@ -513,11 +624,7 @@ test("depth zero spawn splits the master pane and prompts a ready persistent Pi"
     "--",
   ]);
   assert.ok(!start.includes("--no-session"));
-  assert.deepEqual(start.slice(10, 13), [
-    "--name",
-    "authentication",
-    "--extension",
-  ]);
+  assert.deepEqual(start.slice(10, 13), ["--name", "authentication", "--extension"]);
   assert.ok(start[13]?.endsWith("/subagent/completion-protocol.ts"));
   assert.deepEqual(start.slice(14), [
     "--model",
@@ -555,10 +662,12 @@ test("spawn persists its resolved versioned launch loadout before surface creati
             path: request.agent.systemPromptPath,
             sha256: "11096184904fec1a8ab379c6ffcb0caa6119595058210a494350fd8d65339a57",
           },
-          skills: [{
-            path: request.agent.skillPaths[0],
-            sha256: "20238c978f1fd6122a1cb99dba433f9e5d5c67c1fff7c52cc3747acefede67b0",
-          }],
+          skills: [
+            {
+              path: request.agent.skillPaths[0],
+              sha256: "20238c978f1fd6122a1cb99dba433f9e5d5c67c1fff7c52cc3747acefede67b0",
+            },
+          ],
           spawnTargets: ["scout", "reviewer"],
           cwd: "/work/project",
           environment: {
@@ -651,14 +760,7 @@ test("nested spawn splits the lineage master pane in the master tab", async () =
   assert.equal(child.depth, 2);
   assert.equal(child.parentId, "worker-1");
   const create = transport.calls[0];
-  assert.deepEqual(create.slice(0, 6), [
-    "pane",
-    "split",
-    "--pane",
-    "w1:p1",
-    "--direction",
-    "down",
-  ]);
+  assert.deepEqual(create.slice(0, 6), ["pane", "split", "--pane", "w1:p1", "--direction", "down"]);
   assert.ok(create.includes("--no-focus"));
   assert.ok(create.includes("--cwd"));
   assert.ok(create.includes("/work/project"));
@@ -770,10 +872,7 @@ test("concurrent orchestrators atomically reserve one same-name child", async ()
     first.spawn(spawnRequest()),
     second.spawn(spawnRequest()),
   ]);
-  assert.deepEqual(
-    results.map((result) => result.status).sort(),
-    ["fulfilled", "rejected"],
-  );
+  assert.deepEqual(results.map((result) => result.status).sort(), ["fulfilled", "rejected"]);
   assert.equal(first.list("parent-session").length, 1);
   assert.equal(firstTransport.calls.length + secondTransport.calls.length, 4);
 });
@@ -964,6 +1063,151 @@ test("recovery rejects a child owned by another Herdr session", async () => {
   assert.equal(recovered.list("parent-session")[0]?.state, "working");
 });
 
+test("authoritative completion survives cross-session lifecycle controls", async () => {
+  for (const control of ["recover", "message", "cancel", "resume"] as const) {
+    const directory = temporaryDirectory();
+    const childSession = join(directory, `${control}-cross-session.jsonl`);
+    writeFileSync(
+      childSession,
+      `${JSON.stringify({
+        type: "message",
+        id: "assistant-cross-session",
+        parentId: null,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: `EXACT_${control.toUpperCase()}_RESULT` }],
+          stopReason: "stop",
+        },
+      })}\n`,
+    );
+    const responses = successfulRootSpawnResponses();
+    const started = responses[2] as {
+      result: { agent: { agent_session: { value: string } } };
+    };
+    started.result.agent.agent_session.value = childSession;
+    const initial = new SubagentOrchestrator({
+      transport: new FakeHerdrTransport(responses),
+      stateDirectory: directory,
+      environment: {
+        HERDR_ENV: "1",
+        HERDR_SESSION: "session-a",
+        HERDR_WORKSPACE_ID: "w1",
+        HERDR_PANE_ID: "w1:p1",
+      },
+      id: () => "child-1",
+      monitor: false,
+    });
+    await initial.spawn(spawnRequest());
+    writeCompletionMarker(directory, "parent-session", "child-1");
+
+    const transport = new FakeHerdrTransport([]);
+    let deliveries = 0;
+    const foreign = new SubagentOrchestrator({
+      transport,
+      stateDirectory: directory,
+      environment: {
+        HERDR_ENV: "1",
+        HERDR_SESSION: "session-b",
+        HERDR_WORKSPACE_ID: "w1",
+        HERDR_PANE_ID: "w1:p1",
+      },
+      monitor: false,
+      onCompletion: async () => {
+        deliveries += 1;
+        return true;
+      },
+    });
+
+    if (control === "recover") {
+      await foreign.recover("parent-session", "parent-session");
+    } else if (control === "message") {
+      await assert.rejects(
+        foreign.message("parent-session", "parent-session", "authentication", "follow up"),
+        /belongs to Herdr session session-a.*current session is session-b/,
+      );
+    } else {
+      await foreign[control]("parent-session", "parent-session", "authentication");
+    }
+
+    const child = foreign.list("parent-session")[0];
+    assert.equal(child?.state, "completed", control);
+    assert.equal(child?.result, `EXACT_${control.toUpperCase()}_RESULT`, control);
+    assert.equal(deliveries, 1, control);
+    assert.deepEqual(transport.calls, [], control);
+    assert.deepEqual(transport.ownershipReads, [], control);
+  }
+});
+
+test("terminal pending delivery precedes cross-session lifecycle validation", async () => {
+  for (const control of ["recover", "message", "cancel", "resume"] as const) {
+    const directory = temporaryDirectory();
+    const initial = new SubagentOrchestrator({
+      transport: new FakeHerdrTransport(successfulRootSpawnResponses()),
+      stateDirectory: directory,
+      environment: {
+        HERDR_ENV: "1",
+        HERDR_SESSION: "session-a",
+        HERDR_WORKSPACE_ID: "w1",
+        HERDR_PANE_ID: "w1:p1",
+      },
+      id: () => "child-1",
+      monitor: false,
+    });
+    await initial.spawn(spawnRequest());
+    const terminal = {
+      ...initial.list("parent-session")[0]!,
+      state: "completed" as const,
+      result: `EXACT_PENDING_${control.toUpperCase()}`,
+      deliveredAt: undefined,
+    };
+    writeFileSync(
+      join(directory, "parent-session", "child-1.json"),
+      `${JSON.stringify(terminal, null, 2)}\n`,
+    );
+
+    const transport = new FakeHerdrTransport([]);
+    let deliveries = 0;
+    const foreign = new SubagentOrchestrator({
+      transport,
+      stateDirectory: directory,
+      environment: {
+        HERDR_ENV: "1",
+        HERDR_SESSION: "session-b",
+        HERDR_WORKSPACE_ID: "w1",
+        HERDR_PANE_ID: "w1:p1",
+      },
+      monitor: false,
+      onCompletion: async () => {
+        deliveries += 1;
+        return true;
+      },
+    });
+
+    if (control === "recover") {
+      await foreign.recover("parent-session", "parent-session");
+    } else if (control === "message") {
+      await assert.rejects(
+        foreign.message("parent-session", "parent-session", "authentication", "follow up"),
+        /belongs to Herdr session session-a.*current session is session-b/,
+      );
+    } else if (control === "resume") {
+      const resumed = await foreign.resume("parent-session", "parent-session", "authentication");
+      assert.equal(resumed.action, "reconciled");
+      assert.equal(resumed.child.state, "completed");
+    } else {
+      const cancelled = await foreign.cancel("parent-session", "parent-session", "authentication");
+      assert.equal(cancelled.state, "completed");
+    }
+
+    const child = foreign.list("parent-session")[0];
+    assert.equal(child?.result, `EXACT_PENDING_${control.toUpperCase()}`, control);
+    assert.equal(typeof child?.deliveredAt, "number", control);
+    assert.equal(deliveries, 1, control);
+    assert.deepEqual(transport.calls, [], control);
+    assert.deepEqual(transport.ownershipReads, [], control);
+  }
+});
+
 test("spawn reconciles a persistent session omitted from the start response", async () => {
   const spawnResponses = successfulRootSpawnResponses();
   const started = spawnResponses[2] as {
@@ -999,11 +1243,14 @@ test("spawn reconciles a persistent session omitted from the start response", as
   const child = await initial.spawn(spawnRequest());
 
   assert.equal(child.sessionPath, "/tmp/child.jsonl");
-  assert.deepEqual(transport.calls.slice(2, 5).map((call) => call.slice(0, 2)), [
-    ["agent", "start"],
-    ["agent", "get"],
-    ["agent", "prompt"],
-  ]);
+  assert.deepEqual(
+    transport.calls.slice(2, 5).map((call) => call.slice(0, 2)),
+    [
+      ["agent", "start"],
+      ["agent", "get"],
+      ["agent", "prompt"],
+    ],
+  );
 });
 
 test("spawn rejects an unproven persistent session before prompting", async () => {
@@ -1036,10 +1283,7 @@ test("spawn rejects an unproven persistent session before prompting", async () =
     monitor: false,
   });
 
-  await assert.rejects(
-    orchestrator.spawn(spawnRequest()),
-    /did not report a persistent session/,
-  );
+  await assert.rejects(orchestrator.spawn(spawnRequest()), /did not report a persistent session/);
 
   assert.equal(
     transport.calls.some((call) => call[0] === "agent" && call[1] === "prompt"),
@@ -1084,11 +1328,14 @@ test("spawn reconciles a committed start whose response is malformed", async () 
 
   assert.equal(child.state, "working");
   assert.equal(child.sessionPath, "/tmp/child.jsonl");
-  assert.deepEqual(transport.calls.slice(2, 5).map((call) => call.slice(0, 2)), [
-    ["agent", "start"],
-    ["agent", "get"],
-    ["agent", "prompt"],
-  ]);
+  assert.deepEqual(
+    transport.calls.slice(2, 5).map((call) => call.slice(0, 2)),
+    [
+      ["agent", "start"],
+      ["agent", "get"],
+      ["agent", "prompt"],
+    ],
+  );
 });
 
 test("restart recovery classifies a missing live agent as stale", async () => {
@@ -1120,7 +1367,7 @@ test("restart recovery classifies a missing live agent as stale", async () => {
   assert.equal(recovered.list("parent-session")[0]?.state, "stale");
 });
 
-test("recovery rejects a reported session path that differs from the immutable record", async () => {
+test("recovery delivers proven output before observing a replaced runtime", async () => {
   const directory = temporaryDirectory();
   const childSession = join(directory, "immutable-session.jsonl");
   writeFileSync(
@@ -1157,16 +1404,18 @@ test("recovery rejects a reported session path that differs from the immutable r
   });
   await initial.spawn(spawnRequest());
 
-  const transport = new FakeHerdrTransport([{
-    id: "cli:agent:get",
-    result: {
-      agent: {
-        pane_id: "w1:p9",
-        agent_status: "done",
-        agent_session: { kind: "path", value: "/tmp/different-session.jsonl" },
+  const transport = new FakeHerdrTransport([
+    {
+      id: "cli:agent:get",
+      result: {
+        agent: {
+          pane_id: "w1:p9",
+          agent_status: "done",
+          agent_session: { kind: "path", value: "/tmp/different-session.jsonl" },
+        },
       },
     },
-  }]);
+  ]);
   let deliveries = 0;
   const recovered = new SubagentOrchestrator({
     transport,
@@ -1182,13 +1431,16 @@ test("recovery rejects a reported session path that differs from the immutable r
   await recovered.recover("parent-session", "parent-session");
 
   const child = recovered.list("parent-session")[0];
-  assert.equal(child?.state, "stale");
-  assert.match(child?.error ?? "", /session artifact changed/);
-  assert.equal(deliveries, 0);
-  assert.deepEqual(transport.calls, [["agent", "get", child?.herdrName ?? ""]]);
+  assert.equal(child?.state, "completed");
+  assert.equal(child?.result, "RECORDED_RESULT");
+  assert.equal(deliveries, 1);
+  assert.equal(
+    transport.calls.some((call) => call[0] === "agent" && call[1] === "get"),
+    false,
+  );
 });
 
-test("monitor rejects a reported pane that differs from the recorded owned pane", async () => {
+test("monitor delivers proven output before observing a replaced pane", async () => {
   const directory = temporaryDirectory();
   const childSession = join(directory, "monitor-pane-mismatch.jsonl");
   writeFileSync(
@@ -1242,10 +1494,15 @@ test("monitor rejects a reported pane that differs from the recorded owned pane"
   await new Promise<void>((resolve) => setTimeout(resolve, 25));
 
   const child = orchestrator.list("parent-session")[0];
-  assert.equal(child?.state, "stale");
-  assert.match(child?.error ?? "", /pane identity changed/);
-  assert.equal(deliveries, 0);
-  assert.equal(transport.calls.some((call) => call[1] === "close"), false);
+  assert.equal(child?.state, "completed");
+  assert.equal(child?.result, "WRONG_RUNTIME_RESULT");
+  assert.equal(deliveries, 1);
+  assert.equal(
+    transport.calls.some(
+      (call) => call[0] === "agent" && (call[1] === "wait" || call[1] === "get"),
+    ),
+    false,
+  );
 });
 
 test("recovery reconciles only children owned by the current parent", async () => {
@@ -1385,7 +1642,6 @@ test("inspect racing monitor completion cannot regress a same-generation termina
       },
     })}\n`,
   );
-  writeCompletionMarker(directory, "parent-session", "child-1");
   const responses = successfulRootSpawnResponses();
   const started = responses[2] as {
     result: { agent: { agent_session: { value: string } } };
@@ -1458,12 +1714,9 @@ test("inspect racing monitor completion cannot regress a same-generation termina
   });
   await orchestrator.spawn(spawnRequest());
   await new Promise<void>((resolve) => setImmediate(resolve));
+  writeCompletionMarker(directory, "parent-session", "child-1");
 
-  const inspecting = orchestrator.inspect(
-    "parent-session",
-    "parent-session",
-    "authentication",
-  );
+  const inspecting = orchestrator.inspect("parent-session", "parent-session", "authentication");
   await startedInspect;
   releaseWait();
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -1534,17 +1787,9 @@ test("concurrent inspect and cancel serialize without stale state overwrite", as
   });
   await orchestrator.spawn(spawnRequest());
 
-  const inspecting = orchestrator.inspect(
-    "parent-session",
-    "parent-session",
-    "authentication",
-  );
+  const inspecting = orchestrator.inspect("parent-session", "parent-session", "authentication");
   await startedInspect;
-  const cancelling = orchestrator.cancel(
-    "parent-session",
-    "parent-session",
-    "authentication",
-  );
+  const cancelling = orchestrator.cancel("parent-session", "parent-session", "authentication");
   await new Promise<void>((resolve) => setImmediate(resolve));
   releaseInspect();
   await Promise.all([inspecting, cancelling]);
@@ -1602,13 +1847,12 @@ test("concurrent message and cancel serialize without reopening a cancelled chil
     "CONTINUE",
   );
   await startedMessage;
-  const cancelling = orchestrator.cancel(
-    "parent-session",
-    "parent-session",
-    "authentication",
-  );
+  const cancelling = orchestrator.cancel("parent-session", "parent-session", "authentication");
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(transport.calls.some((call) => call[1] === "send-keys"), false);
+  assert.equal(
+    transport.calls.some((call) => call[1] === "send-keys"),
+    false,
+  );
   releaseMessage();
   await Promise.all([messaging, cancelling]);
 
@@ -1700,8 +1944,9 @@ test("separate orchestrators serialize cancellation through the durable child lo
   assert.equal(left.state, "cancelled");
   assert.equal(right.state, "cancelled");
   assert.equal(
-    firstTransport.calls.filter((call) => call[1] === "send-keys").length +
-      secondTransport.calls.filter((call) => call[1] === "send-keys").length,
+    [...firstTransport.calls, ...secondTransport.calls]
+      .map((call) => childControlRequestFromPrompt(call[3] ?? ""))
+      .filter((request) => request?.action === "cancel").length,
     1,
   );
   assert.equal(
@@ -1739,7 +1984,12 @@ test("duplicate concurrent cancel performs one idempotent cleanup", async () => 
   ]);
 
   assert.ok(results.every((child) => child.state === "cancelled"));
-  assert.equal(transport.calls.filter((call) => call[1] === "send-keys").length, 1);
+  assert.equal(
+    transport.calls
+      .map((call) => childControlRequestFromPrompt(call[3] ?? ""))
+      .filter((request) => request?.action === "cancel").length,
+    1,
+  );
   assert.equal(transport.calls.filter((call) => call[1] === "wait").length, 1);
   assert.equal(transport.calls.filter((call) => call[1] === "close").length, 1);
 });
@@ -1783,18 +2033,11 @@ test("task and steering text stay exact argv values and controls target the regi
   );
 
   assert.equal(transport.calls[3].at(-1), specialTask);
-  assert.deepEqual(transport.calls[4], [
-    "agent",
-    "prompt",
-    "authentication-worker-child1",
-    specialMessage,
-  ]);
-  assert.deepEqual(transport.calls[5], [
-    "agent",
-    "send-keys",
-    "authentication-worker-child1",
-    "escape",
-  ]);
+  const messageControl = controlRequest(transport.calls[4]);
+  assert.equal(messageControl.action, "message");
+  assert.equal(messageControl.message, specialMessage);
+  const cancelControl = controlRequest(transport.calls[5]);
+  assert.equal(cancelControl.action, "cancel");
   assert.deepEqual(transport.calls[6], [
     "agent",
     "wait",
@@ -1891,7 +2134,7 @@ test("active lifecycle controls reject a foreign Herdr session before mutation o
   assert.deepEqual(transport.calls, []);
 });
 
-test("cancel validates the reported pane and immutable session before accepting wait status", async () => {
+test("cancel persists the child claim before validating the reported settled surface", async () => {
   const directory = temporaryDirectory();
   const childSession = join(directory, "cancel-identity.jsonl");
   writeFileSync(
@@ -1941,8 +2184,13 @@ test("cancel validates the reported pane and immutable session before accepting 
     /pane identity changed/,
   );
 
-  assert.equal(orchestrator.list("parent-session")[0]?.state, "working");
-  assert.equal(transport.calls.some((call) => call[1] === "close"), false);
+  const cancelled = orchestrator.list("parent-session")[0];
+  assert.equal(cancelled?.state, "cancelled");
+  assert.equal(cancelled?.surfaceState, "cleanup-pending");
+  assert.equal(
+    transport.calls.some((call) => call[1] === "close"),
+    false,
+  );
 });
 
 test("explicit cancel closes only its recorded root pane and leaves tab lifecycle to Herdr", async () => {
@@ -1966,16 +2214,13 @@ test("explicit cancel closes only its recorded root pane and leaves tab lifecycl
   });
   await orchestrator.spawn(spawnRequest());
 
-  const child = await orchestrator.cancel(
-    "parent-session",
-    "parent-session",
-    "authentication",
-  );
+  const child = await orchestrator.cancel("parent-session", "parent-session", "authentication");
 
   assert.equal(child.state, "cancelled");
   assert.equal(child.surfaceState, "closed");
-  assert.deepEqual(transport.calls.slice(-3), [
-    ["agent", "send-keys", "authentication-worker-child1", "escape"],
+  const lastCalls = transport.calls.slice(-3);
+  assert.equal(controlRequest(lastCalls[0]).action, "cancel");
+  assert.deepEqual(lastCalls.slice(1), [
     [
       "agent",
       "wait",
@@ -1989,10 +2234,554 @@ test("explicit cancel closes only its recorded root pane and leaves tab lifecycl
     ],
     ["pane", "close", "w1:p9"],
   ]);
-  assert.equal(transport.calls.some((call) => call[0] === "tab" && call[1] === "close"), false);
+  assert.equal(
+    transport.calls.some((call) => call[0] === "tab" && call[1] === "close"),
+    false,
+  );
 });
 
-test("live message prompt failure stops the owned agent and cleans its pane", async () => {
+for (const failure of ["timeout", "agent_blocked"]) {
+  test(`cancel ${failure} never falls back to unacknowledged terminal input`, async () => {
+    const responses = successfulRootSpawnResponses();
+    responses.push({ id: "cli:agent:prompt", result: { type: "ok" } });
+    const transport = new FakeHerdrTransport(responses);
+    const orchestrator = new SubagentOrchestrator({
+      transport,
+      stateDirectory: temporaryDirectory(),
+      environment: { HERDR_ENV: "1", HERDR_WORKSPACE_ID: "w1", HERDR_PANE_ID: "w1:p1" },
+      id: () => "child-1",
+      monitor: false,
+    });
+    await orchestrator.spawn(spawnRequest());
+    const before = orchestrator.list("parent-session")[0];
+    const callsBefore = transport.calls.length;
+    transport.suppressControlReceipt = true;
+    if (failure === "agent_blocked") {
+      transport.responses[0] = {
+        code: 0,
+        stdout: JSON.stringify({
+          id: "cli:agent:prompt",
+          error: { code: "agent_blocked", message: "Interactive input is blocked" },
+        }),
+        stderr: "",
+      };
+    }
+    await assert.rejects(
+      orchestrator.cancel("parent-session", "parent-session", "authentication"),
+      failure === "timeout" ? /did not acknowledge cancel control admission/ : /agent_blocked/,
+    );
+    assert.deepEqual(
+      transport.calls.slice(callsBefore).map((call) => call.slice(0, 2)),
+      [["agent", "prompt"]],
+    );
+    assert.deepEqual(orchestrator.list("parent-session")[0], before);
+  });
+}
+
+test("control dispatch and receipt polling share one admission deadline", async () => {
+  const responses = successfulRootSpawnResponses();
+  responses.push({ id: "cli:agent:prompt", result: { type: "ok" } });
+  const transport = new FakeHerdrTransport(responses);
+  transport.controlDispatchDelayMilliseconds = 5_100;
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: temporaryDirectory(),
+    environment: { HERDR_ENV: "1", HERDR_WORKSPACE_ID: "w1", HERDR_PANE_ID: "w1:p1" },
+    id: () => "child-1",
+    monitor: false,
+  });
+  await orchestrator.spawn(spawnRequest());
+
+  const startedAt = Date.now();
+  await assert.rejects(
+    orchestrator.cancel("parent-session", "parent-session", "authentication"),
+    /did not acknowledge cancel control admission/,
+  );
+  const elapsed = Date.now() - startedAt;
+  const request = controlRequest(transport.calls.at(-1));
+  assert.ok(request.expiresAt <= startedAt + 5_500);
+  assert.ok(elapsed >= 5_000, `dispatch returned before the deadline: ${elapsed}ms`);
+  assert.ok(elapsed < 8_500, `receipt polling started a second deadline: ${elapsed}ms`);
+});
+
+test("pending child control prevents parent preflight from claiming its preceding response", async () => {
+  const directory = temporaryDirectory();
+  const childSession = join(directory, "pending-control.jsonl");
+  writeFileSync(childSession, "");
+  const responses = successfulRootSpawnResponses();
+  const started = responses[2] as {
+    result: { agent: { agent_session: { value: string } } };
+  };
+  started.result.agent.agent_session.value = childSession;
+  responses.push({ id: "cli:agent:prompt", result: { type: "ok" } });
+  const transport = new FakeHerdrTransport(responses);
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: directory,
+    environment: { HERDR_ENV: "1", HERDR_WORKSPACE_ID: "w1", HERDR_PANE_ID: "w1:p1" },
+    id: () => "child-1",
+    monitor: false,
+  });
+  const child = await orchestrator.spawn(spawnRequest());
+  writeCompletionSettlement(child.completionMarkerPath, {
+    version: 1,
+    childId: child.id,
+    generation: child.generation,
+    phase: "running",
+    sessionPath: childSession,
+    pendingControls: 1,
+  });
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({
+      type: "message",
+      id: "response-before-pending-control",
+      parentId: null,
+      message: { role: "assistant", content: [], stopReason: "stop" },
+    })}\n`,
+  );
+  await orchestrator.message("parent-session", "parent-session", "authentication", "NEXT_CONTROL");
+  assert.equal(completionSettlementAt(child.completionMarkerPath)?.phase, "running");
+  assert.equal(controlRequest(transport.calls.at(-1)).message, "NEXT_CONTROL");
+});
+
+test("cancel does not cross a concluded settlement candidate", async () => {
+  const directory = temporaryDirectory();
+  const childSession = join(directory, "cancel-candidate.jsonl");
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({
+      type: "message",
+      id: "assistant-candidate",
+      parentId: null,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "PRESERVE_THIS_CONCLUSION" }],
+        stopReason: "stop",
+      },
+    })}\n`,
+  );
+  const responses = successfulRootSpawnResponses();
+  const started = responses[2] as {
+    result: { agent: { agent_session: { value: string } } };
+  };
+  started.result.agent.agent_session.value = childSession;
+  responses.push(
+    {
+      id: "cli:agent:get",
+      result: {
+        agent: {
+          pane_id: "w1:p9",
+          agent_status: "working",
+          agent_session: { kind: "path", value: childSession },
+        },
+      },
+    },
+    { id: "cli:agent:send-keys", result: { agent: { agent_status: "working" } } },
+    { id: "cli:agent:wait", result: { agent: { agent_status: "idle" } } },
+    { id: "cli:pane:close", result: { type: "ok" } },
+  );
+  const transport = new FakeHerdrTransport(responses);
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: directory,
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_SESSION: "session-a",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_PANE_ID: "w1:p1",
+    },
+    id: () => "child-1",
+    monitor: false,
+  });
+  const active = await orchestrator.spawn(spawnRequest());
+  writeCompletionSettlement(active.completionMarkerPath, {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "candidate",
+    stopReason: "stop",
+    entryId: "assistant-candidate",
+    sessionPath: childSession,
+  });
+  const callsBeforeCancel = transport.calls.length;
+
+  await assert.rejects(
+    orchestrator.cancel("parent-session", "parent-session", "authentication"),
+    /settlement is pending/,
+  );
+
+  const child = orchestrator.list("parent-session")[0];
+  assert.equal(child?.state, "working");
+  assert.equal(child?.result, undefined);
+  assert.equal(child?.error, undefined);
+  assert.equal(child?.deliveredAt, undefined);
+  assert.equal(transport.calls.length, callsBeforeCancel);
+});
+
+test("cancel publishes a settlement candidate for a persisted conclusion before input", async () => {
+  const directory = temporaryDirectory();
+  const childSession = join(directory, "cancel-before-candidate.jsonl");
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({ type: "session", version: 3, id: "session", cwd: "/work/project" })}\n`,
+  );
+  const responses = successfulRootSpawnResponses();
+  const started = responses[2] as {
+    result: { agent: { agent_session: { value: string } } };
+  };
+  started.result.agent.agent_session.value = childSession;
+  const transport = new FakeHerdrTransport(responses);
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: directory,
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_SESSION: "session-a",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_PANE_ID: "w1:p1",
+    },
+    id: () => "child-1",
+    monitor: false,
+  });
+  const active = await orchestrator.spawn(spawnRequest());
+  writeCompletionSettlement(active.completionMarkerPath, {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "running",
+    sessionPath: childSession,
+  });
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({ type: "session", version: 3, id: "session", cwd: "/work/project" })}\n${JSON.stringify(
+      {
+        type: "message",
+        id: "assistant-before-candidate",
+        parentId: null,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "PERSISTED_BEFORE_AGENT_END" }],
+          stopReason: "stop",
+        },
+      },
+    )}\n`,
+  );
+  const callsBeforeCancel = transport.calls.length;
+
+  await assert.rejects(
+    orchestrator.cancel("parent-session", "parent-session", "authentication"),
+    /settlement is pending/,
+  );
+
+  assert.deepEqual(completionSettlementAt(active.completionMarkerPath), {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "candidate",
+    stopReason: "stop",
+    entryId: "assistant-before-candidate",
+    sessionPath: childSession,
+  });
+  const child = orchestrator.list("parent-session")[0];
+  assert.equal(child?.state, "working");
+  assert.equal(child?.result, undefined);
+  assert.equal(child?.error, undefined);
+  assert.equal(child?.deliveredAt, undefined);
+  assert.equal(transport.calls.length, callsBeforeCancel);
+});
+
+test("child admission rejects a follow-up when settlement appears after parent preflight", async () => {
+  const directory = temporaryDirectory();
+  const childSession = join(directory, "late-follow-up-candidate.jsonl");
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({ type: "session", version: 3, id: "session", cwd: "/work/project" })}\n`,
+  );
+  const responses = successfulRootSpawnResponses();
+  const started = responses[2] as {
+    result: { agent: { agent_session: { value: string } } };
+  };
+  started.result.agent.agent_session.value = childSession;
+  responses.push({ id: "cli:agent:prompt", result: { agent: { agent_status: "working" } } });
+  let markerPath = "";
+  class LateCandidateTransport extends FakeHerdrTransport {
+    override async run(args: string[], signal?: AbortSignal): Promise<CommandExecution> {
+      const request = childControlRequestFromPrompt(args[3] ?? "");
+      if (request?.action === "message") {
+        writeFileSync(
+          childSession,
+          `${JSON.stringify({
+            type: "message",
+            id: "assistant-late-candidate",
+            parentId: null,
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "LATE_EXACT_CONCLUSION" }],
+              stopReason: "stop",
+            },
+          })}\n`,
+          { flag: "a" },
+        );
+        writeCompletionSettlement(markerPath, {
+          version: 1,
+          childId: request.childId,
+          generation: request.generation,
+          phase: "candidate",
+          stopReason: "stop",
+          entryId: "assistant-late-candidate",
+          sessionPath: childSession,
+        });
+      }
+      return super.run(args, signal);
+    }
+  }
+  const transport = new LateCandidateTransport(responses);
+  const orchestrator = new SubagentOrchestrator({
+    transport,
+    stateDirectory: directory,
+    environment: {
+      HERDR_ENV: "1",
+      HERDR_SESSION: "session-a",
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_PANE_ID: "w1:p1",
+    },
+    id: () => "child-1",
+    monitor: false,
+  });
+  const active = await orchestrator.spawn(spawnRequest());
+  markerPath = active.completionMarkerPath;
+  const startedAfterEntryId = active.startedAfterEntryId;
+
+  await assert.rejects(
+    orchestrator.message("parent-session", "parent-session", "authentication", "MUST_NOT_CROSS"),
+    /settlement is pending/,
+  );
+
+  const child = orchestrator.list("parent-session")[0];
+  assert.equal(child?.state, "working");
+  assert.equal(child?.startedAfterEntryId, startedAfterEntryId);
+  assert.equal(completionSettlementAt(markerPath)?.phase, "candidate");
+  assert.equal(
+    transport.calls
+      .map((call) => childControlRequestFromPrompt(call[3] ?? ""))
+      .filter((request) => request?.action === "message").length,
+    1,
+  );
+});
+
+test("recovery promotes an exact candidate with durable settlement evidence", async () => {
+  const directory = temporaryDirectory();
+  const childSession = join(directory, "publisher-crash.jsonl");
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({ type: "session", version: 3, id: "session", cwd: "/work/project" })}\n`,
+  );
+  const responses = successfulRootSpawnResponses();
+  const started = responses[2] as {
+    result: { agent: { agent_session: { value: string } } };
+  };
+  started.result.agent.agent_session.value = childSession;
+  const environment = {
+    HERDR_ENV: "1",
+    HERDR_SESSION: "session-a",
+    HERDR_WORKSPACE_ID: "w1",
+    HERDR_PANE_ID: "w1:p1",
+  };
+  const initial = new SubagentOrchestrator({
+    transport: new FakeHerdrTransport(responses),
+    stateDirectory: directory,
+    environment,
+    id: () => "child-1",
+    monitor: false,
+  });
+  const active = await initial.spawn(spawnRequest());
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({
+      type: "message",
+      id: "assistant-before-publisher-crash",
+      parentId: null,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "EXACT_CRASHED_PUBLISHER_RESULT" }],
+        stopReason: "stop",
+      },
+    })}\n`,
+    { flag: "a" },
+  );
+  writeCompletionSettlement(active.completionMarkerPath, {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "candidate",
+    stopReason: "stop",
+    entryId: "assistant-before-publisher-crash",
+    sessionPath: childSession,
+    settlementEvidence: {
+      version: 1,
+      blocked: false,
+      admittedMessages: 0,
+      pendingMessages: false,
+      pendingCompletions: false,
+      descendants: [],
+    },
+  });
+  const recoveryTransport = new FakeHerdrTransport([
+    { id: "unused-agent-get", result: { type: "unused" } },
+    { id: "cli:pane:close", result: { type: "ok" } },
+  ]);
+  recoveryTransport.responses[0] = { code: 1, stdout: "", stderr: "agent_not_found" };
+  const delivered: string[] = [];
+  const recovered = new SubagentOrchestrator({
+    transport: recoveryTransport,
+    stateDirectory: directory,
+    environment,
+    monitor: false,
+    onCompletion: async (child) => {
+      delivered.push(child.result ?? "");
+      return true;
+    },
+  });
+
+  await recovered.recover("parent-session", "parent-session");
+
+  const child = recovered.list("parent-session")[0];
+  assert.equal(child?.state, "completed");
+  assert.equal(child?.result, "EXACT_CRASHED_PUBLISHER_RESULT");
+  assert.equal(child?.surfaceState, "closed");
+  assert.deepEqual(delivered, ["EXACT_CRASHED_PUBLISHER_RESULT"]);
+});
+
+test("recovery preserves provider failure separately from an unproven-candidate diagnostic", async () => {
+  const directory = temporaryDirectory();
+  const childSession = join(directory, "publisher-error-crash.jsonl");
+  writeFileSync(
+    childSession,
+    `${JSON.stringify({
+      type: "message",
+      id: "assistant-error-before-publisher-crash",
+      parentId: null,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "EXACT_PARTIAL_RESULT" }],
+        stopReason: "error",
+        errorMessage: "EXACT_PROVIDER_ERROR",
+      },
+    })}\n`,
+  );
+  const responses = successfulRootSpawnResponses();
+  const started = responses[2] as {
+    result: { agent: { agent_session: { value: string } } };
+  };
+  started.result.agent.agent_session.value = childSession;
+  const environment = {
+    HERDR_ENV: "1",
+    HERDR_SESSION: "session-a",
+    HERDR_WORKSPACE_ID: "w1",
+    HERDR_PANE_ID: "w1:p1",
+  };
+  const initial = new SubagentOrchestrator({
+    transport: new FakeHerdrTransport(responses),
+    stateDirectory: directory,
+    environment,
+    id: () => "child-1",
+    monitor: false,
+  });
+  const active = await initial.spawn(spawnRequest());
+  writeCompletionSettlement(active.completionMarkerPath, {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "candidate",
+    stopReason: "error",
+    entryId: "assistant-error-before-publisher-crash",
+    sessionPath: childSession,
+  });
+  const recoveryTransport = new FakeHerdrTransport([
+    { id: "unused-agent-get", result: { type: "unused" } },
+    { id: "cli:pane:close", result: { type: "ok" } },
+  ]);
+  recoveryTransport.responses[0] = { code: 1, stdout: "", stderr: "agent_not_found" };
+  const delivered: Array<{ error?: string; recoveryError?: string; result?: string }> = [];
+  const recovered = new SubagentOrchestrator({
+    transport: recoveryTransport,
+    stateDirectory: directory,
+    environment,
+    monitor: false,
+    onCompletion: async (child) => {
+      delivered.push(child);
+      return true;
+    },
+  });
+
+  await recovered.recover("parent-session", "parent-session");
+
+  const child = recovered.list("parent-session")[0];
+  assert.equal(child?.state, "crashed");
+  assert.equal(child?.result, "EXACT_PARTIAL_RESULT");
+  assert.equal(child?.error, "EXACT_PROVIDER_ERROR");
+  assert.match(child?.recoveryError ?? "", /full settlement could not be proven/u);
+  assert.equal(delivered[0]?.error, "EXACT_PROVIDER_ERROR");
+  assert.match(delivered[0]?.recoveryError ?? "", /full settlement could not be proven/u);
+});
+
+test("recovery honors a child-published terminal cancellation claim", async () => {
+  const directory = temporaryDirectory();
+  const childSession = join(directory, "cancelled-before-parent-exit.jsonl");
+  writeFileSync(childSession, "");
+  const responses = successfulRootSpawnResponses();
+  const started = responses[2] as {
+    result: { agent: { agent_session: { value: string } } };
+  };
+  started.result.agent.agent_session.value = childSession;
+  const environment = {
+    HERDR_ENV: "1",
+    HERDR_SESSION: "session-a",
+    HERDR_WORKSPACE_ID: "w1",
+    HERDR_PANE_ID: "w1:p1",
+  };
+  const initial = new SubagentOrchestrator({
+    transport: new FakeHerdrTransport(responses),
+    stateDirectory: directory,
+    environment,
+    id: () => "child-1",
+    monitor: false,
+  });
+  const active = await initial.spawn(spawnRequest());
+  writeFileSync(
+    childControlReceiptPath(active.completionMarkerPath),
+    `${JSON.stringify({
+      version: 1,
+      childId: active.id,
+      generation: active.generation,
+      nonce: "56565656-5656-4565-8565-565656565656",
+      action: "cancel",
+      status: "cancelled",
+      sessionPath: childSession,
+    })}\n`,
+  );
+  const recoveryTransport = new FakeHerdrTransport([
+    { id: "cli:pane:close", result: { type: "ok" } },
+  ]);
+  const recovered = new SubagentOrchestrator({
+    transport: recoveryTransport,
+    stateDirectory: directory,
+    environment,
+    monitor: false,
+    onCompletion: async () => true,
+  });
+
+  await recovered.recover("parent-session", "parent-session");
+
+  const child = recovered.list("parent-session")[0];
+  assert.equal(child?.state, "cancelled");
+  assert.equal(child?.result, undefined);
+  assert.equal(child?.error, undefined);
+  assert.equal(child?.surfaceState, "closed");
+});
+
+test("live message admission failure leaves the owned agent monitored", async () => {
   const responses = successfulRootSpawnResponses();
   responses.push(
     { id: "unused-prompt", result: { type: "unused" } },
@@ -2002,9 +2791,18 @@ test("live message prompt failure stops the owned agent and cleans its pane", as
   const transport = new FakeHerdrTransport(responses);
   transport.responses[4] = { code: 1, stdout: "", stderr: "follow-up rejected" };
   transport.responses.splice(4, 0, {
-    code: 0, stderr: "", stdout: JSON.stringify({ id: "cli:agent:get", result: { agent: {
-      pane_id: "w1:p9", agent_status: "working", agent_session: { kind: "path", value: "/tmp/child.jsonl" },
-    } } }),
+    code: 0,
+    stderr: "",
+    stdout: JSON.stringify({
+      id: "cli:agent:get",
+      result: {
+        agent: {
+          pane_id: "w1:p9",
+          agent_status: "working",
+          agent_session: { kind: "path", value: "/tmp/child.jsonl" },
+        },
+      },
+    }),
   });
   const orchestrator = new SubagentOrchestrator({
     transport,
@@ -2026,14 +2824,10 @@ test("live message prompt failure stops the owned agent and cleans its pane", as
   );
 
   const child = orchestrator.list("parent-session")[0];
-  assert.equal(child?.state, "failed");
-  assert.equal(typeof child?.deliveredAt, "number");
-  assert.equal(child?.surfaceState, "closed");
-  assert.deepEqual(transport.calls.slice(-3), [
-    ["agent", "prompt", child?.herdrName ?? "", "CONTINUE"],
-    ["agent", "send-keys", child?.herdrName ?? "", "ctrl+c", "ctrl+c"],
-    ["pane", "close", "w1:p9"],
-  ]);
+  assert.equal(child?.state, "working");
+  assert.equal(child?.deliveredAt, undefined);
+  assert.equal(child?.surfaceState, "open");
+  assert.equal(controlRequest(transport.calls.at(-1)).message, "CONTINUE");
 });
 
 test("message replaces an actively waiting monitor within the launched generation", async () => {
@@ -2075,7 +2869,9 @@ test("message replaces an actively waiting monitor within the launched generatio
       if (waitCount === 1) {
         resolveWaitStarted();
         return new Promise<CommandExecution>((_resolve, reject) => {
-          signal?.addEventListener("abort", () => reject(new Error("aborted old monitor")), { once: true });
+          signal?.addEventListener("abort", () => reject(new Error("aborted old monitor")), {
+            once: true,
+          });
         });
       }
       setTimeout(() => {
@@ -2111,6 +2907,7 @@ test("message replaces an actively waiting monitor within the launched generatio
     }
   }
   const transport = new ReplacingMonitorTransport(normalResponses);
+  transport.controlReceiptDelayMilliseconds = 75;
   let resolveDelivered!: (child: { generation: number; result?: string }) => void;
   const delivered = new Promise<{ generation: number; result?: string }>((resolve) => {
     resolveDelivered = resolve;
@@ -2133,7 +2930,18 @@ test("message replaces an actively waiting monitor within the launched generatio
 
   await orchestrator.spawn(spawnRequest());
   await waitStarted;
+  const active = orchestrator.list("parent-session")[0]!;
+  writeCompletionSettlement(active.completionMarkerPath, {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "running",
+    sessionPath: childSession,
+    frontierEntryId: "old-assistant",
+  });
+  const admissionStarted = Date.now();
   await orchestrator.message("parent-session", "parent-session", "authentication", "New work");
+  assert.ok(Date.now() - admissionStarted >= 50);
   const completed = await delivered;
   assert.equal(waitCount, 2);
   assert.equal(completed.generation, 1);
@@ -2180,6 +2988,15 @@ test("follow-up completion waits for a new assistant session entry", async () =>
     monitor: false,
   });
   await initial.spawn(spawnRequest());
+  const active = initial.list("parent-session")[0]!;
+  writeCompletionSettlement(active.completionMarkerPath, {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "running",
+    sessionPath: childSession,
+    frontierEntryId: "old-assistant",
+  });
 
   class DelayedSessionTransport extends FakeHerdrTransport {
     override async run(args: string[]): Promise<CommandExecution> {
@@ -2207,9 +3024,16 @@ test("follow-up completion waits for a new assistant session entry", async () =>
   }
 
   const transport = new DelayedSessionTransport([
-    { id: "cli:agent:get", result: { agent: {
-      pane_id: "w1:p9", agent_status: "idle", agent_session: { kind: "path", value: childSession },
-    } } },
+    {
+      id: "cli:agent:get",
+      result: {
+        agent: {
+          pane_id: "w1:p9",
+          agent_status: "working",
+          agent_session: { kind: "path", value: childSession },
+        },
+      },
+    },
     { id: "cli:agent:prompt", result: { agent: { agent_status: "working" } } },
     {
       id: "cli:agent:wait",
@@ -2738,12 +3562,7 @@ test("message relaunches a finished nested child in a fresh owner pane", async (
   assert.deepEqual(relaunchTransport.calls[1], ["pane", "rename", "w1:p3", "reviewer: review"]);
   assert.ok(relaunchTransport.calls[2]?.includes("--session"));
   assert.equal(relaunchTransport.calls[2]?.at(-1), childSession);
-  assert.deepEqual(relaunchTransport.calls[3], [
-    "agent",
-    "prompt",
-    child.herdrName,
-    "REVIEW_MORE",
-  ]);
+  assert.deepEqual(relaunchTransport.calls[3], ["agent", "prompt", child.herdrName, "REVIEW_MORE"]);
 });
 
 test("inspect returns the durable terminal record after its surface is closed", async () => {
@@ -2778,18 +3597,14 @@ test("inspect returns the durable terminal record after its surface is closed", 
     monitor: false,
   });
 
-  const child = await inspecting.inspect(
-    "parent-session",
-    "parent-session",
-    "authentication",
-  );
+  const child = await inspecting.inspect("parent-session", "parent-session", "authentication");
 
   assert.equal(child.state, "cancelled");
   assert.equal(child.surfaceState, "closed");
   assert.deepEqual(transport.calls, []);
 });
 
-test("resume rejects a closed surface and directs the caller to message", async () => {
+test("resume reports terminal reconciliation without focusing a closed surface", async () => {
   const directory = temporaryDirectory();
   const childSession = join(directory, "closed-focus.jsonl");
   writeFileSync(
@@ -2847,11 +3662,11 @@ test("resume rejects a closed surface and directs the caller to message", async 
   await delivered;
   await waitUntil(() => orchestrator.list("parent-session")[0]?.surfaceState === "closed");
 
-  await assert.rejects(
-    orchestrator.resume("parent-session", "parent-session", "authentication"),
-    /surface is closed.*use message/i,
-  );
-  assert.equal(transport.calls.length, 6);
+  const resumed = await orchestrator.resume("parent-session", "parent-session", "authentication");
+
+  assert.equal(resumed.action, "reconciled");
+  assert.equal(resumed.child.state, "completed");
+  assert.equal(transport.calls.length, 5);
 });
 
 test("successful detached root completion closes only its recorded pane after durable delivery", async () => {
@@ -2928,7 +3743,10 @@ test("successful detached root completion closes only its recorded pane after du
   assert.equal(child?.result, "\n  DELIVERED_RESULT  \n");
   assert.equal(child?.surfaceState, "closed");
   assert.deepEqual(transport.calls.at(-1), ["pane", "close", "w1:p9"]);
-  assert.equal(transport.calls.some((call) => call[0] === "tab" && call[1] === "close"), false);
+  assert.equal(
+    transport.calls.some((call) => call[0] === "tab" && call[1] === "close"),
+    false,
+  );
 });
 
 test("successful nested completion closes only its child pane", async () => {
@@ -3101,7 +3919,10 @@ test("same-generation marker for an earlier assistant entry cannot authorize a n
   assert.equal(deliveries, 0);
   assert.equal(orchestrator.list("parent-session")[0]?.state, "working");
   assert.equal(orchestrator.list("parent-session")[0]?.surfaceState, "open");
-  assert.equal(transport.calls.some((call) => call[1] === "close"), false);
+  assert.equal(
+    transport.calls.some((call) => call[1] === "close"),
+    false,
+  );
   await orchestrator.shutdown();
 });
 
@@ -3181,7 +4002,10 @@ test("Herdr done with generation-mismatched protocol evidence retains the durabl
   assert.equal(deliveries, 0);
   assert.equal(orchestrator.list("parent-session")[0]?.state, "working");
   assert.equal(orchestrator.list("parent-session")[0]?.surfaceState, "open");
-  assert.equal(transport.calls.some((call) => call[1] === "close"), false);
+  assert.equal(
+    transport.calls.some((call) => call[1] === "close"),
+    false,
+  );
   await orchestrator.shutdown();
 });
 
@@ -3255,11 +4079,9 @@ test("relaunched child persists a blocked transition while waiting for completio
           };
         }
         return new Promise<CommandExecution>((_resolve, reject) => {
-          signal?.addEventListener(
-            "abort",
-            () => reject(signal.reason ?? new Error("aborted")),
-            { once: true },
-          );
+          signal?.addEventListener("abort", () => reject(signal.reason ?? new Error("aborted")), {
+            once: true,
+          });
         });
       }
       if (args[0] === "agent" && args[1] === "get") {
@@ -3317,12 +4139,7 @@ test("relaunched child persists a blocked transition while waiting for completio
     },
   });
 
-  await relaunched.message(
-    "parent-session",
-    "parent-session",
-    "authentication",
-    "BLOCK_FOR_INPUT",
-  );
+  await relaunched.message("parent-session", "parent-session", "authentication", "BLOCK_FOR_INPUT");
   try {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
@@ -3440,10 +4257,13 @@ test("marker-wait polling conservatively detects a positively absent runtime", a
   assert.equal(crashed.state, "crashed");
   assert.match(crashed.error ?? "", /disappeared.*agent not found/);
   assert.equal(orchestrator.list("parent-session")[0]?.surfaceState, "closed");
-  assert.deepEqual(transport.calls.slice(-2).map((call) => call.slice(0, 2)), [
-    ["agent", "get"],
-    ["pane", "close"],
-  ]);
+  assert.deepEqual(
+    transport.calls.slice(-2).map((call) => call.slice(0, 2)),
+    [
+      ["agent", "get"],
+      ["pane", "close"],
+    ],
+  );
 });
 
 test("recovery keeps monitoring the same idle runtime until delayed completion proof arrives", async () => {
@@ -3542,11 +4362,14 @@ test("recovery keeps monitoring the same idle runtime until delayed completion p
 
   assert.equal(outcome.result, "RECOVERED_DELAYED_RESULT");
   assert.equal(recovered.list("parent-session")[0]?.surfaceState, "closed");
-  assert.deepEqual(transport.calls.map((call) => call.slice(0, 2)), [
-    ["agent", "get"],
-    ["agent", "wait"],
-    ["pane", "close"],
-  ]);
+  assert.deepEqual(
+    transport.calls.map((call) => call.slice(0, 2)),
+    [
+      ["agent", "get"],
+      ["agent", "wait"],
+      ["pane", "close"],
+    ],
+  );
 });
 
 test("monitor stays alive for a delayed marker after initially unproven idle", async () => {
@@ -3629,10 +4452,7 @@ test("monitor stays alive for a delayed marker after initially unproven idle", a
   const outcome = await Promise.race([
     delivered,
     new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(
-        () => reject(new Error("monitor stopped before delayed marker")),
-        1_500,
-      );
+      timeout = setTimeout(() => reject(new Error("monitor stopped before delayed marker")), 1_500);
     }),
   ]).finally(() => clearTimeout(timeout));
   await waitUntil(() => orchestrator.list("parent-session")[0]?.surfaceState === "closed");
@@ -3674,9 +4494,7 @@ test("recovery cleans and classifies interrupted starting cleanup for spawn and 
       `${JSON.stringify(interrupted, null, 2)}\n`,
     );
 
-    const transport = new FakeHerdrTransport([
-      { id: "cli:pane:close", result: { type: "ok" } },
-    ]);
+    const transport = new FakeHerdrTransport([{ id: "cli:pane:close", result: { type: "ok" } }]);
     const recovered = new SubagentOrchestrator({
       transport,
       stateDirectory: directory,
@@ -3776,9 +4594,7 @@ test("recovery cleans a delivered cancelled record left open by a crash window",
     `${JSON.stringify(crashedRecord, null, 2)}\n`,
   );
 
-  const transport = new FakeHerdrTransport([
-    { id: "cli:pane:close", result: { type: "ok" } },
-  ]);
+  const transport = new FakeHerdrTransport([{ id: "cli:pane:close", result: { type: "ok" } }]);
   const recovered = new SubagentOrchestrator({
     transport,
     stateDirectory: directory,
@@ -3929,21 +4745,9 @@ test("failed surface close stays cleanup-pending and recovery retries it", async
     result: { agent: { agent_session: { value: string } } };
   };
   started.result.agent.agent_session.value = childSession;
-  responses.push(
-    {
-      id: "cli:agent:wait",
-      result: {
-        agent: {
-          pane_id: "w1:p9",
-          agent_status: "done",
-          agent_session: { kind: "path", value: childSession },
-        },
-      },
-    },
-    { id: "cli:pane:close", result: { type: "unused" } },
-  );
+  responses.push({ id: "cli:pane:close", result: { type: "unused" } });
   const transport = new FakeHerdrTransport(responses);
-  transport.responses[5] = { code: 1, stdout: "", stderr: "pane close failed" };
+  transport.responses[4] = { code: 1, stdout: "", stderr: "pane close failed" };
   let resolveDelivered!: () => void;
   const delivered = new Promise<void>((resolve) => {
     resolveDelivered = resolve;
@@ -4065,13 +4869,16 @@ test("follow-up cleans a pending terminal surface and relaunches a fresh generat
   assert.equal(child.state, "working");
   assert.equal(child.surfaceState, "open");
   assert.equal(child.paneId, "w1:p10");
-  assert.deepEqual(transport.calls.map((call) => call.slice(0, 2)), [
-    ["pane", "close"],
-    ["pane", "split"],
-    ["pane", "rename"],
-    ["agent", "start"],
-    ["agent", "prompt"],
-  ]);
+  assert.deepEqual(
+    transport.calls.map((call) => call.slice(0, 2)),
+    [
+      ["pane", "close"],
+      ["pane", "split"],
+      ["pane", "rename"],
+      ["agent", "start"],
+      ["agent", "prompt"],
+    ],
+  );
   assert.ok(transport.calls[1]?.includes("HERDR_SUBAGENT_GENERATION=2"));
 });
 
@@ -4227,7 +5034,6 @@ test("agent wait transport failure reconciles the same runtime and continues mon
       },
     })}\n`,
   );
-  writeCompletionMarker(directory, "parent-session", "child-1");
   const responses = successfulRootSpawnResponses();
   const started = responses[2] as {
     result: { agent: { agent_session: { value: string } } };
@@ -4257,7 +5063,20 @@ test("agent wait transport failure reconciles the same runtime and continues mon
     },
     { id: "cli:pane:close", result: { type: "ok" } },
   );
-  const transport = new FakeHerdrTransport(responses);
+  let waitCount = 0;
+  class ReconciledWaitTransport extends FakeHerdrTransport {
+    override async run(args: string[], signal?: AbortSignal): Promise<CommandExecution> {
+      const response = await super.run(args, signal);
+      if (args[0] === "agent" && args[1] === "wait") {
+        waitCount += 1;
+        if (waitCount === 2) {
+          writeCompletionMarker(directory, "parent-session", "child-1");
+        }
+      }
+      return response;
+    }
+  }
+  const transport = new ReconciledWaitTransport(responses);
   transport.responses[4] = { code: 1, stdout: "", stderr: "wait socket reset" };
   let resolveDelivered!: (child: { state: string; result?: string }) => void;
   const delivered = new Promise<{ state: string; result?: string }>((resolve) => {
@@ -4285,12 +5104,15 @@ test("agent wait transport failure reconciles the same runtime and continues mon
 
   assert.equal(outcome.state, "completed");
   assert.equal(outcome.result, "RECONCILED_RESULT");
-  assert.deepEqual(transport.calls.slice(4, 8).map((call) => call.slice(0, 2)), [
-    ["agent", "wait"],
-    ["agent", "get"],
-    ["agent", "wait"],
-    ["pane", "close"],
-  ]);
+  assert.deepEqual(
+    transport.calls.slice(4, 8).map((call) => call.slice(0, 2)),
+    [
+      ["agent", "wait"],
+      ["agent", "get"],
+      ["agent", "wait"],
+      ["pane", "close"],
+    ],
+  );
 });
 
 test("ambiguous wait and reconciliation failures mark stale without cleanup", async () => {
@@ -4320,17 +5142,23 @@ test("ambiguous wait and reconciliation failures mark stale without cleanup", as
   });
 
   await orchestrator.spawn(spawnRequest());
-  await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  await waitUntil(() => orchestrator.list("parent-session")[0]?.state === "stale");
 
   const child = orchestrator.list("parent-session")[0];
   assert.equal(child?.state, "stale");
   assert.match(child?.error ?? "", /control socket timed out/);
   assert.equal(deliveries, 0);
-  assert.equal(transport.calls.some((call) => call[1] === "close"), false);
-  assert.deepEqual(transport.calls.slice(4).map((call) => call.slice(0, 2)), [
-    ["agent", "wait"],
-    ["agent", "get"],
-  ]);
+  assert.equal(
+    transport.calls.some((call) => call[1] === "close"),
+    false,
+  );
+  assert.deepEqual(
+    transport.calls.slice(4).map((call) => call.slice(0, 2)),
+    [
+      ["agent", "wait"],
+      ["agent", "get"],
+    ],
+  );
 });
 
 test("positively absent child is delivered as crashed and cleaned", async () => {
@@ -4409,11 +5237,7 @@ test("crash delivery retains the lifecycle lock through parent side effects", as
 
   await orchestrator.spawn(spawnRequest());
   await deliveryStarted;
-  const lifecycleLock = join(
-    directory,
-    "parent-session",
-    ".child-1.lifecycle.lock",
-  );
+  const lifecycleLock = join(directory, "parent-session", ".child-1.lifecycle.lock");
   try {
     await assert.rejects(
       withRegistryLock(
@@ -4478,7 +5302,7 @@ test("detached delivery callback errors are absorbed and persisted", async () =>
   });
 
   await orchestrator.spawn(spawnRequest());
-  await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  await waitUntil(() => orchestrator.list("parent-session")[0]?.lifecycleError !== undefined);
 
   const child = orchestrator.list("parent-session")[0];
   assert.equal(child?.state, "completed");
@@ -4504,7 +5328,6 @@ test("detached monitor absorbs and persists a transient registry filesystem erro
       },
     })}\n`,
   );
-  writeCompletionMarker(directory, "parent-session", "child-1");
   const responses = successfulRootSpawnResponses();
   const started = responses[2] as {
     result: { agent: { agent_session: { value: string } } };
@@ -4524,6 +5347,7 @@ test("detached monitor absorbs and persists a transient registry filesystem erro
     override async run(args: string[]): Promise<CommandExecution> {
       const response = await super.run(args);
       if (args[0] === "agent" && args[1] === "wait") {
+        writeCompletionMarker(directory, "parent-session", "child-1");
         chmodSync(registry, 0o500);
         setTimeout(() => chmodSync(registry, 0o700), 30);
       }
@@ -4695,7 +5519,11 @@ test("lineage placement lock serializes concurrent surface creation", async () =
   await waitUntil(() => firstAgentStartStarted);
   const secondSpawn = second.spawn({ ...spawnRequest(), name: "second" });
   await new Promise<void>((resolve) => setTimeout(resolve, 30));
-  assert.equal(secondSplitStarted, false, "A contender cannot split while the first child is starting");
+  assert.equal(
+    secondSplitStarted,
+    false,
+    "A contender cannot split while the first child is starting",
+  );
   releaseFirst();
   await Promise.all([firstSpawn, secondSpawn]);
   assert.equal(secondSplitStarted, true);
@@ -4841,14 +5669,21 @@ test("different work scopes share the master tab without scope placement records
     id: () => "child-2",
     monitor: false,
   });
-  const child = await second.spawn({ ...spawnRequest(), name: "second", workScope: "second-scope" });
+  const child = await second.spawn({
+    ...spawnRequest(),
+    name: "second",
+    workScope: "second-scope",
+  });
 
   assert.equal(child.tabId, "w1:t1");
   assert.deepEqual(
     secondTransport.calls.find((call) => call[0] === "pane" && call[1] === "split")?.slice(0, 4),
     ["pane", "split", "--pane", "w1:p9"],
   );
-  assert.equal(secondTransport.calls.some((call) => call[0] === "tab"), false);
+  assert.equal(
+    secondTransport.calls.some((call) => call[0] === "tab"),
+    false,
+  );
   assert.equal(readdirSync(registry).filter((entry) => entry.startsWith(".scope-")).length, 1);
   const master = JSON.parse(readFileSync(join(registry, ".lineage.json"), "utf8")) as {
     rootId: string;
@@ -4857,19 +5692,22 @@ test("different work scopes share the master tab without scope placement records
     tabId: string;
     herdrSession: string;
   };
-  assert.deepEqual({
-    rootId: master.rootId,
-    workspaceId: master.workspaceId,
-    masterPaneId: master.masterPaneId,
-    tabId: master.tabId,
-    herdrSession: master.herdrSession,
-  }, {
-    rootId: "parent-session",
-    workspaceId: "w1",
-    masterPaneId: "w1:p1",
-    tabId: "w1:t1",
-    herdrSession: "session-a",
-  });
+  assert.deepEqual(
+    {
+      rootId: master.rootId,
+      workspaceId: master.workspaceId,
+      masterPaneId: master.masterPaneId,
+      tabId: master.tabId,
+      herdrSession: master.herdrSession,
+    },
+    {
+      rootId: "parent-session",
+      workspaceId: "w1",
+      masterPaneId: "w1:p1",
+      tabId: "w1:t1",
+      herdrSession: "session-a",
+    },
+  );
 });
 
 test("a human pane is never selected as a lineage placement target", async () => {
@@ -5022,7 +5860,10 @@ test("descendant master observations fail closed without a proven Pi session", a
     {
       name: "changed session path",
       pane: {
-        pane_id: "w1:p1", tab_id: "w1:t1", workspace_id: "w1", agent: "pi",
+        pane_id: "w1:p1",
+        tab_id: "w1:t1",
+        workspace_id: "w1",
+        agent: "pi",
         agent_session: { kind: "path", value: "/tmp/foreign.jsonl" },
       },
       error: /Lineage master session artifact changed/,
@@ -5030,7 +5871,10 @@ test("descendant master observations fail closed without a proven Pi session", a
     {
       name: "foreign occupant",
       pane: {
-        pane_id: "w1:p1", tab_id: "w1:t1", workspace_id: "w1", agent: "claude",
+        pane_id: "w1:p1",
+        tab_id: "w1:t1",
+        workspace_id: "w1",
+        agent: "claude",
         agent_session: { kind: "path", value: "/tmp/parent.jsonl" },
       },
       error: /Lineage master pane is not occupied by Pi/,
@@ -5067,11 +5911,12 @@ test("descendant master observations fail closed without a proven Pi session", a
     });
 
     await assert.rejects(
-      () => orchestrator.spawn({
-        ...spawnRequest(),
-        name: observation.name,
-        agent: { ...spawnRequest().agent, name: "scout", spawnTargets: [] },
-      }),
+      () =>
+        orchestrator.spawn({
+          ...spawnRequest(),
+          name: observation.name,
+          agent: { ...spawnRequest().agent, name: "scout", spawnTargets: [] },
+        }),
       observation.error,
     );
     assert.deepEqual(transport.calls, [["pane", "get", "w1:p1"]]);
@@ -5106,7 +5951,10 @@ test("a split in another tab is persisted but never cleaned as owned", async () 
   const child = orchestrator.list("parent-session")[0];
   assert.equal(child?.state, "failed");
   assert.equal(child?.surfaceState, "released");
-  assert.equal(transport.calls.some((call) => call[0] === "pane" && call[1] === "close"), false);
+  assert.equal(
+    transport.calls.some((call) => call[0] === "pane" && call[1] === "close"),
+    false,
+  );
 });
 
 test("stale cancellation preserves a proven prior completion after an interrupted follow-up", async () => {
@@ -5147,7 +5995,15 @@ test("stale cancellation preserves a proven prior completion after an interrupte
     id: () => "child-1",
     monitor: false,
   });
-  await initial.spawn({ ...spawnRequest(), workScope: "scope-tests" });
+  const active = await initial.spawn({ ...spawnRequest(), workScope: "scope-tests" });
+  writeCompletionSettlement(active.completionMarkerPath, {
+    version: 1,
+    childId: active.id,
+    generation: active.generation,
+    phase: "running",
+    sessionPath: childSession,
+    frontierEntryId: "c6c47482",
+  });
   await initial.message(
     "parent-session",
     "parent-session",
@@ -5179,11 +6035,7 @@ test("stale cancellation preserves a proven prior completion after an interrupte
     stdout: `${JSON.stringify({ id: "cli:pane:close", result: { type: "ok" } })}\n`,
     stderr: "",
   });
-  const reconciled = await recovered.cancel(
-    "parent-session",
-    "parent-session",
-    "authentication",
-  );
+  const reconciled = await recovered.cancel("parent-session", "parent-session", "authentication");
 
   assert.equal(reconciled.state, "completed");
   assert.equal(reconciled.result, "PRESERVED_SCOUT_FINDINGS");
@@ -5222,7 +6074,11 @@ test("different named scopes create separate panes in the master tab", async () 
       return {
         id: "cli:agent:prompt",
         result: {
-          agent: { name: "authentication-worker-child2", pane_id: "w1:p10", agent_status: "working" },
+          agent: {
+            name: "authentication-worker-child2",
+            pane_id: "w1:p10",
+            agent_status: "working",
+          },
         },
       };
     }),
@@ -5248,5 +6104,8 @@ test("different named scopes create separate panes in the master tab", async () 
 
   assert.equal(first.tabId, "w1:t1");
   assert.equal(second.tabId, "w1:t1");
-  assert.equal(transport.calls.filter((call) => call[0] === "tab" && call[1] === "create").length, 0);
+  assert.equal(
+    transport.calls.filter((call) => call[0] === "tab" && call[1] === "create").length,
+    0,
+  );
 });
