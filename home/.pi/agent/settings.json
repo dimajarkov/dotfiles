@@ -1,8 +1,13 @@
 {
   "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/config/settings.schema.json",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-6-astra",
+  "defaultModel": "gpt-5.6-sol",
   "defaultThinkingLevel": "xhigh",
+  "enabledModels": [
+    "openai-codex/gpt-5.6-luna",
+    "openai-codex/gpt-5.6-sol",
+    "openai-codex/gpt-5.6-terra"
+  ],
   "theme": "prime",
   "externalEditor": "nvim",
   "defaultProjectTrust": "ask",
@@ -43,7 +48,9 @@
     "npm:@ryan_nookpi/pi-extension-codex-fast-mode@0.2.6",
     "npm:pi-mcp-adapter@2.11.0",
     "npm:pi-web-access@0.15.0",
-    "npm:@tunglam/pi-inline-skills@0.1.3"
+    "npm:@tunglam/pi-inline-skills@0.1.3",
+    "git:github.com/tintinweb/pi-subagents@e955e29c51b7a6cce37e1108cd2d6c57a77e151c",
+    "npm:@plannotator/pi-extension@0.27.14"
   ],
   "skills": [
     "~/.agents/skills"

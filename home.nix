@@ -2,8 +2,8 @@
 
 let
   dotfiles = "${config.home.homeDirectory}/.dotfiles";
+  backpassCli = pkgs.callPackage ./nix/packages/backpass-cli.nix {};
   piUpstream = pkgs.callPackage ./nix/packages/pi-coding-agent.nix {};
-  piSubagentExtension = "${dotfiles}/home/.pi/agent/extensions/subagent";
 in {
   home.username = user;
   home.homeDirectory = "/Users/${user}";
@@ -11,6 +11,7 @@ in {
 
   home.packages = with pkgs; [
     bash
+    backpassCli
     codebook
     python313Packages.debugpy
     entr
@@ -271,6 +272,12 @@ in {
 
   home.file.".pi/agent/settings.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/settings.json";
+  home.file.".pi/agent/subagents.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/subagents.json";
+  home.file.".pi/agent/agents/Explore.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/Explore.md";
+  home.file.".pi/agent/keybindings.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/keybindings.json";
   home.file.".pi/agent/models.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/models.json";
   home.file.".pi/agent/mcp.json".source =
@@ -307,8 +314,6 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/lib/credential-safety.ts";
   home.file.".pi/agent/extensions/lib/terminal-safety.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/lib/terminal-safety.ts";
-  home.file.".pi/agent/extensions/subagent".source =
-    config.lib.file.mkOutOfStoreSymlink piSubagentExtension;
   home.file.".pi/agent/extensions/browser/.gitignore".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/browser/.gitignore";
   home.file.".pi/agent/extensions/browser/README.md".source =
@@ -335,22 +340,8 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/package-lock.json";
   home.file.".pi/agent/extensions/custom-header.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/custom-header.ts";
-  home.file.".pi/agent/agents/planner.md".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/planner.md";
-  home.file.".pi/agent/agents/researcher.md".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/researcher.md";
-  home.file.".pi/agent/agents/reviewer.md".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/reviewer.md";
-  home.file.".pi/agent/agents/scout.md".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/scout.md";
-  home.file.".pi/agent/agents/worker.md".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/agents/worker.md";
-  home.file.".pi/agent/prompts/implement-and-review.md".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/prompts/implement-and-review.md";
-  home.file.".pi/agent/prompts/implement.md".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/prompts/implement.md";
-  home.file.".pi/agent/prompts/scout-and-plan.md".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/prompts/scout-and-plan.md";
+  home.file.".pi/agent/extensions/gpt-5-6-only.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/gpt-5-6-only.ts";
   home.file.".hammerspoon/init.lua".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.hammerspoon/init.lua";
   home.file.".config/gh/config.yml".source =

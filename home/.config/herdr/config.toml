@@ -5,7 +5,7 @@ shell_mode = "auto"
 new_cwd = "follow"
 
 [theme]
-name = "gruvbox-light"
+name = "dracula"
 auto_switch = false
 dark_name = "catppuccin"
 light_name = "catppuccin-latte"
@@ -32,6 +32,43 @@ split_vertical = ["prefix+h", "alt+h"]
 split_horizontal = ["prefix+v", "prefix+minus", "alt+v"]
 zoom = ["prefix+f", "alt+f"]
 
+# Plannotator terminal annotations and document review.
+[[keys.command]]
+key = "prefix+a"
+type = "plugin_action"
+command = "annotate.capture"
+description = "annotate text"
+
+[[keys.command]]
+key = "prefix+shift+a"
+type = "plugin_action"
+command = "annotate.copy-context"
+description = "copy annotations as context"
+
+[[keys.command]]
+key = "prefix+ctrl+a"
+type = "plugin_action"
+command = "annotate.copy-archive"
+description = "copy annotations as context and archive them"
+
+[[keys.command]]
+key = "prefix+m"
+type = "plugin_action"
+command = "annotate.manage"
+description = "manage annotations"
+
+[[keys.command]]
+key = "prefix+o"
+type = "plugin_action"
+command = "annotate.open"
+description = "review documents in this folder"
+
+[[keys.command]]
+key = "prefix+shift+o"
+type = "plugin_action"
+command = "annotate.last"
+description = "review the agent's last reply"
+
 [ui]
 agent_panel_sort = "spaces"
 show_agent_labels_on_pane_borders = true
@@ -52,4 +89,4 @@ delivery = "off"
 delay_seconds = 2
 
 [ui.sound]
-enabled = false
+enabled = true
