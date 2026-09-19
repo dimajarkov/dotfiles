@@ -20,7 +20,7 @@ Running the switch builds:
 - Homebrew apps (casks and CLI tools)
 - Nix user packages (ripgrep, fd, fzf, jq, lazygit, Neovim, Hack Nerd Font)
 - Shell (zsh, aliases, starship prompt)
-- Editor (Neovim follows macOS appearance: Guts dark, Rosé Pine Dawn light)
+- Editor (Neovim follows macOS appearance: GitHub Dark Default and GitHub Light Default)
 - Terminal (WezTerm follows system appearance: Catppuccin Mocha dark, Latte light)
 - Agent configs (Claude, Codex, opencode all share one AGENTS.md)
 
@@ -155,7 +155,7 @@ You only run `./rebuild.sh` when you change something that isn't just a symlinke
 
 The first time you launch `nvim`, Neovim's built-in `vim.pack` clones the configured plugins from GitHub.
 That needs network access once; after that it's offline.
-Neovim uses Guts in macOS dark mode and Rosé Pine Dawn in light mode, with opaque backgrounds for readable contrast.
+Neovim uses GitHub Dark Default in macOS dark mode and GitHub Light Default in light mode, with opaque backgrounds for readable contrast.
 It reads the macOS appearance at startup, on focus, and every two seconds while open, without blocking editing or requiring a terminal theme notification.
 A manual colorscheme selection (`<leader>fc`) lasts until the system appearance changes.
 On non-macOS hosts, Neovim selects the palette using its `background` option, including terminal-driven changes.

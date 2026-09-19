@@ -95,7 +95,9 @@ print(
     f"macOS={expected} nvim={result['background']} colorscheme={result['colorscheme']}"
 )
 assert result["background"] == expected, "Neovim does not follow macOS appearance"
-assert result["colorscheme"] == ("guts" if expected == "dark" else "rose-pine")
+assert result["colorscheme"] == (
+    "github_dark_default" if expected == "dark" else "github_light_default"
+)
 
 
 def brightness(color):
