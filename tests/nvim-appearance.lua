@@ -1,9 +1,8 @@
 -- Run from the repo root: nvim --headless -u NONE -l tests/nvim-appearance.lua
 -- Uses the real installed colorschemes; only the OS process boundary is faked.
 vim.opt.runtimepath:prepend(vim.fn.getcwd() .. '/home/.config/nvim')
-vim.cmd('packadd guts.nvim')
-vim.cmd('packadd rose-pine')
-require('rose-pine').setup()
+vim.cmd('packadd github-nvim-theme')
+require('github-theme').setup()
 
 local original_system = vim.system
 local original_has = vim.fn.has
@@ -35,8 +34,8 @@ end
 
 local function check(background, colorscheme)
 	assert(vim.o.background == background, 'expected ' .. background .. ', got ' .. vim.o.background)
-	local name = colorscheme == 'rose-pine-dawn' and 'rose-pine' or colorscheme
-	assert(vim.g.colors_name == name, 'expected ' .. name .. ', got ' .. tostring(vim.g.colors_name))
+	assert(vim.g.colors_name == colorscheme,
+		'expected ' .. colorscheme .. ', got ' .. tostring(vim.g.colors_name))
 	local normal = vim.api.nvim_get_hl(0, { name = 'Normal', link = false })
 	assert(normal.bg and normal.fg, 'theme must supply readable foreground and background')
 	local function brightness(color)
@@ -57,27 +56,27 @@ local ok, err = xpcall(function()
 	local appearance = require('system-appearance')
 	vim.o.background = 'dark'
 	appearance.setup()
-	check('light', 'rose-pine-dawn')
+	check('light', 'github_light_default')
 
 	result = { code = 0, stdout = 'Dark\n', stderr = '' }
 	focus()
-	check('dark', 'guts')
+	check('dark', 'github_dark_default')
 
 	-- The periodic probe works without terminal focus notifications.
 	result = { code = 0, stdout = 'Light\n', stderr = '' }
 	assert(vim.wait(3000, function() return vim.o.background == 'light' end, 10),
 		'appearance must update while Neovim remains focused')
-	check('light', 'rose-pine-dawn')
+	check('light', 'github_light_default')
 
 	-- A manual selection survives probes until the OS appearance actually changes.
-	vim.cmd.colorscheme('rose-pine-moon')
+	vim.cmd.colorscheme('github_dark_dimmed')
 	local manual = vim.api.nvim_get_hl(0, { name = 'Normal', link = false })
 	focus()
-	assert(vim.g.colors_name == 'rose-pine' and vim.deep_equal(manual,
+	assert(vim.g.colors_name == 'github_dark_dimmed' and vim.deep_equal(manual,
 		vim.api.nvim_get_hl(0, { name = 'Normal', link = false })))
 	result = { code = 0, stdout = 'Dark\n', stderr = '' }
 	focus()
-	check('dark', 'guts')
+	check('dark', 'github_dark_default')
 
 	for _, failure in ipairs({
 		{ code = 124, stdout = '', stderr = 'timed out' },
@@ -86,16 +85,16 @@ local ok, err = xpcall(function()
 	}) do
 		result = failure
 		focus()
-		check('dark', 'guts')
+		check('dark', 'github_dark_default')
 	end
 
 	-- Failed startup reads preserve the current background, then recover.
 	vim.o.background = 'light'
 	appearance.setup()
-	check('light', 'rose-pine-dawn')
+	check('light', 'github_light_default')
 	result = { code = 0, stdout = 'Dark\n', stderr = '' }
 	focus()
-	check('dark', 'guts')
+	check('dark', 'github_dark_default')
 
 	-- No overlapping subprocesses or stale callbacks after setup is repeated.
 	delayed = true
@@ -108,7 +107,7 @@ local ok, err = xpcall(function()
 	appearance.setup()
 	callbacks[1]()
 	vim.wait(30, function() return false end)
-	check('dark', 'guts')
+	check('dark', 'github_dark_default')
 	delayed = false
 	before = calls
 	focus()
@@ -121,11 +120,11 @@ local ok, err = xpcall(function()
 	vim.o.background = 'light'
 	before = calls
 	appearance.setup()
-	check('light', 'rose-pine-dawn')
+	check('light', 'github_light_default')
 	vim.o.background = 'dark'
-	check('dark', 'guts')
+	check('dark', 'github_dark_default')
 	vim.o.background = 'light'
-	check('light', 'rose-pine-dawn')
+	check('light', 'github_light_default')
 	focus()
 	assert(calls == before, 'non-macOS must not invoke defaults')
 

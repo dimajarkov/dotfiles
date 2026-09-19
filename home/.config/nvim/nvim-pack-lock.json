@@ -17,6 +17,10 @@
       "rev": "abacb0693d7a37de9e85e6fcb2d22d848cb75cef",
       "src": "https://github.com/ibhagwan/fzf-lua"
     },
+    "github-nvim-theme": {
+      "rev": "c106c9472154d6b2c74b74565616b877ae8ed31d",
+      "src": "https://github.com/projekt0n/github-nvim-theme"
+    },
     "guts.nvim": {
       "rev": "a4fc46c5c5ca545e2e06b48d19c7e216c778fb8b",
       "src": "https://github.com/vossenwout/guts.nvim"

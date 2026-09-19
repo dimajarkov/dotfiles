@@ -127,6 +127,7 @@ vim.pack.add({
 	'https://github.com/kdheepak/lazygit.nvim',
 	{ src = 'https://github.com/saghen/blink.cmp', version = vim.version.range('1.x') }, -- pinning so rust binary dependency automatically downloads
 	-- Colorschemes
+	'https://github.com/projekt0n/github-nvim-theme',
 	'https://github.com/rebelot/kanagawa.nvim',
 	{ src = "https://github.com/rose-pine/neovim", name = "rose-pine" },
 	'https://github.com/vague-theme/vague.nvim',
@@ -149,8 +150,14 @@ require('which-key').setup({
 	},
 })
 
--- Vague Colorscheme
-vim.pack.add({ 'https://github.com/vague-theme/vague.nvim' })
+-- GitHub Colorscheme
+require('github-theme').setup({
+	options = {
+		hide_end_of_buffer = true,
+		terminal_colors = true,
+		transparent = false,
+	},
+})
 -- Kanagawa Colorscheme
 require('kanagawa').setup({
 	colors = {
@@ -455,6 +462,6 @@ dashboard.section.header.val = vim.split(
         ]], '\n', { trimempty = true })
 dashboard.section.header.opts.hl = 'Comment'
 dashboard.section.buttons.val = {}
-dashboard.section.footer.val = 'PookieVim v3000'
+dashboard.section.footer.val = "Do it poorly, that's easy!"
 dashboard.section.footer.opts.hl = 'Comment'
 alpha.setup(dashboard.opts)

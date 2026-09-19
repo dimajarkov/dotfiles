@@ -31,7 +31,7 @@ function M.setup()
 		applying = true
 		last_appearance = appearance
 		vim.o.background = appearance
-		vim.cmd.colorscheme(appearance == 'light' and 'rose-pine-dawn' or 'guts')
+		vim.cmd.colorscheme(appearance == 'light' and 'github_light_default' or 'github_dark_default')
 		applying = false
 	end
 
