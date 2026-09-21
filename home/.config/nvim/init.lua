@@ -2,21 +2,61 @@
 vim.g.mapleader = ' '
 vim.g.maplocalleader = ' '
 
--- Recover if a terminal pane's working directory was removed before Nvim started.
--- Oil's filetype fallback needs a valid cwd when it opens an unresolved path.
+-- Recover if a terminal pane's working directory was removed or is unreadable before Nvim starts.
+-- Oil's filetype fallback needs a readable cwd when it opens an unresolved path.
 local uv = vim.uv or vim.loop
+local function is_readable_dir(path)
+	if not path or vim.fn.isdirectory(path) ~= 1 then
+		return false
+	end
+
+	return uv.fs_scandir(path) ~= nil
+end
+
+local function fallback_dir()
+	local home = vim.env.HOME
+	return is_readable_dir(home) and home or nil
+end
+
+local function is_unreadable_dir(path)
+	return path ~= nil and vim.fn.isdirectory(path) == 1 and not is_readable_dir(path)
+end
+
 local function ensure_valid_cwd()
-	if uv.cwd() then
+	local cwd = uv.cwd()
+	if is_readable_dir(cwd) then
 		return true
 	end
 
-	local fallback = vim.env.HOME
-	if fallback and vim.fn.isdirectory(fallback) == 1 then
+	local fallback = fallback_dir()
+	if fallback then
 		vim.cmd.cd(fallback)
 	end
 
-	return uv.cwd() ~= nil
+	return is_readable_dir(uv.cwd())
 end
+
+-- Redirect explicit Oil directory URLs when a mounted volume is not readable.
+-- This runs before Oil's own BufReadCmd handler and prevents an avoidable render error.
+vim.api.nvim_create_autocmd('BufReadCmd', {
+	group = vim.api.nvim_create_augroup('oil-cwd-recovery', { clear = true }),
+	pattern = 'oil://*',
+	nested = true,
+	callback = function(args)
+		local bufname = vim.api.nvim_buf_get_name(args.buf)
+		local path = bufname:match('^oil://(.*)$')
+		local fallback = fallback_dir()
+		if path and vim.endswith(path, '/') and is_unreadable_dir(path) and fallback then
+			-- Oil may already have a buffer for the fallback directory. Its helper
+			-- handles both renaming and replacing the current buffer without E95.
+			require('oil.util').rename_buffer(args.buf, 'oil://' .. fallback .. '/')
+			vim.notify_once(
+				'Cannot read ' .. path .. '; Oil opened your home directory instead',
+				vim.log.levels.WARN
+			)
+		end
+	end,
+})
 
 local function open_oil()
 	if ensure_valid_cwd() then
@@ -136,6 +176,7 @@ vim.pack.add({
 
 -- Mini.nvim
 require('mini.ai').setup()
+require('mini.diff').setup()
 require('mini.icons').setup()
 
 -- Keybinding guide

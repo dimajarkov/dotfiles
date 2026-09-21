@@ -12,7 +12,7 @@ import {
 
 const EDITOR_BASE_PADDING = 3;
 const EDITOR_SURFACE_PADDING = 2;
-const PROMPT_PREFIX_WIDTH = 2;
+const PROMPT_PREFIX_WIDTH = 0;
 
 const START_HINTS = [
   'Try "refactor @<filepath>"',
@@ -105,8 +105,7 @@ class PrimeEditor extends CustomEditor {
         index === 0 && this.getText().length === 0
           ? this.renderPlaceholder(inputWidth)
           : sliceByColumn(line, EDITOR_BASE_PADDING, inputWidth);
-      const prefix =
-        index === 0 ? " >  " : " ".repeat(EDITOR_SURFACE_PADDING + PROMPT_PREFIX_WIDTH);
+      const prefix = " ".repeat(EDITOR_SURFACE_PADDING + PROMPT_PREFIX_WIDTH);
       const rendered = fitLine(`${prefix}${body}${" ".repeat(EDITOR_SURFACE_PADDING)}`, width);
       output.push(withBackground(appTheme, "userMessageBg", rendered));
     });

@@ -80,6 +80,26 @@
       "exposeResources": false,
       "directTools": false,
       "debug": false
+    },
+    "composio-gmail": {
+      "command": "infisical",
+      "args": [
+        "--silent",
+        "run",
+        "--env=dev",
+        "--path=/common/ai",
+        "--project-config-dir",
+        "/Users/dmitrijarkov/dev/arena/arena-crm",
+        "--",
+        "sh",
+        "-c",
+        "exec npx -y mcp-remote@0.1.38 https://backend.composio.dev/tool_router/trs_Yk1RPf4vaNP1/mcp --header \"x-api-key: $COMPOSIO_API_KEY\" --transport http-only --silent"
+      ],
+      "lifecycle": "lazy",
+      "requestTimeoutMs": 240000,
+      "exposeResources": false,
+      "directTools": false,
+      "debug": false
     }
   }
 }

@@ -30,11 +30,6 @@ These are common instructions for Dmitri's agents across all scenarios.
 - Do not bypass the guarded `docker` and `docker-compose` commands or start a local container runtime when the verified OWC volume is unavailable.
 - Treat the retained internal migration copies as rollback data and never delete them without explicit approval and a verified independent backup.
 
-## Workspace routing
-
-- For source checkout placement, read `~/dev/AGENTS.md` and `~/dev/README.md`.
-- For home-directory cleanup, dotfile relocation, or shared skill installation, read `~/dev/_system/home-layout.md` and run `~/dev/bin/home-audit`.
-
 ## Dmitri's Opinions
 
 When you are working on something that would benefit from being informed by Dmitri's viewpoints, read `~/OPINIONS.md` to understand what Dmitri believes.

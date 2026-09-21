@@ -71,6 +71,20 @@ table.insert(keys, {
     mods = 'ALT|CTRL',
     action = hide_other_apps_action,
 })
+
+-- Forward modified paging keys to pane applications instead of letting
+-- WezTerm's built-in host scrollback bindings consume them.
+table.insert(keys, {
+    key = 'PageUp',
+    mods = 'SHIFT',
+    action = wezterm.action.SendString '\027[5;2~',
+})
+table.insert(keys, {
+    key = 'PageDown',
+    mods = 'SHIFT',
+    action = wezterm.action.SendString '\027[6;2~',
+})
+
 config.keys = keys
 
 return config

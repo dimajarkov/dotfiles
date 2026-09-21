@@ -1,5 +1,6 @@
 require("hs.ipc")
 hs.autoLaunch(true)
+require("reminders-vim").start()
 
 -- Retain long-lived Hammerspoon objects so garbage collection cannot disable them.
 local arcNavigation = {}
