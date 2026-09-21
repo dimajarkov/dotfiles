@@ -5,7 +5,7 @@ shell_mode = "auto"
 new_cwd = "follow"
 
 [theme]
-name = "dracula"
+name = "gruvbox"
 auto_switch = false
 dark_name = "catppuccin"
 light_name = "catppuccin-latte"
@@ -85,7 +85,7 @@ tab_bar_right = [
 tab_bar_right_separator = " "
 
 [ui.toast]
-delivery = "off"
+delivery = "system"
 delay_seconds = 2
 
 [ui.sound]

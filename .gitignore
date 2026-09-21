@@ -19,5 +19,8 @@ __pycache__/
 result
 result-*
 
+# Local dependency state
+home/.pi/agent/**/node_modules
+
 # Local validation state
 .no-mistakes/

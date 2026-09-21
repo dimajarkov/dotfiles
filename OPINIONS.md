@@ -21,6 +21,11 @@
 - Automation should reduce repeated work without hiding evidence, uncertainty, or the boundary between source material and interpretation.
 - Weak signals should not become durable beliefs merely because an agent can summarize them.
 - An agent should surface contradictions and stale assumptions rather than averaging them into a smooth but inaccurate story.
+- Codex is the default for agent work, and Claude should not be selected for agents.
+- Computer-use work should use Codex Computer Use.
+- Long-running grunt work should use Codex with `/goal` prompts.
+- Planning work should use Codex Sol 5.6 with xhigh reasoning.
+- Small changes should use the Pi harness with Codex Luna 5.6 and xhigh reasoning.
 
 ## AI, learning, and responsibility
 

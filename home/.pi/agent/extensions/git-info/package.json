@@ -1,0 +1,21 @@
+{
+  "name": "git-info",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit -p .",
+    "prepare": "effect-tsgo patch",
+    "test": "node --test --experimental-strip-types process.test.ts refresh-coordinator.test.ts"
+  },
+  "dependencies": {
+    "@effect/platform-node": "^4.0.0-beta.99",
+    "effect": "^4.0.0-beta.99"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.85.0",
+    "@earendil-works/pi-tui": "^0.85.0",
+    "@effect/tsgo": "^0.24.2",
+    "@types/node": "^22.19.19",
+    "typescript": "^7.0.2"
+  }
+}

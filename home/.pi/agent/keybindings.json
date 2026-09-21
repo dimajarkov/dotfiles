@@ -1,6 +1,6 @@
 {
-  "tui.altScreen.pageUp": [],
-  "tui.altScreen.pageDown": [],
-  "tui.altScreen.lineUp": "pageUp",
-  "tui.altScreen.lineDown": "pageDown"
+  "tui.altScreen.pageUp": "pageUp",
+  "tui.altScreen.pageDown": "pageDown",
+  "tui.altScreen.lineUp": "shift+pageUp",
+  "tui.altScreen.lineDown": "shift+pageDown"
 }
