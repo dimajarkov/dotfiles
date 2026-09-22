@@ -214,8 +214,8 @@ export default function (pi: ExtensionAPI) {
     });
     ui?.notify(
       snap.status === "error"
-        ? `by the way “${snap.title}” failed — reopen it with /subagents`
-        : `by the way “${snap.title}” answered — reopen it with /subagents`,
+        ? `by the way “${snap.title}” failed - reopen it with /subagents`
+        : `by the way “${snap.title}” answered - reopen it with /subagents`,
       snap.status === "error" ? "error" : "info",
     );
   };
@@ -721,26 +721,31 @@ export default function (pi: ExtensionAPI) {
     handler: runByTheWay,
   });
 
+  const openSubagentsDashboard = async (ctx: ExtensionContext) => {
+    if (ctx.mode !== "tui") {
+      if (ctx.hasUI)
+        ctx.ui.notify(
+          "Subagent takeover is only available in the TUI",
+          "error",
+        );
+      return;
+    }
+    const manager = await getManager();
+    if (manager.view.size() === 0) {
+      ctx.ui.notify(
+        "No subagents yet. The agent spawns them with subagent_spawn.",
+        "info",
+      );
+      return;
+    }
+    await openSubagentPicker(ctx, manager.view);
+  };
+
+  // Keep the dashboard command-only. Pi reserves several global shortcuts,
+  // including ctrl+s for saving model selections, and extension overrides
+  // produce startup diagnostics that can hide real extension failures.
   pi.registerCommand("subagents", {
     description: "List, inspect, and take over subagents",
-    handler: async (_args, ctx) => {
-      if (ctx.mode !== "tui") {
-        if (ctx.hasUI)
-          ctx.ui.notify(
-            "Subagent takeover is only available in the TUI",
-            "error",
-          );
-        return;
-      }
-      const manager = await getManager();
-      if (manager.view.size() === 0) {
-        ctx.ui.notify(
-          "No subagents yet. The agent spawns them with subagent_spawn.",
-          "info",
-        );
-        return;
-      }
-      await openSubagentPicker(ctx, manager.view);
-    },
+    handler: async (_args, ctx) => openSubagentsDashboard(ctx),
   });
 }

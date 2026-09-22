@@ -68,7 +68,9 @@ export function formatActivityStatus(theme: Theme, counts: ActivityCounts) {
   if (counts.failed > 0) {
     parts.push(theme.fg("error", `${SQUARE} ${counts.failed} failed`));
   }
-  parts.push(theme.fg("accent", "/subagents") + theme.fg("dim", " to view"));
+  parts.push(
+    theme.fg("accent", "/subagents") + theme.fg("dim", " to view"),
+  );
 
   return `${theme.fg("muted", "subagents:")} ${parts.join(theme.fg("dim", " · "))}`;
 }
