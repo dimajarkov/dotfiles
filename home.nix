@@ -373,6 +373,8 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/ask-user/package-lock.json";
   home.file.".pi/agent/extensions/prime-style.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prime-style.ts";
+  home.file.".pi/agent/extensions/mcp-shortcut.ts".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/mcp-shortcut.ts";
   home.file.".pi/agent/extensions/prime-parity.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prime-parity.ts";
   home.file.".pi/agent/extensions/prompt-snippets".source =
