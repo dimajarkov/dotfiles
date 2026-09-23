@@ -2,16 +2,16 @@
 
 pkgs.buildNpmPackage rec {
   pname = "pi-coding-agent";
-  version = "0.85.0";
+  version = "0.87.0";
 
   src = pkgs.fetchFromGitHub {
     owner = "earendil-works";
     repo = "pi";
-    rev = "107d79f11072bbc8a3a757ed7fd69596bee7d68c";
-    hash = "sha256-gznGlneVCx3htxRiJq0/futm4qLR9Bzfv3UwP3ES9v0=";
+    rev = "16787ad5b2dc748047f314ca1bfe7708f30f54f3";
+    hash = "sha256-7YkIA5IEs4U0qnoaO3IzlY+p/M7j30fSVelLeyoV+F8=";
   };
 
-  npmDepsHash = "sha256-K/KiukwTHwu4HE8hUu7ur3bxggwfO0WL+QDI0FtxP3I=";
+  npmDepsHash = "sha256-fbxwpQHnrUihO9MU72m331Uwt9dv0fQtEjdJ9hU8UxA=";
 
   # Native queue admission must be observable before acknowledging child control.
   patches = [ ../patches/pi-native-message-admission.patch ];
@@ -19,7 +19,7 @@ pkgs.buildNpmPackage rec {
   postPatch = let
     modelData = pkgs.fetchurl {
       url = "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-${version}.tgz";
-      hash = "sha256-RhiL2stVWgdGagER85Y/IJMqFhmeTWz7jUSn/l/G40I=";
+      hash = "sha256-8q353oCdA192+NrfPRSHIOvu9GBqhIqzbug02JWugS8=";
     };
   in ''
     mkdir -p packages/ai/src/providers/data

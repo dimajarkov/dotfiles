@@ -6,6 +6,41 @@ require("reminders-vim").start()
 local arcNavigation = {}
 _G.arcNavigation = arcNavigation
 
+-- Switch apps and bring every open window for the app to the front.
+-- Raycast's app launcher focuses only the app's key window.
+local appNavigation = {}
+_G.appNavigation = appNavigation
+appNavigation.bindings = {
+  ["1"] = { bundleID = "com.github.wez.wezterm", label = "WezTerm" },
+  ["2"] = { bundleID = "com.apple.reminders", label = "Reminders" },
+  ["3"] = { bundleID = "company.thebrowser.Browser", label = "Arc" },
+  ["4"] = { bundleID = "com.openai.codex", label = "ChatGPT" },
+  ["0"] = { bundleID = "com.hnc.Discord", label = "Discord" },
+  ["5"] = { bundleID = "com.apple.iCal", label = "Calendar" },
+}
+appNavigation.hotkeys = {}
+
+local function focusApplication(binding)
+  local app = hs.application.get(binding.bundleID)
+  if not app then
+    app = hs.application.open(binding.bundleID, 1, true)
+  end
+
+  if not app then
+    hs.alert.show("Could not open " .. binding.label)
+    return
+  end
+
+  app:unhide()
+  app:activate(true)
+end
+
+for key, binding in pairs(appNavigation.bindings) do
+  appNavigation.hotkeys[key] = hs.hotkey.bind({ "cmd" }, key, function()
+    focusApplication(binding)
+  end)
+end
+
 local function reloadConfig(changedPaths)
   for _, path in ipairs(changedPaths) do
     if path:match("%.lua$") then
