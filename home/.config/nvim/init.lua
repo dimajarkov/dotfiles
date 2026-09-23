@@ -151,6 +151,8 @@ vim.api.nvim_create_autocmd('TextYankPost', {
 
 -- Plugins
 -- Pack guide: https://echasnovski.com/blog/2026-03-13-a-guide-to-vim-pack#update
+vim.g.loaded_netrw = 1
+vim.g.loaded_netrwPlugin = 1
 vim.pack.add({
 	'https://github.com/ibhagwan/fzf-lua',
 	'https://github.com/nvim-treesitter/nvim-treesitter', -- also $ brew install tree-sitter-cli
@@ -158,6 +160,8 @@ vim.pack.add({
 	'https://github.com/karb94/neoscroll.nvim',
 	'https://github.com/mfussenegger/nvim-dap',
 	'https://github.com/stevearc/oil.nvim',
+	'https://github.com/nvim-tree/nvim-tree.lua',
+	'https://github.com/nvim-tree/nvim-web-devicons',
 	'https://github.com/esmuellert/codediff.nvim',
 	'https://github.com/goolord/alpha-nvim',
 	'https://github.com/MeanderingProgrammer/render-markdown.nvim',
@@ -472,8 +476,8 @@ require("oil").setup({
 		},
 	},
 	columns = {
-		"icon",
 		{ "mtime", highlight = "Comment" },
+		"icon",
 	},
 	view_options = {
 		show_hidden = true,
@@ -484,6 +488,28 @@ require("oil").setup({
 	},
 })
 vim.keymap.set("n", "-", open_oil, { desc = "Open parent directory" })
+
+-- Nvim-tree
+require('nvim-tree').setup({
+	view = {
+		width = 30,
+		side = 'left',
+		preserve_window_proportions = true,
+	},
+	renderer = {
+		group_empty = true,
+	},
+	filters = {
+		dotfiles = false,
+	},
+	update_focused_file = {
+		enable = true,
+		update_root = false,
+	},
+	sync_root_with_cwd = true,
+})
+vim.keymap.set('n', '<leader>e', '<cmd>NvimTreeToggle<cr>', { desc = 'Toggle file explorer' })
+vim.keymap.set('n', '<leader>E', '<cmd>NvimTreeFindFile<cr>', { desc = 'Reveal current file' })
 
 local function git_line_history(start_line, end_line)
 	start_line, end_line = math.min(start_line, end_line), math.max(start_line, end_line)
