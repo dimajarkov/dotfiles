@@ -2,5 +2,12 @@
   "tui.altScreen.pageUp": "pageUp",
   "tui.altScreen.pageDown": "pageDown",
   "tui.altScreen.lineUp": "shift+pageUp",
-  "tui.altScreen.lineDown": "shift+pageDown"
+  "tui.altScreen.lineDown": "shift+pageDown",
+  "tui.select.up": "k",
+  "tui.select.down": "j",
+  "tui.select.pageUp": "l",
+  "tui.select.pageDown": ";",
+  "app.tree.foldOrUp": "alt+l",
+  "app.tree.unfoldOrDown": "alt+;",
+  "app.message.copy": "ctrl+y"
 }
