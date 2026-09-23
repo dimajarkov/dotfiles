@@ -265,10 +265,69 @@ vim.keymap.set('n', 'gd', fzf.lsp_definitions, { desc = 'Go to definition' })
 vim.keymap.set('n', '<leader>fc', '<cmd>FzfLua colorschemes<cr>', { desc = 'Pick colorscheme' })
 
 -- Treesitter
+-- The plugin ships queries but not compiled parsers, so install the languages we
+-- use and keep them in Neovim's managed data directory.
+local treesitter_languages = {
+	'bash',
+	'css',
+	'html',
+	'javascript',
+	'json',
+	'lua',
+	'markdown',
+	'python',
+	'query',
+	'tsx',
+	'typescript',
+	'vim',
+	'vimdoc',
+	'yaml',
+}
+local treesitter = require('nvim-treesitter')
+treesitter.setup({
+	install_dir = vim.fn.stdpath('data') .. '/site',
+})
+
+local treesitter_filetypes = {
+	'bash',
+	'css',
+	'html',
+	'javascript',
+	'javascriptreact',
+	'json',
+	'lua',
+	'markdown',
+	'python',
+	'query',
+	'tsx',
+	'typescript',
+	'typescriptreact',
+	'vim',
+	'vimdoc',
+	'yaml',
+}
+local function start_treesitter(buf)
+	if vim.api.nvim_buf_is_valid(buf) then
+		pcall(vim.treesitter.start, buf)
+	end
+end
+
 vim.cmd('syntax off') -- Make it obvious if treesitter is missing
 vim.api.nvim_create_autocmd('FileType', {
-	callback = function() pcall(vim.treesitter.start) end,
+	pattern = treesitter_filetypes,
+	callback = function(args) start_treesitter(args.buf) end,
 })
+
+-- Refresh already-open buffers after a first-run parser installation finishes.
+local treesitter_install = treesitter.install(treesitter_languages)
+treesitter_install:await(function(err)
+	if err then return end
+	for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+		if vim.tbl_contains(treesitter_filetypes, vim.bo[buf].filetype) then
+			start_treesitter(buf)
+		end
+	end
+end)
 
 -- LSP
 vim.lsp.enable({
