@@ -450,8 +450,22 @@ vim.keymap.set('n', '<Left>', dap.step_out, { desc = 'Debug step out' })
 vim.keymap.set('n', '<Up>', dap.restart_frame, { desc = 'Debug restart frame' })
 
 -- Oil.nvim
+local function select_oil_entry()
+	local oil = require("oil")
+	local entry = oil.get_cursor_entry()
+	local dir = oil.get_current_dir()
+
+	if entry and entry.type == "file" and dir and vim.endswith(entry.name:lower(), ".pdf") then
+		vim.ui.open(dir .. entry.name)
+		return
+	end
+
+	require("oil.actions").select.callback()
+end
+
 require("oil").setup({
 	keymaps = {
+		["<CR>"] = { callback = select_oil_entry, desc = "Open PDFs externally" },
 		["<C-h>"] = "<C-w>h",
 		["<BS>"] = "<C-w>h", -- only if your terminal sends Ctrl-h as BS
 		["<C-l>"] = "<C-w>l",
