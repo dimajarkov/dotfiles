@@ -64,7 +64,7 @@ function capped(text: string, maxBytes: number, notice: string) {
 export function redactSecrets(text: string) {
   return text
     .replace(
-      /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?(?:-----END \1-----|(?=-----BEGIN )|$)/gi,
+      /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?)-----[\s\S]*?(?:-----END \1-----|(?=-----BEGIN )|$)/gi,
       "[REDACTED]",
     )
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [REDACTED]")

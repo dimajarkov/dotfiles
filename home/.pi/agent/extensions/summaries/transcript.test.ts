@@ -118,7 +118,7 @@ test("transcript omits thinking, images, and recap entries while redacting tool 
   assert.match(transcript, /tool arguments capped/);
 });
 
-test("serialized transcripts redact complete and truncated PEM private keys", () => {
+test("serialized transcripts redact complete and truncated PEM and OpenPGP private keys", () => {
   const completeKey = [
     "-----BEGIN OPENSSH PRIVATE KEY-----",
     "synthetic-complete-key-material",
@@ -128,19 +128,33 @@ test("serialized transcripts redact complete and truncated PEM private keys", ()
     "-----BEGIN RSA PRIVATE KEY-----",
     "synthetic-truncated-key-material",
   ].join("\n");
+  const completeArmoredKey = [
+    "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+    "synthetic-complete-armored-key-material",
+    "-----END PGP PRIVATE KEY BLOCK-----",
+  ].join("\n");
+  const truncatedArmoredKey = [
+    "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+    "synthetic-truncated-armored-key-material",
+  ].join("\n");
   const transcript = serializeRunTranscript([
     entry("key-output", {
       role: "toolResult",
       toolCallId: "call-key-output",
       toolName: "bash",
-      content: [{ type: "text", text: `${completeKey}\n${truncatedKey}` }],
+      content: [
+        {
+          type: "text",
+          text: [completeKey, truncatedKey, completeArmoredKey, truncatedArmoredKey].join("\n"),
+        },
+      ],
       isError: false,
       timestamp: 0,
     }),
   ]);
 
   assert.match(transcript, /\[REDACTED\]/);
-  assert.doesNotMatch(transcript, /synthetic-(?:complete|truncated)-key-material/);
+  assert.doesNotMatch(transcript, /synthetic-(?:complete|truncated)(?:-armored)?-key-material/);
   assert.doesNotMatch(transcript, /-----BEGIN|-----END/);
 });
 

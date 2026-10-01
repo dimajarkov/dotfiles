@@ -57,3 +57,7 @@ These are common instructions for Dmitri's agents across all scenarios.
 When you are working on something that would benefit from being informed by Dmitri's viewpoints, read `~/OPINIONS.md` to understand what Dmitri believes.
 Treat it as living context, not a source of objective facts or a replacement for current evidence.
 Preserve uncertainty and flag meaningful tension or opinion drift instead of silently forcing alignment.
+
+## Settled Pi Policies
+
+Follow `../docs/agent-capability-policy.md` for approved Pi routing, data handling, and tool capability boundaries.
