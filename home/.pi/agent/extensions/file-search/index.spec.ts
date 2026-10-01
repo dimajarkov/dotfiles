@@ -22,7 +22,7 @@ import {
   type ReleaseAsset,
   type ResolvedBinary,
 } from "./src/binaries.ts";
-import { formatCapturedOutput, formatOutput } from "./src/output.ts";
+import { formatCapturedOutput } from "./src/output.ts";
 import { executeSearchProcess } from "./src/process.ts";
 import { installNotifications, makeBinaryInitializers } from "./index.ts";
 
@@ -406,38 +406,3 @@ it.effect("process output is streamed to a complete spill file", () =>
     });
   }).pipe(Effect.provide(NodeServices.layer)),
 );
-
-it("output: small results pass through untouched", async () => {
-  const formatted = await formatOutput("a.ts\nb.ts\n", {
-    tempPrefix: "pi-fd-",
-    persistFullOutput: () => Promise.reject(new Error("should not persist")),
-  });
-  assert.equal(formatted.text, "a.ts\nb.ts");
-  assert.equal(formatted.lineCount, 2);
-  assert.isFalse(formatted.truncated);
-  assert.isUndefined(formatted.fullOutputPath);
-});
-
-it("output: oversized results are truncated and persisted", async () => {
-  const bigOutput = Array.from({ length: 3000 }, (_, i) => `file-${i}.ts`).join(
-    "\n",
-  );
-  let persisted: string | undefined;
-  const formatted = await formatOutput(bigOutput, {
-    tempPrefix: "pi-fd-",
-    persistFullOutput: async (full) => {
-      persisted = full;
-      return "/tmp/fake/output.txt";
-    },
-  });
-  assert.isTrue(formatted.truncated);
-  assert.equal(formatted.fullOutputPath, "/tmp/fake/output.txt");
-  assert.equal(persisted, bigOutput);
-  assert.match(formatted.text, /\[Output truncated: 2000 of 3000 lines/);
-  assert.match(
-    formatted.text,
-    /Full output saved to: \/tmp\/fake\/output\.txt\]/,
-  );
-  const shownLines = formatted.text.split("\n");
-  assert.equal(shownLines[0], "file-0.ts");
-});

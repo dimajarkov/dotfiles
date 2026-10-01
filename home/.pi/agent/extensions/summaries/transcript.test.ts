@@ -118,6 +118,32 @@ test("transcript omits thinking, images, and recap entries while redacting tool 
   assert.match(transcript, /tool arguments capped/);
 });
 
+test("serialized transcripts redact complete and truncated PEM private keys", () => {
+  const completeKey = [
+    "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "synthetic-complete-key-material",
+    "-----END OPENSSH PRIVATE KEY-----",
+  ].join("\n");
+  const truncatedKey = [
+    "-----BEGIN RSA PRIVATE KEY-----",
+    "synthetic-truncated-key-material",
+  ].join("\n");
+  const transcript = serializeRunTranscript([
+    entry("key-output", {
+      role: "toolResult",
+      toolCallId: "call-key-output",
+      toolName: "bash",
+      content: [{ type: "text", text: `${completeKey}\n${truncatedKey}` }],
+      isError: false,
+      timestamp: 0,
+    }),
+  ]);
+
+  assert.match(transcript, /\[REDACTED\]/);
+  assert.doesNotMatch(transcript, /synthetic-(?:complete|truncated)-key-material/);
+  assert.doesNotMatch(transcript, /-----BEGIN|-----END/);
+});
+
 test("fallback recap derives a short title from the run request", () => {
   const entries = [
     entry("user", {
