@@ -1,29 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  createAssistantMessageEventStream,
-  type Context,
-  type Model,
-  type SimpleStreamOptions,
-} from "@earendil-works/pi-ai";
+import { type Context, type Model } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
-import {
-  parseRecapResponse,
-  reasoningOptions,
-  summarizeRun,
-} from "./src/summarizer.ts";
+import { parseRecapResponse, summarizeRun } from "./src/summarizer.ts";
 
-test("omits reasoning when configured off", () => {
-  assert.deepEqual(reasoningOptions("off"), {});
-  assert.deepEqual(reasoningOptions("medium"), { reasoning: "medium" });
-});
-
-test("uses the composed provider for extension-registered summary models", async () => {
-  type SmokeModel = Model<"summary-smoke">;
+test("uses ModelRegistry.complete for extension-registered summary models", async () => {
+  type SmokeModel = Model<"openai-codex-responses">;
   const model: SmokeModel = {
     id: "smoke",
     name: "Summary smoke",
-    api: "summary-smoke",
+    api: "openai-codex-responses",
     provider: "summary-smoke",
     baseUrl: "https://summary-smoke.invalid/v1",
     reasoning: false,
@@ -33,22 +19,32 @@ test("uses the composed provider for extension-registered summary models", async
     maxTokens: 1_000,
   };
   let called = false;
-  const provider = {
-    streamSimple(
+  const modelRegistry = {
+    find: () => model,
+    async complete(
       receivedModel: SmokeModel,
-      _context: Context,
-      options?: SimpleStreamOptions,
+      context: Context,
+      options?: {
+        maxRetries?: number;
+        timeoutMs?: number;
+        reasoningEffort?: string;
+        apiKey?: string;
+      },
     ) {
       called = true;
       assert.equal(receivedModel.baseUrl, "https://summary-smoke.invalid/v1");
-      assert.equal(options?.apiKey, "summary-smoke-key");
-      const stream = createAssistantMessageEventStream();
-      stream.end({
-        role: "assistant",
+      assert.equal(context.systemPrompt?.includes("recap"), true);
+      assert.equal(context.systemPrompt?.includes('"title"'), true);
+      assert.equal(options?.maxRetries, 1);
+      assert.equal(options?.timeoutMs, 40_000);
+      assert.equal(options?.reasoningEffort, "medium");
+      assert.equal(options?.apiKey, undefined);
+      return {
+        role: "assistant" as const,
         content: [
           {
-            type: "text",
-            text: '{"recap":"Extension provider used.","next":"Continue."}',
+            type: "text" as const,
+            text: '{"title":"Use extension summary provider","recap":"Extension provider used.","next":"Continue."}',
           },
         ],
         api: receivedModel.api,
@@ -68,20 +64,10 @@ test("uses the composed provider for extension-registered summary models", async
             total: 0,
           },
         },
-        stopReason: "stop",
+        stopReason: "stop" as const,
         timestamp: Date.now(),
-      });
-      return stream;
+      };
     },
-  };
-  const modelRegistry = {
-    find: () => model,
-    getApiKeyAndHeaders: async () => ({
-      ok: true as const,
-      apiKey: "summary-smoke-key",
-      baseUrl: "https://summary-smoke.invalid/v1",
-    }),
-    getProvider: () => provider,
   } as unknown as ModelRegistry;
 
   const recap = await summarizeRun({
@@ -89,7 +75,7 @@ test("uses the composed provider for extension-registered summary models", async
     config: {
       provider: "summary-smoke",
       model: "smoke",
-      reasoning: "off",
+      reasoning: "medium",
     },
     transcript: "USER\\nSay smoke",
     signal: new AbortController().signal,
@@ -97,29 +83,41 @@ test("uses the composed provider for extension-registered summary models", async
 
   assert.equal(called, true);
   assert.deepEqual(recap, {
+    title: "Use extension summary provider",
     recap: "Extension provider used.",
     next: "Continue.",
   });
 });
 
-test("parses strict recap JSON", () => {
+test("parses strict recap JSON with a semantic title", () => {
   assert.deepEqual(
     parseRecapResponse(
-      '{"recap":"Updated config and ran focused tests.","next":"Review the diff."}',
+      '{"title":"Add semantic recap titles","recap":"Updated config and ran focused tests.","next":"Review the diff."}',
     ),
     {
+      title: "Add semantic recap titles",
       recap: "Updated config and ran focused tests.",
       next: "Review the diff.",
     },
   );
 });
 
+test("normalizes generated titles into short plain-text headings", () => {
+  assert.equal(
+    parseRecapResponse(
+      '{"title":"**Add semantic titles to completed Pi agent recaps everywhere now.**","recap":"Updated the recap card.","next":"Reload Pi."}',
+    ).title,
+    "Add semantic titles to completed Pi agent recaps",
+  );
+});
+
 test("defensively extracts fenced or surrounded JSON and normalizes Next", () => {
   assert.deepEqual(
     parseRecapResponse(
-      'Result follows:\n```json\n{"recap":"- Added the extension\\n- Tests pass","next":"Next: Reload Pi."}\n```',
+      'Result follows:\n```json\n{"title":"Build recap extension","recap":"- Added the extension\\n- Tests pass","next":"Next: Reload Pi."}\n```',
     ),
     {
+      title: "Build recap extension",
       recap: "- Added the extension\n- Tests pass",
       next: "Reload Pi.",
     },
@@ -129,14 +127,18 @@ test("defensively extracts fenced or surrounded JSON and normalizes Next", () =>
 test("rejects malformed or incomplete output", () => {
   assert.throws(() => parseRecapResponse("not json"), /valid recap JSON/);
   assert.throws(
-    () => parseRecapResponse('{"recap":"missing next"}'),
+    () => parseRecapResponse('{"recap":"missing title","next":"nothing remains"}'),
     /valid recap JSON/,
   );
   assert.throws(
     () =>
       parseRecapResponse(
-        '{"recap":"done","next":"nothing","extra":"not allowed"}',
+        '{"title":"Do the work","recap":"done","next":"nothing","extra":"not allowed"}',
       ),
+    /valid recap JSON/,
+  );
+  assert.throws(
+    () => parseRecapResponse('{"title":"Run recap","recap":"done","next":"nothing"}'),
     /valid recap JSON/,
   );
 });
@@ -144,8 +146,12 @@ test("rejects malformed or incomplete output", () => {
 test("strips terminal control sequences from recap fields", () => {
   assert.deepEqual(
     parseRecapResponse(
-      '{"recap":"Updated \\u001b[31mconfig\\u001b[0m.","next":"Review it.\\u0007"}',
+      '{"title":"Update \\u001b[34mconfig\\u001b[0m","recap":"Updated \\u001b[31mconfig\\u001b[0m.","next":"Review it.\\u0007"}',
     ),
-    { recap: "Updated config.", next: "Review it." },
+    {
+      title: "Update config",
+      recap: "Updated config.",
+      next: "Review it.",
+    },
   );
 });

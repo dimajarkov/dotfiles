@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
+  buildFallbackRecap,
   createRunBoundary,
   getRunEntries,
   serializeRunTranscript,
@@ -72,8 +73,7 @@ test("transcript omits thinking, images, and recap entries while redacting tool 
           id: "call-1",
           name: "bash",
           arguments: {
-            command:
-              "curl -H 'Authorization: Bearer very-secret-token' https://example.test",
+            command: "curl -H 'Authorization: Bearer very-secret-token' https://example.test",
             apiKey: "sk-super-secret-value",
             payload: "x".repeat(10_000),
           },
@@ -116,6 +116,29 @@ test("transcript omits thinking, images, and recap entries while redacting tool 
   assert.doesNotMatch(transcript, /old recap/);
   assert.match(transcript, /\[REDACTED\]/);
   assert.match(transcript, /tool arguments capped/);
+});
+
+test("fallback recap derives a short title from the run request", () => {
+  const entries = [
+    entry("user", {
+      role: "user",
+      content:
+        "I want you to add semantic titles to the run recap extension instead of a generic heading.",
+      timestamp: 0,
+    }),
+    entry("assistant", {
+      role: "assistant",
+      content: [{ type: "text", text: "Added semantic recap titles." }],
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      model: "gpt-5.6-luna",
+      usage,
+      stopReason: "stop",
+      timestamp: 1,
+    }),
+  ];
+
+  assert.equal(buildFallbackRecap(entries).title, "Add semantic titles to the run recap extension");
 });
 
 test("transcript enforces per-result and total byte caps", () => {

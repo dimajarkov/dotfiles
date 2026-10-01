@@ -2,6 +2,18 @@
 vim.g.mapleader = ' '
 vim.g.maplocalleader = ' '
 
+-- Detect files changed by external coding agents while Nvim is idle.
+vim.o.autoread = true
+vim.o.updatetime = 500
+
+vim.api.nvim_create_autocmd({ 'FocusGained', 'BufEnter', 'CursorHold' }, {
+	group = vim.api.nvim_create_augroup('auto-read-files', { clear = true }),
+	desc = 'Reload buffers changed outside Neovim',
+	callback = function()
+		vim.cmd('checktime')
+	end,
+})
+
 -- Recover if a terminal pane's working directory was removed or is unreadable before Nvim starts.
 -- Oil's filetype fallback needs a readable cwd when it opens an unresolved path.
 local uv = vim.uv or vim.loop

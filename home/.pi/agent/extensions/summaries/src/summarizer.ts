@@ -1,9 +1,10 @@
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { Data, Effect } from "effect";
 import type { SummaryConfig } from "./config.ts";
 import { buildSummaryPrompt, SUMMARY_SYSTEM_PROMPT } from "./prompt.ts";
 
+const TITLE_MAX_LENGTH = 80;
 const RECAP_MAX_LENGTH = 2_400;
 const NEXT_MAX_LENGTH = 400;
 
@@ -13,6 +14,7 @@ class SummaryError extends Data.TaggedError("SummaryError")<{
 }> {}
 
 export interface RunRecap {
+  readonly title: string;
   readonly recap: string;
   readonly next: string;
 }
@@ -31,9 +33,7 @@ function cleanField(value: string, maxLength: number) {
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "")
     .trim();
-  return cleaned.length <= maxLength
-    ? cleaned
-    : `${cleaned.slice(0, maxLength - 1).trimEnd()}…`;
+  return cleaned.length <= maxLength ? cleaned : `${cleaned.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function parseCandidate(candidate: string) {
@@ -41,20 +41,29 @@ function parseCandidate(candidate: string) {
     const value: unknown = JSON.parse(candidate);
     if (
       !isRecord(value) ||
-      Object.keys(value).sort().join(",") !== "next,recap" ||
+      Object.keys(value).sort().join(",") !== "next,recap,title" ||
+      typeof value.title !== "string" ||
       typeof value.recap !== "string" ||
       typeof value.next !== "string"
     ) {
       return undefined;
     }
 
+    const title = cleanField(value.title, TITLE_MAX_LENGTH)
+      .replace(/^(?:[-*#>]\s*)+/, "")
+      .replace(/^[`"'_*~]+|[`"'_*~]+$/g, "")
+      .replace(/\s+/g, " ")
+      .replace(/[.!?:;…]+$/, "")
+      .trim()
+      .split(/\s+/)
+      .slice(0, 8)
+      .join(" ");
     const recap = cleanField(value.recap, RECAP_MAX_LENGTH);
-    const next = cleanField(
-      value.next.replace(/^next\s*:\s*/i, ""),
-      NEXT_MAX_LENGTH,
-    );
-    if (!recap || !next) return undefined;
-    return { recap, next } satisfies RunRecap;
+    const next = cleanField(value.next.replace(/^next\s*:\s*/i, ""), NEXT_MAX_LENGTH);
+    if (!title || !recap || !next || /^(?:(?:run|work)\s+)?(?:recap|summary)\b/i.test(title)) {
+      return undefined;
+    }
+    return { title, recap, next } satisfies RunRecap;
   } catch {
     return undefined;
   }
@@ -81,8 +90,29 @@ export function parseRecapResponse(text: string) {
   });
 }
 
-export function reasoningOptions(reasoning: SummaryConfig["reasoning"]) {
-  return reasoning === "off" ? {} : { reasoning };
+function completionOptions(
+  model: Model<Api>,
+  reasoning: SummaryConfig["reasoning"],
+  signal: AbortSignal,
+) {
+  const base = {
+    maxTokens: 1_000,
+    maxRetries: 1,
+    signal,
+    timeoutMs: 40_000,
+  };
+  if (
+    reasoning === "off" ||
+    ![
+      "openai-completions",
+      "openai-responses",
+      "openai-codex-responses",
+      "azure-openai-responses",
+    ].includes(model.api)
+  ) {
+    return base;
+  }
+  return { ...base, reasoningEffort: reasoning };
 }
 
 function assistantText(content: AssistantMessage["content"]) {
@@ -100,55 +130,29 @@ export function summarizeRun(options: {
 }) {
   const completion = Effect.tryPromise({
     try: async (effectSignal) => {
-      const model = options.modelRegistry.find(
-        options.config.provider,
-        options.config.model,
-      );
+      const model = options.modelRegistry.find(options.config.provider, options.config.model);
       if (!model) {
         throw new SummaryError({
           message: `Summary model is unavailable: ${options.config.provider}/${options.config.model}`,
         });
       }
 
-      const auth = await options.modelRegistry.getApiKeyAndHeaders(model);
-      if (!auth.ok) throw new SummaryError({ message: auth.error });
-      const provider = options.modelRegistry.getProvider(model.provider);
-      if (!provider) {
-        throw new SummaryError({
-          message: `Summary provider is unavailable: ${model.provider}`,
-        });
-      }
+      const response = await options.modelRegistry.complete(
+        model,
+        {
+          systemPrompt: SUMMARY_SYSTEM_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content: buildSummaryPrompt(options.transcript),
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        completionOptions(model, options.config.reasoning, effectSignal),
+      );
 
-      const response = await provider
-        .streamSimple(
-          auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model,
-          {
-            systemPrompt: SUMMARY_SYSTEM_PROMPT,
-            messages: [
-              {
-                role: "user",
-                content: buildSummaryPrompt(options.transcript),
-                timestamp: Date.now(),
-              },
-            ],
-          },
-          {
-            apiKey: auth.apiKey,
-            env: auth.env,
-            headers: auth.headers,
-            maxTokens: 1_000,
-            maxRetries: 1,
-            signal: effectSignal,
-            timeoutMs: 40_000,
-            ...reasoningOptions(options.config.reasoning),
-          },
-        )
-        .result();
-
-      if (
-        response.stopReason === "error" ||
-        response.stopReason === "aborted"
-      ) {
+      if (response.stopReason === "error" || response.stopReason === "aborted") {
         throw new SummaryError({
           message: response.errorMessage ?? "Summary model request failed.",
         });

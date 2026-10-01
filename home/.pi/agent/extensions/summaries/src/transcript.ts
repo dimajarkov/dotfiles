@@ -29,14 +29,9 @@ export function createRunBoundary() {
   };
 }
 
-export function getRunEntries(
-  branch: readonly SessionEntry[],
-  baselineLeafId: string | null,
-) {
+export function getRunEntries(branch: readonly SessionEntry[], baselineLeafId: string | null) {
   if (baselineLeafId === null) return [...branch];
-  const baselineIndex = branch.findIndex(
-    (entry) => entry.id === baselineLeafId,
-  );
+  const baselineIndex = branch.findIndex((entry) => entry.id === baselineLeafId);
   return baselineIndex === -1 ? [] : branch.slice(baselineIndex + 1);
 }
 
@@ -77,10 +72,7 @@ export function redactSecrets(text: string) {
       /(["']?(?:api[_-]?key|access[_-]?key|authorization|cookie|credential|password|passwd|private[_-]?key|secret|token)["']?\s*[:=]\s*)(["']?)[^\s,;}]+\2/gi,
       "$1[REDACTED]",
     )
-    .replace(
-      /([?&](?:api[_-]?key|access[_-]?token|key|secret|token)=)[^&#\s]+/gi,
-      "$1[REDACTED]",
-    );
+    .replace(/([?&](?:api[_-]?key|access[_-]?token|key|secret|token)=)[^&#\s]+/gi, "$1[REDACTED]");
 }
 
 function sanitizeValue(value: unknown, key?: string, depth = 0): unknown {
@@ -92,9 +84,7 @@ function sanitizeValue(value: unknown, key?: string, depth = 0): unknown {
     return `[${typeof value} omitted]`;
   }
   if (Array.isArray(value)) {
-    const items = value
-      .slice(0, 30)
-      .map((item) => sanitizeValue(item, undefined, depth + 1));
+    const items = value.slice(0, 30).map((item) => sanitizeValue(item, undefined, depth + 1));
     if (value.length > items.length) items.push("[additional items omitted]");
     return items;
   }
@@ -166,11 +156,7 @@ function serializeMessage(entry: Extract<SessionEntry, { type: "message" }>) {
   }
 
   if (message.role === "toolResult") {
-    const text = capped(
-      textContent(message.content),
-      TOOL_RESULT_MAX_BYTES,
-      "tool result capped",
-    );
+    const text = capped(textContent(message.content), TOOL_RESULT_MAX_BYTES, "tool result capped");
     return `TOOL RESULT ${message.toolName}${message.isError ? " (error)" : ""}\n${text || "(no text output)"}`;
   }
 
@@ -206,10 +192,7 @@ export function serializeRunTranscript(
       const section = serializeMessage(entry);
       return section ? [section] : [];
     }
-    if (
-      entry.type === "custom_message" &&
-      entry.customType !== "summary-recap"
-    ) {
+    if (entry.type === "custom_message" && entry.customType !== "summary-recap") {
       const text = textContent(entry.content);
       return text ? [`EXTENSION ${entry.customType}\n${text}`] : [];
     }
@@ -224,21 +207,66 @@ export function serializeRunTranscript(
   const headBytes = Math.floor((maxBytes - markerBytes) * 0.58);
   const tailBytes = maxBytes - markerBytes - headBytes;
   const head = truncateUtf8(transcript, headBytes);
-  const reversedTail = truncateUtf8(
-    [...transcript].reverse().join(""),
-    tailBytes,
-  );
+  const reversedTail = truncateUtf8([...transcript].reverse().join(""), tailBytes);
   const tail = [...reversedTail].reverse().join("");
   return `${head}${marker}${tail}`;
 }
 
+export function deriveRecapTitle(text: string) {
+  const safeText = text
+    .replace(
+      // eslint-disable-next-line no-control-regex
+      /\x1b(?:\][^\x07]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])/g,
+      "",
+    )
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "");
+  const fragments = safeText
+    .split(/\n+|(?<=[.!?])\s+/)
+    .map((fragment) => fragment.replace(/^(?:[-*#>]\s*)+/, "").trim())
+    .filter(Boolean);
+  const meaningful =
+    fragments.find(
+      (fragment) =>
+        !/^(?:(?:all set|completed|done|finished)[.!?]*|the main-agent run completed[.!?]*|the run used \d+ tool calls?\b.*)$/i.test(
+          fragment,
+        ),
+    ) ?? fragments[0];
+  if (!meaningful) return "Completed agent work";
+
+  const title = meaningful
+    .replace(
+      /^(?:(?:please\s+)?(?:can|could|would|will)\s+you\s+|i\s+(?:want|need|would like)\s+(?:you\s+)?to\s+|(?:we\s+)?(?:want|need)\s+to\s+)/i,
+      "",
+    )
+    .replace(/^[`"'_*~]+|[`"'_*~]+$/g, "")
+    .replace(/[.!?:;…]+$/, "")
+    .split(/\s+/)
+    .slice(0, 8)
+    .join(" ");
+  if (!title) return "Completed agent work";
+  const shortTitle =
+    title.length <= 80
+      ? title
+      : title
+          .slice(0, 80)
+          .replace(/\s+\S*$/, "")
+          .trimEnd();
+  return `${shortTitle[0]?.toUpperCase() ?? ""}${shortTitle.slice(1)}`;
+}
+
 export function buildFallbackRecap(entries: readonly SessionEntry[]) {
   const toolNames: string[] = [];
+  let requestedWork = "";
   let finalAssistantText = "";
 
   for (const entry of entries) {
-    if (entry.type !== "message" || entry.message.role !== "assistant")
+    if (entry.type !== "message") continue;
+    if (entry.message.role === "user" && !requestedWork) {
+      requestedWork = textContent(entry.message.content).trim();
       continue;
+    }
+    if (entry.message.role !== "assistant") continue;
     for (const block of entry.message.content) {
       if (block.type === "toolCall") toolNames.push(block.name);
       if (block.type === "text" && block.text.trim()) {
@@ -257,6 +285,7 @@ export function buildFallbackRecap(entries: readonly SessionEntry[]) {
     : "";
 
   return {
+    title: deriveRecapTitle(requestedWork || finalAssistantText),
     recap: `The main-agent run completed.${activity}${result}`.trim(),
     next: "Review the completed work above and continue if anything remains.",
   };

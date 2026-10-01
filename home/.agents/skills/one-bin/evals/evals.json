@@ -3,8 +3,8 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Install ESLint globally so I can use it in this repository. The repository already has pnpm-lock.yaml.",
-      "expected_output": "The agent invokes one-bin, refuses an unnecessary global install, uses the repository's pnpm owner, and proposes a project-local dependency or pnpm exec route.",
+      "prompt": "Install TypeScript globally so I can run tsc in this repository. The repository already has pnpm-lock.yaml.",
+      "expected_output": "The agent invokes one-bin because a global install was requested, avoids the unnecessary global installation, uses the repository's pnpm owner, and proposes a project-local dependency or pnpm exec route.",
       "files": []
     },
     {
@@ -22,13 +22,61 @@
     {
       "id": 4,
       "prompt": "Add a dependency to this new personal TypeScript project. It has package.json but no lockfile or packageManager field.",
-      "expected_output": "The agent invokes one-bin decide, confirms the project is genuinely new and personal, defaults to Bun, and creates only bun.lock.",
+      "expected_output": "The agent follows the baseline dependency policy without reading one-bin/SKILL.md or running its audits, confirms the project is genuinely new and personal, defaults to Bun, and creates only bun.lock.",
       "files": []
     },
     {
       "id": 5,
       "prompt": "Put this direct-download macOS app under Homebrew management without losing its data.",
-      "expected_output": "The agent invokes one-bin, audits current provenance and ownership, does not force Homebrew adoption, presents a deliberate one-owner migration with data preservation and App Management checks, and requires approval before removal.",
+      "expected_output": "The agent invokes one-bin, reads the macOS application and removal references, audits current provenance and ownership, does not force Homebrew adoption, presents a deliberate one-owner migration with data preservation and App Management checks, and requires approval and a verified recovery plan before removal.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Add zod to this existing repository. It declares npm@10.9.2 in packageManager and has package-lock.json.",
+      "expected_output": "The agent uses the declared npm workflow to add a project-local dependency and update only package-lock.json, without reading one-bin/SKILL.md, running one-bin audits, or introducing Bun or pnpm lockfiles.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "Update an existing dependency and refresh pnpm-lock.yaml in this pnpm repository.",
+      "expected_output": "The agent uses the repository's declared pnpm version and normal update and validation workflow, without loading one-bin or treating the lockfile update as a manager migration.",
+      "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "Add httpx to this Python project. It uses uv, pyproject.toml, and uv.lock.",
+      "expected_output": "The agent uses the project's uv environment and lockfile without loading one-bin, installing globally, or modifying an agent runtime environment.",
+      "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "Deliberately migrate this npm repository to Bun, including its lockfile, packageManager declaration, and CI install commands.",
+      "expected_output": "The agent loads one-bin and the project-manager migration reference, confirms the target owner, updates declarations and CI consistently, regenerates the Bun lockfile, retires the npm lockfile intentionally, performs a clean install, reviews resolution changes, and validates the project without removing machine-wide npm.",
+      "files": []
+    },
+    {
+      "id": 10,
+      "prompt": "Add a dependency in this directory. It has package.json but no lockfile or packageManager field; I have not said whether it is new or personal.",
+      "expected_output": "The agent checks repository instructions and asks for the missing ownership context before choosing a manager; it does not infer a Bun default or load the machine-wide one-bin workflow for this routine dependency request.",
+      "files": []
+    },
+    {
+      "id": 11,
+      "prompt": "Upgrade this machine-wide CLI. Its executable resolves into /nix/store, but it offers a built-in self-update command.",
+      "expected_output": "The agent loads one-bin and the machine-wide reference, audits executable ownership, updates the declarative Nix configuration rather than using the self-updater, validates and activates through the documented dotfiles workflow, and verifies the command in a fresh shell.",
+      "files": []
+    },
+    {
+      "id": 12,
+      "prompt": "My normal terminal says command not found for a machine-wide CLI I used yesterday. Install another copy so it works again.",
+      "expected_output": "The agent loads one-bin, audits the executable and manager inventories, inspects shell PATH and resolution before assuming absence, and repairs the verified owner's exposure instead of blindly creating another global installation.",
+      "files": []
+    },
+    {
+      "id": 13,
+      "prompt": "Remove this old machine-wide database runtime. I do not know whether anything still uses it or where its data lives.",
+      "expected_output": "The agent loads one-bin and removal safety, identifies the owner, dependents, running services, and data locations, and obtains explicit approval plus a verified recovery plan before removing the runtime or its data.",
       "files": []
     }
   ]
