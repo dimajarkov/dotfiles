@@ -22,5 +22,8 @@ result-*
 # Local dependency state
 home/.pi/agent/**/node_modules
 
+# Local runtime binaries
+home/.pi/agent/bin/
+
 # Local validation state
 .no-mistakes/
