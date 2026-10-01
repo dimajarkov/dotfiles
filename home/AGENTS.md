@@ -19,8 +19,30 @@ These are common instructions for Dmitri's agents across all scenarios.
 - Apply that same high standard to engineering excellence: lint failures, test failures, and test flakiness.
   If you see one, even if it is not caused by what you are working on right now, still get it fixed.
 
+## Treehouse task lifecycle
+
+- Keep task worktrees durably leased (`get --lease` for new work or `lease` for an existing slot) until Dmitri explicitly declares that specific job finished.
+- A PR handoff, merge, passing CI, idle terminal, or agent exit is not completion approval.
+- In the same message as a PR handoff, name the job and slot and include: "Please tell me when Treehouse job '<job>' (slot <slot>) is finished so I can return its worktree."
+- After completion approval, verify the slot's identity and ownership and preserve uncommitted work and unmerged commits before returning it.
+- Pruning or deleting worktrees requires separate explicit approval; prefer returning finished slots for reuse with their ignored caches intact.
+
+## Browser tool routing
+
+- Use Computer Use through the Codex harness for end-user testing, visual QA, native macOS or cross-app workflows, and pixel-only surfaces such as canvas, video, and PDFs.
+- Use `chrome-devtools-axi` for auth or session debugging, network failures, DOM or CSS inspection, JavaScript runtime state, storage, console, and performance.
+- Combine both when a visual symptom needs browser-internal diagnosis or a browser-state fix needs end-user verification.
+- Whenever a browser task requires graphical control, use Arc Browser and its workspace named exactly `computer use`.
+- Use that workspace only in its dedicated Arc window.
+  Treat the entire window as agent-controlled because Dmitri never works in it.
+- The global `chrome-devtools-axi` configuration launches Arc rather than Google Chrome.
+  Preserve the `computer use` workspace when attaching Axi to an existing Arc session.
+
 ## Software installation
 
+- Follow repository policy, its declared manager, existing lockfile, and isolated environment; resolve conflicting evidence first.
+- Default to Bun only for confirmed new personal JavaScript/TypeScript projects.
+- Prefer project-local tools or one-off execution; avoid duplicate global installs and incidental manager migrations.
 - Use project-local Oxc (`oxlint` and `oxfmt`) as the sole linting and formatting toolchain in new or user-owned JavaScript and TypeScript projects.
 
 ## Container runtime policy

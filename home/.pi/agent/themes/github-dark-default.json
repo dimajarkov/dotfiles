@@ -47,7 +47,7 @@
     "toolTitle": "accent",
     "toolOutput": "muted",
 
-    "mdHeading": "cyan",
+    "mdHeading": "accent",
     "mdLink": "accent",
     "mdLinkUrl": "muted",
     "mdCode": "cyan",

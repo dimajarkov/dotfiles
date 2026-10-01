@@ -5,7 +5,8 @@ description: "Debug or verify frontend behavior in a live page using chrome-devt
 
 # Web debugging via the live page
 
-First read `~/.agents/skills/chrome-devtools-axi/SKILL.md` for the browser backend, invocation, session ownership, and fallback policy.
+First read `~/.agents/skills/browser-routing/SKILL.md` for browser selection and tool routing.
+Use the globally configured `chrome-devtools-axi` command for the browser backend, invocation, session ownership, and fallback policy.
 Reproduce the user's failing flow in Axi before theorizing from source or asking the user to inspect devtools.
 
 ## Core loop

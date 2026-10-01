@@ -13,6 +13,7 @@ import {
 import { Box, Markdown, Text } from "@earendil-works/pi-tui";
 import type { ReasoningLevel, SummaryConfig } from "./config.ts";
 import type { RunRecap } from "./summarizer.ts";
+import { deriveRecapTitle } from "./transcript.ts";
 
 export interface RecapEntryData extends RunRecap {
   readonly provider: string;
@@ -36,7 +37,10 @@ class RecapCard {
     const box = new Box(1, 1, (text) => this.theme.bg("customMessageBg", text));
     const title =
       this.theme.fg("accent", "✦ ") +
-      this.theme.fg("customMessageLabel", this.theme.bold("Run recap"));
+      this.theme.fg(
+        "customMessageLabel",
+        this.theme.bold(this.data.title?.trim() || deriveRecapTitle(this.data.recap)),
+      );
     box.addChild(new Text(title, 0, 0));
     box.addChild(
       new Markdown(this.data.recap, 0, 1, getMarkdownTheme(), {
@@ -60,28 +64,17 @@ class RecapCard {
   invalidate() {}
 }
 
-export function renderRecap(
-  data: RecapEntryData | undefined,
-  expanded: boolean,
-  theme: Theme,
-) {
-  if (!data)
-    return new Text(theme.fg("warning", "Run recap unavailable"), 0, 0);
+export function renderRecap(data: RecapEntryData | undefined, expanded: boolean, theme: Theme) {
+  if (!data) return new Text(theme.fg("warning", "Run recap unavailable"), 0, 0);
   return new RecapCard(data, theme, expanded);
 }
 
-export async function openModelPicker(
-  ctx: ExtensionCommandContext,
-  _config: SummaryConfig,
-) {
+export async function openModelPicker(ctx: ExtensionCommandContext, _config: SummaryConfig) {
   const models = [...ctx.modelRegistry.getAvailable()].sort((a, b) =>
     `${a.provider}/${a.id}`.localeCompare(`${b.provider}/${b.id}`),
   );
   if (models.length === 0) {
-    ctx.ui.notify(
-      "No configured models are available for run recaps.",
-      "warning",
-    );
+    ctx.ui.notify("No configured models are available for run recaps.", "warning");
     return undefined;
   }
   const labels = models.map((model) => `${model.provider}/${model.id}`);
@@ -95,27 +88,23 @@ export function openReasoningPicker(
   current: ReasoningLevel,
 ) {
   const supported = getSupportedThinkingLevels(model);
-  const selectedCurrent = supported.includes(current)
-    ? current
-    : (supported[0] ?? "off");
+  const selectedCurrent = supported.includes(current) ? current : (supported[0] ?? "off");
 
-  return ctx.ui.custom<ModelThinkingLevel | undefined>(
-    (tui, _theme, _keybindings, done) => {
-      const selector = new ThinkingSelectorComponent(
-        selectedCurrent,
-        supported,
-        (level) => done(level),
-        () => done(undefined),
-      );
-      const list = selector.getSelectList();
-      return {
-        render: (width) => selector.render(width),
-        invalidate: () => selector.invalidate(),
-        handleInput: (data) => {
-          list.handleInput(data);
-          tui.requestRender();
-        },
-      };
-    },
-  );
+  return ctx.ui.custom<ModelThinkingLevel | undefined>((tui, _theme, _keybindings, done) => {
+    const selector = new ThinkingSelectorComponent(
+      selectedCurrent,
+      supported,
+      (level) => done(level),
+      () => done(undefined),
+    );
+    const list = selector.getSelectList();
+    return {
+      render: (width) => selector.render(width),
+      invalidate: () => selector.invalidate(),
+      handleInput: (data) => {
+        list.handleInput(data);
+        tui.requestRender();
+      },
+    };
+  });
 }

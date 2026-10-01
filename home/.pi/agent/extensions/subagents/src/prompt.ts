@@ -11,7 +11,8 @@ export const SUBAGENT_SPAWN_PROMPT_SNIPPET =
 /** Guides the parent model to delegate standalone tasks and avoid unnecessary blocking waits. */
 export const SUBAGENT_SPAWN_PROMPT_GUIDELINES = [
   "Use subagent_spawn to delegate self-contained tasks that can run in the background; give it a complete, standalone prompt.",
-  "For small changes, use pi with openai-codex/gpt-5.6-luna and xhigh reasoning. For planning, use codex with gpt-5.6-sol and xhigh reasoning. For long-running grunt work, use codex with gpt-5.6-sol, xhigh reasoning, and a /goal prompt. Keep claude as compatibility-only unless the user explicitly requests it.",
+  "For small changes, use pi with openai-codex/gpt-6-luna and xhigh reasoning. For planning, use codex with gpt-6.1-sol and xhigh reasoning. For long-running grunt work, use codex with gpt-6.1-sol and xhigh reasoning. Keep claude as compatibility-only unless the user explicitly requests it.",
+  "Use /goal only when the Codex subagent's assigned task is feature implementation. Use plain prompts for planning, research, reviews, debugging, testing, maintenance, and other non-feature tasks, including long-running grunt work, regardless of duration.",
   "After subagent_spawn, keep working; results arrive automatically. Only call subagent_wait when you cannot proceed without the result.",
 ];
 

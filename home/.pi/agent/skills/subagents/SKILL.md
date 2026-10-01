@@ -10,9 +10,9 @@ Give every child a self-contained prompt with paths, constraints, and the expect
 
 ## Routing
 
-- Small changes use the Pi harness with `openai-codex/gpt-5.6-luna` and `xhigh` reasoning.
-- Planning uses the Codex harness with `gpt-5.6-sol` and `xhigh` reasoning.
-- Long-running grunt work uses the Codex harness with `gpt-5.6-sol` and a `/goal` prompt.
+- Small changes use the Pi harness with `openai-codex/gpt-6-luna` and `xhigh` reasoning.
+- Planning uses the Codex harness with `gpt-6.1-sol` and `xhigh` reasoning.
+- Long-running grunt work uses the Codex harness with `gpt-6.1-sol` and `xhigh` reasoning.
 - Computer-use work uses Codex Computer Use rather than this headless extension.
 - Select Pi or Codex for Dmitri's work.
 - The Claude harness remains available for compatibility but is selected only if Dmitri explicitly revises this routing preference.
@@ -21,7 +21,7 @@ Give every child a self-contained prompt with paths, constraints, and the expect
 
 **Harness:** `pi`
 **Prompt nicknames:** “pi”, “pi agent”, “pi subagent”
-**Best default:** `openai-codex/gpt-5.6-luna` with `xhigh` reasoning for small changes.
+**Best default:** `openai-codex/gpt-6-luna` with `xhigh` reasoning for small changes.
 
 Pi can use any model shown by `pi --list-models`.
 Prefer `provider/model-id`; a bare model id only works when unambiguous.
@@ -34,8 +34,11 @@ These map directly to Pi thinking levels.
 
 **Harness:** `codex`
 **Prompt nicknames:** “codex”, “Codex CLI”, “codex agent”, “codex subagent”
-**Planning default:** `gpt-5.6-sol` with `xhigh` reasoning.
-**Long-running default:** `gpt-5.6-sol` with `xhigh` reasoning and a self-contained `/goal` prompt.
+**Planning default:** `gpt-6.1-sol` with `xhigh` reasoning.
+**Long-running default:** `gpt-6.1-sol` with `xhigh` reasoning.
+
+Use `/goal` only when the Codex subagent's assigned task is feature implementation.
+Use plain prompts for planning, research, reviews, debugging, testing, maintenance, and other non-feature tasks, including long-running grunt work, regardless of duration.
 
 **Thinking budgets accepted by the extension:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
 Codex maps these to the nearest effort supported by the selected model; `off` and `minimal` become `minimal`, while `max` becomes the highest extension-supported Codex effort.

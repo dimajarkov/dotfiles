@@ -36,11 +36,15 @@ in {
 
   home.sessionPath = [
     "/opt/homebrew/bin"
+    "${config.home.homeDirectory}/.local/bin"
     "${config.home.homeDirectory}/.npm-global/bin"
     "${config.home.homeDirectory}/.bun/bin"
-    "${config.home.homeDirectory}/.local/bin"
   ];
-  home.sessionVariables.EDITOR = "nvim";
+  home.sessionVariables = {
+    EDITOR = "nvim";
+    CHROME_DEVTOOLS_AXI_EXECUTABLE_PATH = "/Applications/Arc.app/Contents/MacOS/Arc";
+    CHROME_DEVTOOLS_AXI_HEADED = "1";
+  };
   fonts.fontconfig.enable = true;
 
   programs.git = {
@@ -465,8 +469,6 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/gpt-5-6-only.ts";
   home.file.".hammerspoon/init.lua".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.hammerspoon/init.lua";
-  home.file.".hammerspoon/reminders-vim.lua".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.hammerspoon/reminders-vim.lua";
   home.file.".config/gh/config.yml".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/gh/config.yml";
   home.file.".config/wezterm".source =
@@ -479,18 +481,35 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/AGENTS.md";
   home.file.".agents/AGENTS.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/AGENTS.md";
+  home.file.".agents/skills/browser-routing".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/browser-routing";
   home.file.".agents/skills/one-bin".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/one-bin";
+  home.file.".pi/agent/skills/browser-routing".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/browser-routing";
   home.file.".pi/agent/skills/one-bin".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/one-bin";
+  home.file.".local/bin/chrome-devtools-axi".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/chrome-devtools-axi";
   home.file.".local/bin/one-bin".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/one-bin/scripts/one-bin.mjs";
   home.file.".claude/settings.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.claude/settings.json";
   home.file.".claude/CLAUDE.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/AGENTS.md";
+  home.file.".claude/skills/browser-routing".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/browser-routing";
   home.file.".codex/AGENTS.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.codex/AGENTS.md";
+  # Codex scans ~/.codex/skills; bridge Pi-only roots here without copying skills.
+  home.file.".codex/skills/pi-user".source =
+    config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/.pi/agent/skills";
+  home.file.".codex/skills/pi-mcp-adapter".source =
+    config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/.pi/agent/npm/node_modules/pi-mcp-adapter/skills";
+  home.file.".codex/skills/pi-plannotator".source =
+    config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/.pi/agent/npm/node_modules/@plannotator/pi-extension/skills";
+  home.file.".codex/skills/browser-routing".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/browser-routing";
   home.file."OPINIONS.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/OPINIONS.md";
 }
