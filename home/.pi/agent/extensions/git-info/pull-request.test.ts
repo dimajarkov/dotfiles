@@ -2,8 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   makePullRequestTracker,
-  parsePullRequestList,
+  parsePullRequestView,
+  pullRequestViewArgs,
 } from "./src/pull-request.ts";
+
+test("PR lookup addresses the requested branch directly", () => {
+  assert.deepEqual(pullRequestViewArgs("feature/topic"), [
+    "pr",
+    "view",
+    "feature/topic",
+    "--json",
+    "number,url,state,isDraft",
+  ]);
+});
 
 test("failed PR lookup remains eligible for a retry on the same branch", () => {
   const tracker = makePullRequestTracker();
@@ -19,24 +30,36 @@ test("failed PR lookup remains eligible for a retry on the same branch", () => {
   assert.equal(tracker.shouldLookup("feature", false), false);
 });
 
-test("PR list results distinguish absence from command or parse failures", () => {
+test("PR view results distinguish closed PRs from command or parse failures", () => {
   assert.deepEqual(
-    parsePullRequestList({ code: 1, stderr: "temporary failure", stdout: "" }),
+    parsePullRequestView({ code: 1, stderr: "temporary failure", stdout: "" }),
     { kind: "retry" },
   );
   assert.deepEqual(
-    parsePullRequestList({ code: 0, stderr: "", stdout: "[]" }),
+    parsePullRequestView({
+      code: 1,
+      stderr: 'no pull requests found for branch "feature"',
+      stdout: "",
+    }),
     { kind: "resolved", pullRequest: null },
   );
   assert.deepEqual(
-    parsePullRequestList({ code: 0, stderr: "", stdout: "invalid" }),
+    parsePullRequestView({
+      code: 0,
+      stderr: "",
+      stdout: '{"number":12,"url":"https://github.com/o/r/pull/12","state":"CLOSED"}',
+    }),
+    { kind: "resolved", pullRequest: null },
+  );
+  assert.deepEqual(
+    parsePullRequestView({ code: 0, stderr: "", stdout: "invalid" }),
     { kind: "retry" },
   );
   assert.deepEqual(
-    parsePullRequestList({
+    parsePullRequestView({
       code: 0,
       stderr: "",
-      stdout: '[{"number":12,"url":"https://github.com/o/r/pull/12","state":"OPEN","isDraft":true}]',
+      stdout: '{"number":12,"url":"https://github.com/o/r/pull/12","state":"OPEN","isDraft":true}',
     }),
     {
       kind: "resolved",

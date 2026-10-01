@@ -16,8 +16,8 @@ home/.config/gh/*.token
 __pycache__/
 *.py[cod]
 .DS_Store
-result
-result-*
+/result
+/result-*
 
 # Local dependency state
 home/.pi/agent/**/node_modules

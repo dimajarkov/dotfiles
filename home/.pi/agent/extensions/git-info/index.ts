@@ -8,7 +8,8 @@ import {
 import { loadChangedFiles, showChangedFiles } from "./src/changed-files-view.ts";
 import {
   makePullRequestTracker,
-  parsePullRequestList,
+  parsePullRequestView,
+  pullRequestViewArgs,
 } from "./src/pull-request.ts";
 import { runCommand, type CommandRunner } from "./src/process.ts";
 import { makeRefreshCoordinator } from "./src/refresh-coordinator.ts";
@@ -41,22 +42,11 @@ export default function gitInfo(pi: ExtensionAPI) {
     Effect.gen(function* () {
       const result = yield* run(
         "gh",
-        [
-          "pr",
-          "list",
-          "--head",
-          branch,
-          "--state",
-          "open",
-          "--json",
-          "number,url,state,isDraft",
-          "--limit",
-          "1",
-        ],
+        pullRequestViewArgs(branch),
         ctx,
         GH_TIMEOUT_MS,
       );
-      return parsePullRequestList(result);
+      return parsePullRequestView(result);
     });
 
   const refreshEffect = (

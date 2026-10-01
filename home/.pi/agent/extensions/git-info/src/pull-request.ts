@@ -5,31 +5,39 @@ export type PullRequestLookupResult =
   | { readonly kind: "resolved"; readonly pullRequest: PullRequestInfo | null }
   | { readonly kind: "retry" };
 
-function parsePullRequest(value: unknown): PullRequestInfo | null {
+export function pullRequestViewArgs(branch: string) {
+  return ["pr", "view", branch, "--json", "number,url,state,isDraft"];
+}
+
+function parsePullRequest(value: unknown): PullRequestLookupResult | null {
   if (typeof value !== "object" || value === null) return null;
   if (!("number" in value) || typeof value.number !== "number") return null;
   if (!("url" in value) || typeof value.url !== "string") return null;
-  if (!("state" in value) || value.state !== "OPEN") return null;
+  if (!("state" in value) || typeof value.state !== "string") return null;
+
+  if (value.state !== "OPEN") {
+    return { kind: "resolved", pullRequest: null };
+  }
 
   return {
-    number: value.number,
-    url: value.url,
-    isDraft: "isDraft" in value && value.isDraft === true,
+    kind: "resolved",
+    pullRequest: {
+      number: value.number,
+      url: value.url,
+      isDraft: "isDraft" in value && value.isDraft === true,
+    },
   };
 }
 
-export function parsePullRequestList(result: CommandResult): PullRequestLookupResult {
-  if (result.code !== 0) return { kind: "retry" };
+export function parsePullRequestView(result: CommandResult): PullRequestLookupResult {
+  if (result.code !== 0) {
+    return /^no (?:open )?pull requests found for branch\b/m.test(result.stderr)
+      ? { kind: "resolved", pullRequest: null }
+      : { kind: "retry" };
+  }
 
   try {
-    const value: unknown = JSON.parse(result.stdout);
-    if (!Array.isArray(value)) return { kind: "retry" };
-    if (value.length === 0) return { kind: "resolved", pullRequest: null };
-
-    const pullRequest = parsePullRequest(value[0]);
-    return pullRequest
-      ? { kind: "resolved", pullRequest }
-      : { kind: "retry" };
+    return parsePullRequest(JSON.parse(result.stdout)) ?? { kind: "retry" };
   } catch {
     return { kind: "retry" };
   }

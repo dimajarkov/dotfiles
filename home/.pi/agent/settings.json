@@ -59,7 +59,8 @@
     "npm:pi-image-view@0.4.0"
   ],
   "extensions": [
-    "-builtin:mcp"
+    "-builtin:mcp",
+    "-extensions/ask-user/index.ts"
   ],
   "skills": [
     "~/.agents/skills"

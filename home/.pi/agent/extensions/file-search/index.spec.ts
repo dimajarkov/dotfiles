@@ -63,7 +63,7 @@ it("fd args: all options are translated and pattern stays behind --", () => {
     "50",
     "--",
     "-rf",
-    "src",
+    "@src",
   ]);
 });
 
@@ -124,7 +124,7 @@ it("rg args: all options are translated", () => {
     "10",
     "--",
     "TODO",
-    "lib",
+    "@lib",
   ]);
 });
 
@@ -134,8 +134,8 @@ it("rg args: case_sensitive false forces ignore-case", () => {
   assert.isFalse(args.includes("--smart-case"));
 });
 
-it("path normalization strips leading @ and expands ~", () => {
-  assert.equal(normalizeSearchPath("@src/lib"), "src/lib");
+it("path normalization preserves literal @ paths and expands ~", () => {
+  assert.equal(normalizeSearchPath("@src/lib"), "@src/lib");
   assert.equal(normalizeSearchPath("~"), homedir());
   assert.equal(normalizeSearchPath("~/projects"), join(homedir(), "projects"));
   assert.equal(normalizeSearchPath(" plain "), "plain");
