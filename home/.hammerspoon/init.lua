@@ -58,6 +58,8 @@ end
 stopStoredTimer("prefixTimer")
 stopStoredTimer("commandTimer")
 stopStoredTimer("archiveTimer")
+stopStoredTimer("openGoogleTimer")
+stopStoredTimer("openGoogleSubmitTimer")
 
 if arcNavigation.keyTap then
   arcNavigation.keyTap:stop()

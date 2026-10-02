@@ -1,12 +1,18 @@
 package.preload["hs.ipc"] = function()
   return {}
 end
+package.preload["reminders-vim"] = function()
+  return { start = function() end }
+end
 
 local mode = assert(arg[1])
 local initPath = assert(arg[2])
+local legacyInitPath = arg[3]
 local buttonPresses = 0
 local selectedMenuItems = {}
 local timers = {}
+local keyActions = {}
+local typedText = {}
 local button
 local keyTapCallback
 local hoveredQueries = 0
@@ -47,6 +53,9 @@ local app = {
   end,
   pid = function()
     return 41
+  end,
+  name = function()
+    return "Arc"
   end,
   focusedWindow = function()
     return window
@@ -94,8 +103,12 @@ local hs = {
     isSecureInputEnabled = function()
       return false
     end,
-    keyStroke = function() end,
-    keyStrokes = function() end,
+    keyStroke = function(modifiers, key)
+      keyActions[#keyActions + 1] = { modifiers = modifiers, key = key }
+    end,
+    keyStrokes = function(text)
+      typedText[#typedText + 1] = text
+    end,
     new = function(_, callback)
       keyTapCallback = callback
       return {
@@ -115,6 +128,7 @@ local hs = {
   keycodes = {
     map = {
       ["\\"] = 92,
+      t = 17,
       x = 120,
       l = 108,
       [";"] = 59,
@@ -138,19 +152,27 @@ local hs = {
         stop = function(self)
           self.stopped = true
         end,
+        fire = function(self)
+          if not self.stopped then
+            self.callback()
+          end
+        end,
       }
       timers[#timers + 1] = timer
       return timer
     end,
   },
+  menubar = {
+    new = function()
+      return {
+        setTitle = function() end,
+        setMenu = function() end,
+      }
+    end,
+  },
 }
 
 _G.hs = hs
-dofile(initPath)
-
-local title = mode == "small" and "" or "A regular tab"
-local size = mode == "small" and { w = 20, h = 20 } or { w = 180, h = 40 }
-button = element({ AXRole = "AXButton", AXTitle = title, AXSize = size }, outline)
 
 local function keyEvent(keyCode)
   return {
@@ -165,6 +187,39 @@ local function keyEvent(keyCode)
     end,
   }
 end
+
+if mode == "reload-open" or mode == "reload-submit" then
+  assert(legacyInitPath, "legacy init path is required for reload behavior tests")
+  dofile(legacyInitPath)
+  assert(keyTapCallback(keyEvent(42)) == true)
+  assert(keyTapCallback(keyEvent(17)) == true)
+
+  local pendingTimer = assert(_G.arcNavigation.openGoogleTimer)
+  if mode == "reload-submit" then
+    pendingTimer:fire()
+    pendingTimer = assert(_G.arcNavigation.openGoogleSubmitTimer)
+    keyActions = {}
+    typedText = {}
+  end
+
+  dofile(initPath)
+  pendingTimer:fire()
+
+  if mode == "reload-open" then
+    assert(#typedText == 0, "stale Google timer typed into Arc after reload")
+  else
+    for _, action in ipairs(keyActions) do
+      assert(action.key ~= "return", "stale submit timer sent Return after reload")
+    end
+  end
+  return
+end
+
+dofile(initPath)
+
+local title = mode == "small" and "" or "A regular tab"
+local size = mode == "small" and { w = 20, h = 20 } or { w = 180, h = 40 }
+button = element({ AXRole = "AXButton", AXTitle = title, AXSize = size }, outline)
 
 local leaderConsumed = keyTapCallback(keyEvent(hs.keycodes.map["\\"]))
 local commandConsumed = keyTapCallback(keyEvent(hs.keycodes.map.x))

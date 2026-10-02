@@ -282,9 +282,6 @@ in {
     browser_path="${config.home.homeDirectory}/.pi/agent/extensions/browser"
     install_pi_extension_dependencies "$browser_path"
 
-    ask_user_path="${config.home.homeDirectory}/.pi/agent/extensions/ask-user"
-    install_pi_extension_dependencies "$ask_user_path"
-
     file_search_path="${config.home.homeDirectory}/.pi/agent/extensions/file-search"
     file_search_source="${dotfiles}/home/.pi/agent/extensions/file-search"
     install_pi_extension_dependencies "$file_search_path" production
@@ -374,14 +371,6 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/github-dark-default.json";
   home.file.".pi/agent/extensions/fullscreen-navigation.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/fullscreen-navigation.ts";
-  home.file.".pi/agent/extensions/ask-user/index.ts".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/ask-user/index.ts";
-  home.file.".pi/agent/extensions/ask-user/prompt.ts".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/ask-user/prompt.ts";
-  home.file.".pi/agent/extensions/ask-user/package.json".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/ask-user/package.json";
-  home.file.".pi/agent/extensions/ask-user/package-lock.json".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/ask-user/package-lock.json";
   home.file.".pi/agent/extensions/prime-style.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prime-style.ts";
   home.file.".pi/agent/extensions/mcp-shortcut.ts".source =
