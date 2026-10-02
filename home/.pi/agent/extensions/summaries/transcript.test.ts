@@ -199,6 +199,68 @@ test("serialized transcripts redact known provider secrets but preserve publisha
   for (const key of publishableKeys) assert.ok(transcript.includes(key));
 });
 
+test("serialized transcripts redact database URL credentials across message sources", () => {
+  const passwords = [
+    "synthetic-user-content-password",
+    "synthetic-tool-argument-password",
+    "synthetic-tool-output-password",
+    "synthetic-shell-command-password",
+    "synthetic-shell-output-password",
+  ];
+  const transcript = serializeRunTranscript([
+    entry("db-user-content", {
+      role: "user",
+      content: `Please check DATABASE_URL=postgres://fixture-user:${passwords[0]}@db.example.test/demo`,
+      timestamp: 0,
+    }),
+    entry("db-tool-call", {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "call-db",
+          name: "connect",
+          arguments: {
+            databaseUrl: `postgresql://fixture-user:${passwords[1]}@db.example.test/demo`,
+            customerName: "Ada Example",
+            customerEmail: "ada@example.test",
+          },
+        },
+      ],
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      model: "gpt-5.6-luna",
+      usage,
+      stopReason: "toolUse",
+      timestamp: 1,
+    }),
+    entry("db-tool-result", {
+      role: "toolResult",
+      toolCallId: "call-db",
+      toolName: "connect",
+      content: [
+        {
+          type: "text",
+          text: `DATABASE_URL=mysql://fixture-user:${passwords[2]}@db.example.test/demo`,
+        },
+      ],
+      isError: false,
+      timestamp: 2,
+    }),
+    entry("db-shell", {
+      role: "bashExecution",
+      command: `psql postgresql://fixture-user:${passwords[3]}@db.example.test/demo`,
+      output: `DATABASE_URL=postgres://fixture-user:${passwords[4]}@db.example.test/demo`,
+      exitCode: 0,
+      timestamp: 3,
+    }),
+  ]);
+
+  for (const password of passwords) assert.ok(!transcript.includes(password));
+  assert.match(transcript, /Ada Example/);
+  assert.match(transcript, /ada@example\.test/);
+});
+
 test("credential field matching preserves ordinary words in serialized output", () => {
   const fields = {
     secretary: "Alice Smith",

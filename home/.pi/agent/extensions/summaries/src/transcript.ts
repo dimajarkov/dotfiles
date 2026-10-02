@@ -10,6 +10,19 @@ export const TRANSCRIPT_MAX_BYTES = 48_000;
 
 const CREDENTIAL_ASSIGNMENT_PATTERN =
   /(["']?)([A-Za-z_][A-Za-z0-9_.~-]*)\1(\s*[:=]\s*)(["']?)([^"'\s,;}]+)\4/gi;
+const URI_USERINFO_PATTERN = /\b([a-z][a-z0-9.+-]*:\/\/)([^/\s?#@]+@)/gi;
+
+function isDatabaseUrlFieldName(name: string) {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  return (
+    (words[0] === "db" || words[0] === "database") &&
+    ["url", "uri"].includes(words.at(-1) ?? "")
+  );
+}
 
 export interface RunMarker {
   readonly baselineLeafId: string | null;
@@ -74,9 +87,10 @@ export function redactSecrets(text: string) {
     )
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [REDACTED]")
     .replace(/\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, "[REDACTED]")
+    .replace(URI_USERINFO_PATTERN, "$1[REDACTED]@")
   )
     .replace(CREDENTIAL_ASSIGNMENT_PATTERN, (match, keyQuote, key, separator, valueQuote) =>
-      isCredentialName(key)
+      isCredentialName(key) || isDatabaseUrlFieldName(key)
         ? `${keyQuote}${key}${keyQuote}${separator}${valueQuote}[REDACTED]${valueQuote}`
         : match,
     )
@@ -84,7 +98,7 @@ export function redactSecrets(text: string) {
 }
 
 function sanitizeValue(value: unknown, key?: string, depth = 0): unknown {
-  if (key && isCredentialName(key)) return "[REDACTED]";
+  if (key && (isCredentialName(key) || isDatabaseUrlFieldName(key))) return "[REDACTED]";
   if (depth >= 6) return "[nested value omitted]";
   if (typeof value === "string") return redactSecrets(value);
   if (typeof value === "bigint") return `${value}n`;
