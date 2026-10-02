@@ -1,11 +1,15 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import {
+  isCredentialName,
+  redactRecognizableCredentialValues,
+} from "../../lib/credential-safety.ts";
 
 export const TOOL_ARGUMENT_MAX_BYTES = 2_000;
 export const TOOL_RESULT_MAX_BYTES = 5_000;
 export const TRANSCRIPT_MAX_BYTES = 48_000;
 
-const SECRET_KEY_PATTERN =
-  /(?:api[_-]?key|access[_-]?key|authorization|cookie|credential|password|passwd|private[_-]?key|secret|token)/i;
+const CREDENTIAL_ASSIGNMENT_PATTERN =
+  /(["']?)([A-Za-z_][A-Za-z0-9_.~-]*)\1(\s*[:=]\s*)(["']?)([^"'\s,;}]+)\4/gi;
 
 export interface RunMarker {
   readonly baselineLeafId: string | null;
@@ -62,25 +66,25 @@ function capped(text: string, maxBytes: number, notice: string) {
 }
 
 export function redactSecrets(text: string) {
-  return text
+  return redactRecognizableCredentialValues(
+    text
     .replace(
       /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?)-----[\s\S]*?(?:-----END \1-----|(?=-----BEGIN )|$)/gi,
       "[REDACTED]",
     )
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [REDACTED]")
-    .replace(
-      /\b(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,})\b/g,
-      "[REDACTED]",
-    )
-    .replace(
-      /(["']?(?:api[_-]?key|access[_-]?key|authorization|cookie|credential|password|passwd|private[_-]?key|secret|token)["']?\s*[:=]\s*)(["']?)[^\s,;}]+\2/gi,
-      "$1[REDACTED]",
+    .replace(/\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, "[REDACTED]")
+  )
+    .replace(CREDENTIAL_ASSIGNMENT_PATTERN, (match, keyQuote, key, separator, valueQuote) =>
+      isCredentialName(key)
+        ? `${keyQuote}${key}${keyQuote}${separator}${valueQuote}[REDACTED]${valueQuote}`
+        : match,
     )
     .replace(/([?&](?:api[_-]?key|access[_-]?token|key|secret|token)=)[^&#\s]+/gi, "$1[REDACTED]");
 }
 
 function sanitizeValue(value: unknown, key?: string, depth = 0): unknown {
-  if (key && SECRET_KEY_PATTERN.test(key)) return "[REDACTED]";
+  if (key && isCredentialName(key)) return "[REDACTED]";
   if (depth >= 6) return "[nested value omitted]";
   if (typeof value === "string") return redactSecrets(value);
   if (typeof value === "bigint") return `${value}n`;

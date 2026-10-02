@@ -1,6 +1,8 @@
 import { NodeServices } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
-import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { readdirSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Effect, FileSystem } from "effect";
 import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
@@ -396,6 +398,7 @@ it.effect("process output is streamed to a complete spill file", () =>
     assert.equal(formatted.lineCount, 3000);
     assert.match(formatted.text, /2000 of 3000 lines/);
     assert.isDefined(formatted.fullOutputPath);
+    assert.equal(statSync(dirname(formatted.fullOutputPath)).mode & 0o777, 0o700);
 
     const fs = yield* FileSystem.FileSystem;
     const fullOutput = yield* fs.readFileString(formatted.fullOutputPath);
@@ -404,5 +407,22 @@ it.effect("process output is streamed to a complete spill file", () =>
       recursive: true,
       force: true,
     });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("failed searches clean up truncated spill files", () =>
+  Effect.gen(function* () {
+    const tempPrefix = `pi-search-failed-${process.pid}-${randomUUID()}-`;
+    const result = yield* executeSearchProcess({
+      command: process.execPath,
+      args: ["-e", 'process.stdout.write("line\\n".repeat(3000)); process.exitCode = 2'],
+      cwd: process.cwd(),
+      tempPrefix,
+    });
+
+    assert.equal(result.code, 2);
+    assert.isTrue(result.output.truncated);
+    assert.isUndefined(result.output.fullOutputPath);
+    assert.isFalse(readdirSync(tmpdir()).some((name) => name.startsWith(tempPrefix)));
   }).pipe(Effect.provide(NodeServices.layer)),
 );

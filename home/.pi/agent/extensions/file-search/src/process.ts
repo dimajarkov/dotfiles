@@ -115,8 +115,12 @@ export function executeSearchProcess(options: {
         },
         { concurrency: "unbounded" },
       );
-      const output = finishStdout(preview, fullOutputPath);
-      retainDirectory = output.truncated;
+      const capturedOutput = finishStdout(preview, fullOutputPath);
+      retainDirectory = capturedOutput.truncated && Number(result.exitCode) === 0;
+      const output =
+        capturedOutput.truncated && !retainDirectory
+          ? { ...capturedOutput, fullOutputPath: undefined }
+          : capturedOutput;
       return {
         code: Number(result.exitCode),
         stderr: result.stderr,

@@ -168,6 +168,13 @@ in {
       /bin/rm -- "$mcp_path"
     fi
 
+    custom_header_path="${config.home.homeDirectory}/.pi/agent/extensions/custom-header.ts"
+    if [ -f "$custom_header_path" ] && [ ! -L "$custom_header_path" ] && [ "$(
+      ${pkgs.coreutils}/bin/sha256sum "$custom_header_path" | ${pkgs.coreutils}/bin/cut -d ' ' -f 1
+    )" = "b100834e89b29978acfa4463d2ed98b3efe4f22c3fa3951d2de7c87ce8584b68" ]; then
+      /bin/rm -- "$custom_header_path"
+    fi
+
     for extension in browser web-fetch; do
       extension_path="${config.home.homeDirectory}/.pi/agent/extensions/$extension"
       extension_source="${dotfiles}/home/.pi/agent/extensions/$extension"

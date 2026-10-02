@@ -1,6 +1,10 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { isCredentialName, isCredentialValue } from "../lib/credential-safety.ts";
+import {
+  isCredentialName,
+  isCredentialValue,
+  RECOGNIZABLE_CREDENTIAL_PREFIXES,
+} from "../lib/credential-safety.ts";
 
 export interface ResolvedAddress {
   address: string;
@@ -36,23 +40,6 @@ const PUBLIC_CONTENT_PATHS = new Map<string, readonly RegExp[]>([
 // This deliberately belongs to the URL eligibility policy, not the shared
 // arbitrary-value classifier. Path labels and filenames may wrap a token
 // (`asset-glpat-...-label.md`) without changing the credential disclosure.
-const RECOGNIZABLE_CREDENTIAL_PREFIXES = [
-  /github_pat_[A-Za-z\d_]{8,}/u,
-  /gh[pousr]_[A-Za-z\d]{8,}/u,
-  /gl(?:agent|cbt|dt|ffct|ft|imt|oas|pat|ptt|rt|soat)-[A-Za-z\d_-]{8,}/u,
-  /xox[aboprs]-[A-Za-z\d-]{8,}/u,
-  /(?:sk|rk)_(?:live|test)_[A-Za-z\d]{8,}/u,
-  /sk-(?:proj-|svcacct-)?[A-Za-z\d_-]{8,}/u,
-  /AIza[A-Za-z\d_-]{8,}/u,
-  /(?:AKIA|ASIA|AIDA|AROA|ANPA|ANVA|ASCA)[A-Z\d]{8,}/u,
-  /pypi-[A-Za-z\d_-]{8,}/u,
-  /npm_[A-Za-z\d_-]{8,}/u,
-  /hf_[A-Za-z\d]{8,}/u,
-  /dop_v1_[A-Fa-f\d]{8,}/u,
-  /shp(?:at|ca|pa|ss)_[A-Fa-f\d]{8,}/u,
-  /SG\.[A-Za-z\d_-]{8,}\.[A-Za-z\d_-]{8,}/u,
-];
-
 function hasRecognizableCredentialPrefix(segment: string): boolean {
   const normalized = segment.normalize("NFKC");
   return RECOGNIZABLE_CREDENTIAL_PREFIXES.some((pattern) => pattern.test(normalized));
