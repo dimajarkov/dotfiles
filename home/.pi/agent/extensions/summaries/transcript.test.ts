@@ -262,6 +262,33 @@ test("serialized transcripts redact database URL credentials across message sour
   assert.match(transcript, /ada@example\.test/);
 });
 
+test("URI userinfo redaction consumes embedded at-signs without crossing JSON fields", () => {
+  const password = "synthetic-password-with@signs";
+  const transcript = serializeRunTranscript([
+    entry("uri-userinfo", {
+      role: "toolResult",
+      toolCallId: "call-uri-userinfo",
+      toolName: "inspect",
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            url: `postgres://fixture-user:${password}@db.example.test/demo`,
+            customerEmail: "ada@example.test",
+          }),
+        },
+      ],
+      isError: false,
+      timestamp: 0,
+    }),
+  ]);
+
+  assert.ok(!transcript.includes(password));
+  assert.ok(!transcript.includes("signs@db.example.test"));
+  assert.ok(transcript.includes("ada@example.test"));
+  assert.ok(transcript.includes("db.example.test/demo"));
+});
+
 test("credential field matching preserves ordinary words in serialized output", () => {
   const fields = {
     secretary: "Alice Smith",

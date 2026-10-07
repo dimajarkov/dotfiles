@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionReviewSnapshot } from "hunkdiff/extension";
@@ -87,10 +87,14 @@ describe("private durable storage", () => {
     writeFileSync(join(repo, ".git"), "gitdir: whatever");
     const previous = process.env.HUNK_HUMAN_REVIEW_STATE_DIRECTORY;
     try {
-      process.env.HUNK_HUMAN_REVIEW_STATE_DIRECTORY = join(repo, "exports");
+      const repoExports = join(repo, "exports");
+      process.env.HUNK_HUMAN_REVIEW_STATE_DIRECTORY = repoExports;
       expect(() => stateDirectory(checkout)).toThrow("Git checkouts");
-      process.env.HUNK_HUMAN_REVIEW_STATE_DIRECTORY = join(checkout, "exports");
+      expect(existsSync(repoExports)).toBe(false);
+      const checkoutExports = join(checkout, "exports");
+      process.env.HUNK_HUMAN_REVIEW_STATE_DIRECTORY = checkoutExports;
       expect(() => stateDirectory(checkout)).toThrow("outside");
+      expect(existsSync(checkoutExports)).toBe(false);
     } finally {
       if (previous === undefined) delete process.env.HUNK_HUMAN_REVIEW_STATE_DIRECTORY;
       else process.env.HUNK_HUMAN_REVIEW_STATE_DIRECTORY = previous;

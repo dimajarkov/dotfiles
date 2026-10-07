@@ -23,8 +23,10 @@ export default function mcpShortcut(pi: ExtensionAPI): void {
         return { consume: true };
       }
 
-      pi.sendUserMessage(MCP_COMMAND, { expandPromptTemplates: true });
-      return { consume: true };
+      const draft = ctx.ui.getEditorText();
+      ctx.ui.setEditorText(MCP_COMMAND);
+      setTimeout(() => ctx.ui.setEditorText(draft), 0);
+      return { data: "\r" };
     });
   });
 }

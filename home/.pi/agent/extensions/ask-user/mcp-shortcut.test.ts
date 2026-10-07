@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -20,11 +20,16 @@ test("Ctrl+M opens the MCP panel without changing the editor draft", async () =>
 
   try {
     const settingsManager = SettingsManager.inMemory();
+    const mcpCommandPath = join(agentDir, "mcp-command.ts");
+    await writeFile(
+      mcpCommandPath,
+      'export default function(pi) { pi.registerCommand("mcp", { description: "test MCP command", handler: async (_args, ctx) => ctx.ui.notify("MCP command opened", "info") }); }',
+    );
     const resourceLoader = new DefaultResourceLoader({
       cwd,
       agentDir,
       settingsManager,
-      additionalExtensionPaths: [resolve(packageDir, "../mcp-shortcut.ts")],
+      additionalExtensionPaths: [resolve(packageDir, "../mcp-shortcut.ts"), mcpCommandPath],
       noExtensions: true,
       noSkills: true,
       noPromptTemplates: true,
@@ -56,9 +61,14 @@ test("Ctrl+M opens the MCP panel without changing the editor draft", async () =>
       },
     };
     const editor = new Editor({ requestRender() {} } as TUI, theme);
-    const terminalInputHandlers: Array<(data: string) => { consume?: boolean } | undefined> = [];
+    const notifications: string[] = [];
+    const terminalInputHandlers: Array<
+      (data: string) => { consume?: boolean; data?: string } | undefined
+    > = [];
     const uiContext = {
-      onTerminalInput(handler: (data: string) => { consume?: boolean } | undefined) {
+      onTerminalInput(
+        handler: (data: string) => { consume?: boolean; data?: string } | undefined,
+      ) {
         terminalInputHandlers.push(handler);
         return () => {
           const index = terminalInputHandlers.indexOf(handler);
@@ -71,12 +81,10 @@ test("Ctrl+M opens the MCP panel without changing the editor draft", async () =>
       getEditorText() {
         return editor.getExpandedText();
       },
-      notify() {},
+      notify(message: string) {
+        notifications.push(message);
+      },
     } as unknown as ExtensionUIContext;
-    const dispatchedMessages: Array<{ content: unknown; options: unknown }> = [];
-    session.sendUserMessage = async (content, options) => {
-      dispatchedMessages.push({ content, options });
-    };
 
     await session.bindExtensions({ uiContext, mode: "tui" });
 
@@ -87,11 +95,12 @@ test("Ctrl+M opens the MCP panel without changing the editor draft", async () =>
     assert.ok(inputHandler);
     assert.equal(inputHandler("\r"), undefined);
     assert.equal(editor.getText(), draft);
-    assert.equal(inputHandler("\u001b[109;5u")?.consume, true);
+    assert.equal(inputHandler("\u001b[109;5u")?.data, "\r");
+    assert.equal(editor.getText(), "/mcp");
+    await session.prompt(editor.getText(), { expandPromptTemplates: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(editor.getText(), draft);
-    assert.deepEqual(dispatchedMessages, [
-      { content: "/mcp", options: { expandPromptTemplates: true } },
-    ]);
+    assert.deepEqual(notifications, ["MCP command opened"]);
   } finally {
     session?.dispose();
     await rm(agentDir, { recursive: true, force: true });

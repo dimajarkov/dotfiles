@@ -13,7 +13,7 @@ import {
   fchmodSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { digest } from "./process";
 
@@ -22,11 +22,11 @@ export function stateDirectory(checkout: string): string {
     process.env.HUNK_HUMAN_REVIEW_STATE_DIRECTORY ??
     join(homedir(), ".local", "state", "hunk-human-review");
   if (!isAbsolute(path)) throw new Error("Review state directory must be absolute");
-  privateDirectory(path);
-  const rel = relative(realpathSync(checkout), realpathSync(path));
+  const target = resolve(path);
+  const rel = relative(realpathSync(checkout), canonicalize(target));
   if (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
     throw new Error("Review exports must be outside the reviewed checkout");
-  for (let ancestor = realpathSync(path); ; ancestor = dirname(ancestor)) {
+  for (let ancestor = canonicalize(target); ; ancestor = dirname(ancestor)) {
     try {
       lstatSync(join(ancestor, ".git"));
       throw new Error("Review exports must be outside all Git checkouts");
@@ -35,7 +35,24 @@ export function stateDirectory(checkout: string): string {
     }
     if (dirname(ancestor) === ancestor) break;
   }
-  return realpathSync(path);
+  privateDirectory(target);
+  return realpathSync(target);
+}
+
+function canonicalize(path: string): string {
+  let ancestor = path;
+  const missing: string[] = [];
+  while (true) {
+    try {
+      return join(realpathSync(ancestor), ...missing.reverse());
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = dirname(ancestor);
+      if (parent === ancestor) throw error;
+      missing.push(basename(ancestor));
+      ancestor = parent;
+    }
+  }
 }
 
 export function privateDirectory(path: string): void {

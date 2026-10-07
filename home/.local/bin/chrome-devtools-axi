@@ -1,9 +1,5 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -eq 2 ] && [ "$1" = doctor ] && [ "$2" = jobs ]; then
-  exec python3 "$HOME/.agents/skills/browser-routing/scripts/job-browser-gate.py" doctor
-fi
-
 printf '%s\n' 'chrome-devtools-axi: disabled by the Zen-only browser policy. CDP cannot control Zen; use Codex native Computer Use in Zen for interactive work.' >&2
 exit 78

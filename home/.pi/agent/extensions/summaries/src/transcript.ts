@@ -10,7 +10,7 @@ export const TRANSCRIPT_MAX_BYTES = 48_000;
 
 const CREDENTIAL_ASSIGNMENT_PATTERN =
   /(["']?)([A-Za-z_][A-Za-z0-9_.~-]*)\1(\s*[:=]\s*)(["']?)([^"'\s,;}]+)\4/gi;
-const URI_USERINFO_PATTERN = /\b([a-z][a-z0-9.+-]*:\/\/)([^/\s?#@]+@)/gi;
+const URI_USERINFO_PATTERN = /\b([a-z][a-z0-9.+-]*:\/\/)([^/\s?#"'<>),;}]+@)/gi;
 
 function isDatabaseUrlFieldName(name: string) {
   const words = name
