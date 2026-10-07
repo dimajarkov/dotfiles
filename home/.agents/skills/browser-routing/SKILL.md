@@ -23,17 +23,7 @@ For development automation, browser testing, and localhost work, switch to Zen's
 Verify the selected space is `Development` and the returned app is Zen before navigating or interacting; keep task-owned tabs there and observe the target URL and state after each action.
 Do not create a separate workspace or use an unrelated space as a substitute.
 If the Development space or native Zen access is unavailable, stop and report the blocker rather than opening Chrome or Arc.
-For job applications, follow the personal-browser procedure below before selecting any window.
-
-## Personal browser for job applications
-
-Read [the personal connector procedure](references/job-browser.md) before browser discovery or execution.
-`job-policy.json` owns the expected personal account and window identity.
-The current personal-browser gate requires a Chrome-only extension and cannot attest a Zen window or profile.
-Until a Zen-compatible connector and identity gate have been implemented and verified, stop before external job-application browser actions.
-Never bypass the gate through native Zen, the support profile, generic browser selection, Chrome, or Axi.
-Only the exclusive browser executor performs external actions; preparation and local PDF validation require no personal browser access.
-The gate is supplemental to host permissions and cannot intercept arbitrary raw Computer Use calls.
+For job applications, use Zen through Codex Computer Use and verify the intended account and task before taking an external action.
 
 ## Chrome-only debugging (disabled)
 
