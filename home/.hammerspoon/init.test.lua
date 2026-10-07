@@ -13,6 +13,10 @@ local selectedMenuItems = {}
 local timers = {}
 local keyActions = {}
 local typedText = {}
+local hotkeys = {}
+local requestedBundleID
+local applicationUnhidden = false
+local applicationActivated = false
 local button
 local keyTapCallback
 local hoveredQueries = 0
@@ -57,6 +61,12 @@ local app = {
   name = function()
     return "Arc"
   end,
+  unhide = function()
+    applicationUnhidden = true
+  end,
+  activate = function(_, allWindows)
+    applicationActivated = allWindows
+  end,
   focusedWindow = function()
     return window
   end,
@@ -73,7 +83,8 @@ local hs = {
   autoLaunch = function() end,
   alert = { show = function() end },
   application = {
-    get = function()
+    get = function(bundleID)
+      requestedBundleID = bundleID
       return app
     end,
     open = function()
@@ -124,7 +135,12 @@ local hs = {
       return path
     end,
   },
-  hotkey = { bind = function() return {} end },
+  hotkey = {
+    bind = function(_, key, callback)
+      hotkeys[key] = callback
+      return {}
+    end,
+  },
   keycodes = {
     map = {
       ["\\"] = 92,
@@ -216,6 +232,14 @@ if mode == "reload-open" or mode == "reload-submit" then
 end
 
 dofile(initPath)
+
+if mode == "zen" then
+  assert(hotkeys["3"], "Cmd+3 app shortcut was not registered")()
+  assert(requestedBundleID == "app.zen-browser.zen", "Cmd+3 must focus Zen")
+  assert(applicationUnhidden, "Zen must be unhidden")
+  assert(applicationActivated, "Zen must bring all windows to the front")
+  return
+end
 
 local title = mode == "small" and "" or "A regular tab"
 local size = mode == "small" and { w = 20, h = 20 } or { w = 180, h = 40 }

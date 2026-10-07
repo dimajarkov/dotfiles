@@ -30,13 +30,11 @@ These are common instructions for Dmitri's agents across all scenarios.
 ## Browser tool routing
 
 - Use Computer Use through the Codex harness for end-user testing, visual QA, native macOS or cross-app workflows, and pixel-only surfaces such as canvas, video, and PDFs.
-- Use `chrome-devtools-axi` for auth or session debugging, network failures, DOM or CSS inspection, JavaScript runtime state, storage, console, and performance.
-- Combine both when a visual symptom needs browser-internal diagnosis or a browser-state fix needs end-user verification.
-- Whenever a browser task requires graphical control, use Arc Browser and its workspace named exactly `computer use`.
-- Use that workspace only in its dedicated Arc window.
-  Treat the entire window as agent-controlled because Dmitri never works in it.
-- The global `chrome-devtools-axi` configuration launches Arc rather than Google Chrome.
-  Preserve the `computer use` workspace when attaching Axi to an existing Arc session.
+  Job-application PDF package approval follows the job-application skill's exact-file text and rendered-page image checks without requiring native Computer Use or personal Chrome access.
+- Use Zen Browser's space named exactly `Development` for development automation, testing, and localhost UI, including Arena CRM.
+  Verify Zen and the selected Development space before navigating or interacting, and read `~/.agents/skills/browser-routing/SKILL.md` before launching anything.
+- Chrome-only DevTools, authentication, capture, and PDF tooling is not a Zen substitute.
+  Use Zen's Developer Tools for manual browser-internal inspection; stop when the required Zen route is unavailable rather than silently opening Chrome or Arc.
 
 ## Software installation
 
@@ -60,4 +58,4 @@ Preserve uncertainty and flag meaningful tension or opinion drift instead of sil
 
 ## Settled Pi Policies
 
-Follow `../docs/agent-capability-policy.md` for approved Pi routing, data handling, and tool capability boundaries.
+Read `~/.dotfiles/docs/agent-capability-policy.md` for approved Pi routing, data handling, and tool capability boundaries.

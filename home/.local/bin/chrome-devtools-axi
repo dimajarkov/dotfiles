@@ -1,32 +1,9 @@
 #!/bin/sh
 set -eu
 
-repo="$HOME/dev/tools/chrome-devtools-axi"
+if [ "$#" -eq 2 ] && [ "$1" = doctor ] && [ "$2" = jobs ]; then
+  exec python3 "$HOME/.agents/skills/browser-routing/scripts/job-browser-gate.py" doctor
+fi
 
-# Route Axi to the dedicated Arc browser target instead of inherited Chrome
-# auto-connect state from an older bridge or shell session.
-unset \
-  CHROME_DEVTOOLS_AXI_AUTO_CONNECT \
-  CHROME_DEVTOOLS_AXI_BROWSER_URL \
-  CHROME_DEVTOOLS_AXI_CHANNEL \
-  CHROME_DEVTOOLS_AXI_PORT \
-  CHROME_DEVTOOLS_AXI_USER_DATA_DIR
-export CHROME_DEVTOOLS_AXI_EXECUTABLE_PATH="/Applications/Arc.app/Contents/MacOS/Arc"
-export CHROME_DEVTOOLS_AXI_HEADED=1
-export CHROME_DEVTOOLS_AXI_SESSION=computer-use
-
-# Focus the named Arc space when macOS grants scripting access.
-/usr/bin/osascript <<'APPLESCRIPT' >/dev/null 2>&1 || :
-tell application "Arc"
-  repeat with browserWindow in windows
-    repeat with browserSpace in spaces of browserWindow
-      if (title of browserSpace) is "computer use" then
-        focus browserSpace
-        return
-      end if
-    end repeat
-  end repeat
-end tell
-APPLESCRIPT
-
-exec "$repo/node_modules/.bin/tsx" "$repo/bin/chrome-devtools-axi.ts" "$@"
+printf '%s\n' 'chrome-devtools-axi: disabled by the Zen-only browser policy. CDP cannot control Zen; use Codex native Computer Use in Zen for interactive work.' >&2
+exit 78

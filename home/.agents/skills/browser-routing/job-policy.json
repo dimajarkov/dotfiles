@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "externalExecutionEnabled": false,
+  "browserFamily": "chrome",
+  "browserType": "extension",
+  "chromeBundle": "com.google.Chrome",
+  "account": "jdmitri1999@gmail.com",
+  "window": "write",
+  "deniedProfiles": ["support", "Customer (support)", "support@arenacrm.com"],
+  "evidenceMaxAgeSeconds": 60,
+  "axiPurpose": "isolated-development-only"
+}

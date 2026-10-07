@@ -12,7 +12,7 @@ _G.appNavigation = appNavigation
 appNavigation.bindings = {
   ["1"] = { bundleID = "com.github.wez.wezterm", label = "WezTerm" },
   ["2"] = { bundleID = "com.microsoft.VSCode", label = "Visual Studio Code" },
-  ["3"] = { bundleID = "company.thebrowser.Browser", label = "Arc" },
+  ["3"] = { bundleID = "app.zen-browser.zen", label = "Zen Browser" },
   ["4"] = { bundleID = "com.openai.codex", label = "ChatGPT" },
   ["0"] = { bundleID = "com.hnc.Discord", label = "Discord" },
   ["5"] = { bundleID = "com.cron.electron", label = "Notion Calendar" },

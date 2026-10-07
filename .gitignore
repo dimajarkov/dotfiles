@@ -25,8 +25,5 @@ home/.pi/agent/**/node_modules
 # Local runtime binaries
 home/.pi/agent/bin/
 
-# Local dependency state
-home/.pi/agent/**/node_modules
-
 # Local validation state
 .no-mistakes/

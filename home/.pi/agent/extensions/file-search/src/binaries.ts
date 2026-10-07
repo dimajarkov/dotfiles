@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { Crypto, Data, Effect, Encoding, FileSystem, Stream } from "effect";
+import { Crypto, Data, Effect, Encoding, FileSystem, Layer, Stream } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -33,25 +33,17 @@ const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const MAX_DOWNLOAD_REDIRECTS = 10;
 
 const FD_SHA256: Readonly<Record<string, string>> = {
-  "aarch64-apple-darwin":
-    "623dc0afc81b92e4d4606b380d7bc91916ba7b97814263e554d50923a39e480a",
-  "x86_64-apple-darwin":
-    "50d30f13fe3d5914b14c4fff5abcbd4d0cdab4b855970a6956f4f006c17117a3",
-  "aarch64-unknown-linux-musl":
-    "f32d3657473fba74e2600babc8db0b93420d51169223b7e8143b2ed55d8fd9e8",
-  "x86_64-unknown-linux-musl":
-    "e3257d48e29a6be965187dbd24ce9af564e0fe67b3e73c9bdcd180f4ec11bdde",
+  "aarch64-apple-darwin": "623dc0afc81b92e4d4606b380d7bc91916ba7b97814263e554d50923a39e480a",
+  "x86_64-apple-darwin": "50d30f13fe3d5914b14c4fff5abcbd4d0cdab4b855970a6956f4f006c17117a3",
+  "aarch64-unknown-linux-musl": "f32d3657473fba74e2600babc8db0b93420d51169223b7e8143b2ed55d8fd9e8",
+  "x86_64-unknown-linux-musl": "e3257d48e29a6be965187dbd24ce9af564e0fe67b3e73c9bdcd180f4ec11bdde",
 };
 
 const RG_SHA256: Readonly<Record<string, string>> = {
-  "aarch64-apple-darwin":
-    "3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4",
-  "x86_64-apple-darwin":
-    "af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1",
-  "aarch64-unknown-linux-musl":
-    "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
-  "x86_64-unknown-linux-musl":
-    "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
+  "aarch64-apple-darwin": "3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4",
+  "x86_64-apple-darwin": "af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1",
+  "aarch64-unknown-linux-musl": "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
+  "x86_64-unknown-linux-musl": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
 };
 
 export type ToolName = "fd" | "rg";
@@ -86,12 +78,7 @@ export interface ReleaseAsset {
 }
 
 function targetTriple(target: PlatformTarget) {
-  const cpu =
-    target.arch === "arm64"
-      ? "aarch64"
-      : target.arch === "x64"
-        ? "x86_64"
-        : undefined;
+  const cpu = target.arch === "arm64" ? "aarch64" : target.arch === "x64" ? "x86_64" : undefined;
   if (!cpu) return undefined;
   if (target.os === "darwin") return `${cpu}-apple-darwin`;
   // musl builds are statically linked, so they run on any Linux distribution.
@@ -100,10 +87,7 @@ function targetTriple(target: PlatformTarget) {
 }
 
 /** Official GitHub release asset for a tool on a platform, if supported. */
-export function releaseAsset(
-  tool: ToolName,
-  target: PlatformTarget,
-): ReleaseAsset | undefined {
+export function releaseAsset(tool: ToolName, target: PlatformTarget): ReleaseAsset | undefined {
   const triple = targetTriple(target);
   if (!triple) return undefined;
 
@@ -111,8 +95,7 @@ export function releaseAsset(
     const sha256 = FD_SHA256[triple];
     if (!sha256) return undefined;
     // fd 10.4.2 dropped the Intel macOS archive, so retain 10.3.0 there.
-    const version =
-      triple === "x86_64-apple-darwin" ? FD_INTEL_DARWIN_VERSION : FD_VERSION;
+    const version = triple === "x86_64-apple-darwin" ? FD_INTEL_DARWIN_VERSION : FD_VERSION;
     const archiveDir = `fd-v${version}-${triple}`;
     const fileName = `${archiveDir}.tar.gz`;
     return {
@@ -149,9 +132,7 @@ export function repositoryBinDir() {
   return join(moduleDir, "..", "..", "..", "bin");
 }
 
-export class UnsupportedPlatformError extends Data.TaggedError(
-  "UnsupportedPlatformError",
-)<{
+export class UnsupportedPlatformError extends Data.TaggedError("UnsupportedPlatformError")<{
   readonly message: string;
 }> {}
 
@@ -164,10 +145,7 @@ export interface BinaryEnv {
   /** True when the executable runs and supports the flags this tool requires. */
   readonly probe: (command: string, tool: ToolName) => Effect.Effect<boolean>;
   /** Download and place a release binary at the destination path. */
-  readonly install: (
-    asset: ReleaseAsset,
-    destination: string,
-  ) => Effect.Effect<void, InstallError>;
+  readonly install: (asset: ReleaseAsset, destination: string) => Effect.Effect<void, InstallError>;
 }
 
 export interface ResolvedBinary {
@@ -237,7 +215,9 @@ export function readBoundedResponse<E, R>(
     const declaredLength = Number(response.headers["content-length"]);
     if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
       return yield* Effect.fail(
-        new Error(`download exceeds the ${maxBytes}-byte size limit`),
+        new InstallError({
+          message: `download exceeds the ${maxBytes}-byte size limit`,
+        }),
       );
     }
 
@@ -248,7 +228,9 @@ export function readBoundedResponse<E, R>(
         const totalBytes = accumulator.totalBytes + chunk.byteLength;
         if (totalBytes > maxBytes) {
           return Effect.fail(
-            new Error(`download exceeds the ${maxBytes}-byte size limit`),
+            new InstallError({
+              message: `download exceeds the ${maxBytes}-byte size limit`,
+            }),
           );
         }
         return Effect.sync(() => {
@@ -272,7 +254,9 @@ function downloadAsset(client: HttpClient.HttpClient, initialUrl: URL) {
     for (let redirects = 0; redirects <= MAX_DOWNLOAD_REDIRECTS; redirects++) {
       if (url.protocol !== "https:") {
         return yield* Effect.fail(
-          new Error(`refusing non-HTTPS download URL: ${url.href}`),
+          new InstallError({
+            message: `refusing non-HTTPS download URL: ${url.href}`,
+          }),
         );
       }
 
@@ -283,21 +267,23 @@ function downloadAsset(client: HttpClient.HttpClient, initialUrl: URL) {
             const location = response.headers.location;
             if (!location) {
               return yield* Effect.fail(
-                new Error(`redirect from ${url.href} had no location header`),
+                new InstallError({
+                  message: `redirect from ${url.href} had no location header`,
+                }),
               );
             }
             if (redirects === MAX_DOWNLOAD_REDIRECTS) {
               return yield* Effect.fail(
-                new Error(
-                  `download exceeded ${MAX_DOWNLOAD_REDIRECTS} redirects`,
-                ),
+                new InstallError({
+                  message: `download exceeded ${MAX_DOWNLOAD_REDIRECTS} redirects`,
+                }),
               );
             }
             if (!URL.canParse(location, url)) {
               return yield* Effect.fail(
-                new Error(
-                  `download returned an invalid redirect URL: ${location}`,
-                ),
+                new InstallError({
+                  message: `download returned an invalid redirect URL: ${location}`,
+                }),
               );
             }
             return { _tag: "Redirect" as const, url: new URL(location, url) };
@@ -305,7 +291,9 @@ function downloadAsset(client: HttpClient.HttpClient, initialUrl: URL) {
 
           if (response.status < 200 || response.status >= 300) {
             return yield* Effect.fail(
-              new Error(`download failed with HTTP ${response.status}`),
+              new InstallError({
+                message: `download failed with HTTP ${response.status}`,
+              }),
             );
           }
           return {
@@ -319,7 +307,7 @@ function downloadAsset(client: HttpClient.HttpClient, initialUrl: URL) {
       url = result.url;
     }
 
-    return yield* Effect.fail(new Error("download redirect handling failed"));
+    return yield* Effect.fail(new InstallError({ message: "download redirect handling failed" }));
   });
 }
 
@@ -328,8 +316,7 @@ export const liveBinaryEnv: BinaryEnv = {
   probe: (command, tool) =>
     Effect.promise(async () => {
       try {
-        const args =
-          tool === "fd" ? ["--max-results", "1", "--", ""] : ["--version"];
+        const args = tool === "fd" ? ["--max-results", "1", "--", ""] : ["--version"];
         await execFileAsync(command, args, {
           cwd: tmpdir(),
           timeout: 5_000,
@@ -344,7 +331,7 @@ export const liveBinaryEnv: BinaryEnv = {
     const install = Effect.gen(function* () {
       if (!URL.canParse(asset.url)) {
         return yield* Effect.fail(
-          new Error(`invalid download URL: ${asset.url}`),
+          new InstallError({ message: `invalid download URL: ${asset.url}` }),
         );
       }
 
@@ -352,17 +339,15 @@ export const liveBinaryEnv: BinaryEnv = {
       const client = yield* HttpClient.HttpClient;
       const fs = yield* FileSystem.FileSystem;
       const crypto = yield* Crypto.Crypto;
-      const bytes = yield* downloadAsset(client, url).pipe(
-        Effect.timeout(DOWNLOAD_TIMEOUT_MS),
-      );
+      const bytes = yield* downloadAsset(client, url).pipe(Effect.timeout(DOWNLOAD_TIMEOUT_MS));
 
       const digestBytes = yield* crypto.digest("SHA-256", bytes);
       const digest = Encoding.encodeHex(digestBytes);
       if (digest !== asset.sha256) {
         return yield* Effect.fail(
-          new Error(
-            `SHA-256 mismatch for ${asset.fileName}: expected ${asset.sha256}, received ${digest}`,
-          ),
+          new InstallError({
+            message: `SHA-256 mismatch for ${asset.fileName}: expected ${asset.sha256}, received ${digest}`,
+          }),
         );
       }
 
@@ -374,17 +359,17 @@ export const liveBinaryEnv: BinaryEnv = {
 
       const tarExitCode = yield* Effect.scoped(
         Effect.gen(function* () {
-          const tar = yield* ChildProcess.make(
-            "tar",
-            ["-xzf", archivePath, "-C", workDir],
-            { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
-          );
+          const tar = yield* ChildProcess.make("tar", ["-xzf", archivePath, "-C", workDir], {
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+          });
           return yield* tar.exitCode;
         }),
       ).pipe(Effect.timeout(60_000));
       if (tarExitCode !== ChildProcessSpawner.ExitCode(0)) {
         return yield* Effect.fail(
-          new Error(`tar failed with exit code ${tarExitCode}`),
+          new InstallError({ message: `tar failed with exit code ${tarExitCode}` }),
         );
       }
 
@@ -402,8 +387,7 @@ export const liveBinaryEnv: BinaryEnv = {
 
     return install.pipe(
       Effect.scoped,
-      Effect.provide(NodeServices.layer),
-      Effect.provide(NodeHttpClient.layerFetch),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerFetch)),
       Effect.provideService(FetchHttpClient.RequestInit, {
         redirect: "manual",
       }),

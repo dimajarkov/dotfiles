@@ -128,10 +128,9 @@ test("serialized transcripts redact complete and truncated PEM and OpenPGP priva
     "synthetic-complete-key-material",
     "-----END OPENSSH PRIVATE KEY-----",
   ].join("\n");
-  const truncatedKey = [
-    "-----BEGIN RSA PRIVATE KEY-----",
-    "synthetic-truncated-key-material",
-  ].join("\n");
+  const truncatedKey = ["-----BEGIN RSA PRIVATE KEY-----", "synthetic-truncated-key-material"].join(
+    "\n",
+  );
   const completeArmoredKey = [
     "-----BEGIN PGP PRIVATE KEY BLOCK-----",
     "synthetic-complete-armored-key-material",
@@ -252,6 +251,8 @@ test("serialized transcripts redact database URL credentials across message sour
       command: `psql postgresql://fixture-user:${passwords[3]}@db.example.test/demo`,
       output: `DATABASE_URL=postgres://fixture-user:${passwords[4]}@db.example.test/demo`,
       exitCode: 0,
+      cancelled: false,
+      truncated: false,
       timestamp: 3,
     }),
   ]);

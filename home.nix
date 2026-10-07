@@ -4,6 +4,16 @@ let
   dotfiles = "${config.home.homeDirectory}/.dotfiles";
   backpassCli = pkgs.callPackage ./nix/packages/backpass-cli.nix {};
   piUpstream = pkgs.callPackage ./nix/packages/pi-coding-agent.nix {};
+  hunkReview = pkgs.callPackage ./nix/packages/hunk.nix {};
+  hunkCommand = pkgs.writeShellApplication {
+    name = "hunk";
+    text = ''
+      if (( $# == 0 )); then
+        set -- diff
+      fi
+      exec ${hunkReview}/bin/hunk "$@"
+    '';
+  };
 in {
   home.username = user;
   home.homeDirectory = "/Users/${user}";
@@ -14,11 +24,13 @@ in {
     backpassCli
     btop
     codebook
+    delta
     python313Packages.debugpy
     entr
     fd
     fzf
     git-lfs
+    hunkCommand
     jq
     lazygit
     lua-language-server
@@ -42,8 +54,6 @@ in {
   ];
   home.sessionVariables = {
     EDITOR = "nvim";
-    CHROME_DEVTOOLS_AXI_EXECUTABLE_PATH = "/Applications/Arc.app/Contents/MacOS/Arc";
-    CHROME_DEVTOOLS_AXI_HEADED = "1";
   };
   fonts.fontconfig.enable = true;
 
@@ -467,12 +477,16 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.hammerspoon/init.lua";
   home.file.".config/gh/config.yml".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/gh/config.yml";
+  home.file."Library/Application Support/lazygit/config.yml".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/lazygit/config.yml";
   home.file.".config/wezterm".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/wezterm";
   home.file.".config/nvim".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/nvim";
   home.file.".config/herdr".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/herdr";
+  home.file.".config/hunk/config.toml".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/hunk/config.toml";
   home.file."AGENTS.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/AGENTS.md";
   home.file.".agents/AGENTS.md".source =

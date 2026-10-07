@@ -98,8 +98,8 @@ agent_panel_sort = "spaces"
 show_agent_labels_on_pane_borders = true
 
 status_indicators = "symbols"
-sidebar_start_collapsed = true
-sidebar_collapsed_mode = "hidden"
+sidebar_start_collapsed = false
+sidebar_collapsed_mode = "compact"
 
 # Show the persistent Herdr session name in the tab bar's right-aligned status area.
 # Herdr exposes HERDR_SESSION to the server and its status commands.
