@@ -4,9 +4,13 @@ import {
   emptyGitInfoState,
   GIT_INFO_CHANNEL,
   REFRESH_CHANNEL,
-  type PullRequestInfo,
 } from "../shared/dashboard-state.ts";
 import { loadChangedFiles, showChangedFiles } from "./src/changed-files-view.ts";
+import {
+  makePullRequestTracker,
+  parsePullRequestView,
+  pullRequestViewArgs,
+} from "./src/pull-request.ts";
 import { runCommand, type CommandRunner } from "./src/process.ts";
 import { makeRefreshCoordinator } from "./src/refresh-coordinator.ts";
 import { createRuntime, runEffect, type GitInfoRuntime } from "./src/runtime.ts";
@@ -20,34 +24,13 @@ function countChangedFiles(status: string) {
   return status.split("\n").filter(Boolean).length;
 }
 
-function parsePullRequest(value: unknown) {
-  if (typeof value !== "object" || value === null) return null;
-  if (!("number" in value) || typeof value.number !== "number") return null;
-  if (!("url" in value) || typeof value.url !== "string") return null;
-  if (!("state" in value) || value.state !== "OPEN") return null;
-
-  return {
-    number: value.number,
-    url: value.url,
-    isDraft: "isDraft" in value && value.isDraft === true,
-  } satisfies PullRequestInfo;
-}
-
-function parsePullRequestJson(value: string) {
-  try {
-    return parsePullRequest(JSON.parse(value));
-  } catch {
-    return null;
-  }
-}
-
 export default function gitInfo(pi: ExtensionAPI) {
   let state = emptyGitInfoState();
   let runtime: GitInfoRuntime | undefined;
   let pollingFiber: Fiber.Fiber<void> | undefined;
   let currentContext: ExtensionContext | undefined;
   let generation = 0;
-  let queriedPrBranch: string | null = null;
+  const pullRequestTracker = makePullRequestTracker();
   const refreshCoordinator = makeRefreshCoordinator();
 
   const getRuntime = () => (runtime ??= createRuntime());
@@ -59,12 +42,11 @@ export default function gitInfo(pi: ExtensionAPI) {
     Effect.gen(function* () {
       const result = yield* run(
         "gh",
-        ["pr", "view", branch, "--json", "number,url,state,isDraft"],
+        pullRequestViewArgs(branch),
         ctx,
         GH_TIMEOUT_MS,
       );
-      if (result.code !== 0) return null;
-      return parsePullRequestJson(result.stdout);
+      return parsePullRequestView(result);
     });
 
   const refreshEffect = (
@@ -81,7 +63,7 @@ export default function gitInfo(pi: ExtensionAPI) {
         if (refreshGeneration !== generation) return;
 
         if (repo.code !== 0 || repo.stdout.trim() !== "true") {
-          queriedPrBranch = null;
+          pullRequestTracker.reset();
           state = emptyGitInfoState();
           publish();
           return;
@@ -100,7 +82,7 @@ export default function gitInfo(pi: ExtensionAPI) {
         const branchName = branchResult.stdout.trim();
         const shortHead = headResult.stdout.trim();
         const branch = branchName || (shortHead ? `detached@${shortHead}` : "detached");
-        const branchChanged = branchName !== queriedPrBranch;
+        const branchChanged = pullRequestTracker.activate(branchName || null);
 
         state = {
           ...state,
@@ -112,17 +94,17 @@ export default function gitInfo(pi: ExtensionAPI) {
         publish();
 
         if (!branchName) {
-          // queriedPrBranch is never "", so branchChanged already cleared pullRequest.
-          queriedPrBranch = null;
           return;
         }
 
-        if (forcePullRequest || branchChanged) {
-          queriedPrBranch = branchName;
-          const pullRequest = yield* lookupPullRequest(ctx, branchName);
+        if (pullRequestTracker.shouldLookup(branchName, forcePullRequest)) {
+          const result = yield* lookupPullRequest(ctx, branchName);
           if (refreshGeneration !== generation) return;
-          state = { ...state, pullRequest };
-          publish();
+          pullRequestTracker.complete(branchName, result);
+          if (result.kind === "resolved") {
+            state = { ...state, pullRequest: result.pullRequest };
+            publish();
+          }
         }
       });
     });
@@ -157,7 +139,7 @@ export default function gitInfo(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     generation += 1;
-    queriedPrBranch = null;
+    pullRequestTracker.reset();
 
     const previousPollingFiber = pollingFiber;
     pollingFiber = undefined;

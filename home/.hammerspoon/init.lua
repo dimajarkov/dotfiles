@@ -58,6 +58,8 @@ end
 stopStoredTimer("prefixTimer")
 stopStoredTimer("commandTimer")
 stopStoredTimer("archiveTimer")
+stopStoredTimer("openGoogleTimer")
+stopStoredTimer("openGoogleSubmitTimer")
 
 if arcNavigation.keyTap then
   arcNavigation.keyTap:stop()
@@ -231,10 +233,14 @@ local function archiveHoveredArcTab()
     and size.w < 60
     and size.h < 60
 
+  if smallUntitledButton then
+    return
+  end
+
   local ok = pcall(function()
     button:performAction("AXPress")
   end)
-  if not ok or smallUntitledButton then
+  if not ok then
     return
   end
 

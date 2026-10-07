@@ -1,6 +1,8 @@
 import { NodeServices } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
-import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { readdirSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Effect, FileSystem } from "effect";
 import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
@@ -22,7 +24,7 @@ import {
   type ReleaseAsset,
   type ResolvedBinary,
 } from "./src/binaries.ts";
-import { formatCapturedOutput, formatOutput } from "./src/output.ts";
+import { formatCapturedOutput } from "./src/output.ts";
 import { executeSearchProcess } from "./src/process.ts";
 import { installNotifications, makeBinaryInitializers } from "./index.ts";
 
@@ -63,7 +65,7 @@ it("fd args: all options are translated and pattern stays behind --", () => {
     "50",
     "--",
     "-rf",
-    "src",
+    "@src",
   ]);
 });
 
@@ -124,7 +126,7 @@ it("rg args: all options are translated", () => {
     "10",
     "--",
     "TODO",
-    "lib",
+    "@lib",
   ]);
 });
 
@@ -134,8 +136,8 @@ it("rg args: case_sensitive false forces ignore-case", () => {
   assert.isFalse(args.includes("--smart-case"));
 });
 
-it("path normalization strips leading @ and expands ~", () => {
-  assert.equal(normalizeSearchPath("@src/lib"), "src/lib");
+it("path normalization preserves literal @ paths and expands ~", () => {
+  assert.equal(normalizeSearchPath("@src/lib"), "@src/lib");
   assert.equal(normalizeSearchPath("~"), homedir());
   assert.equal(normalizeSearchPath("~/projects"), join(homedir(), "projects"));
   assert.equal(normalizeSearchPath(" plain "), "plain");
@@ -396,6 +398,7 @@ it.effect("process output is streamed to a complete spill file", () =>
     assert.equal(formatted.lineCount, 3000);
     assert.match(formatted.text, /2000 of 3000 lines/);
     assert.isDefined(formatted.fullOutputPath);
+    assert.equal(statSync(dirname(formatted.fullOutputPath)).mode & 0o777, 0o700);
 
     const fs = yield* FileSystem.FileSystem;
     const fullOutput = yield* fs.readFileString(formatted.fullOutputPath);
@@ -407,37 +410,19 @@ it.effect("process output is streamed to a complete spill file", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it("output: small results pass through untouched", async () => {
-  const formatted = await formatOutput("a.ts\nb.ts\n", {
-    tempPrefix: "pi-fd-",
-    persistFullOutput: () => Promise.reject(new Error("should not persist")),
-  });
-  assert.equal(formatted.text, "a.ts\nb.ts");
-  assert.equal(formatted.lineCount, 2);
-  assert.isFalse(formatted.truncated);
-  assert.isUndefined(formatted.fullOutputPath);
-});
+it.effect("failed searches clean up truncated spill files", () =>
+  Effect.gen(function* () {
+    const tempPrefix = `pi-search-failed-${process.pid}-${randomUUID()}-`;
+    const result = yield* executeSearchProcess({
+      command: process.execPath,
+      args: ["-e", 'process.stdout.write("line\\n".repeat(3000)); process.exitCode = 2'],
+      cwd: process.cwd(),
+      tempPrefix,
+    });
 
-it("output: oversized results are truncated and persisted", async () => {
-  const bigOutput = Array.from({ length: 3000 }, (_, i) => `file-${i}.ts`).join(
-    "\n",
-  );
-  let persisted: string | undefined;
-  const formatted = await formatOutput(bigOutput, {
-    tempPrefix: "pi-fd-",
-    persistFullOutput: async (full) => {
-      persisted = full;
-      return "/tmp/fake/output.txt";
-    },
-  });
-  assert.isTrue(formatted.truncated);
-  assert.equal(formatted.fullOutputPath, "/tmp/fake/output.txt");
-  assert.equal(persisted, bigOutput);
-  assert.match(formatted.text, /\[Output truncated: 2000 of 3000 lines/);
-  assert.match(
-    formatted.text,
-    /Full output saved to: \/tmp\/fake\/output\.txt\]/,
-  );
-  const shownLines = formatted.text.split("\n");
-  assert.equal(shownLines[0], "file-0.ts");
-});
+    assert.equal(result.code, 2);
+    assert.isTrue(result.output.truncated);
+    assert.isUndefined(result.output.fullOutputPath);
+    assert.isFalse(readdirSync(tmpdir()).some((name) => name.startsWith(tempPrefix)));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

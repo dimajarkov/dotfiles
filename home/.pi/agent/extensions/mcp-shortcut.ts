@@ -23,9 +23,6 @@ export default function mcpShortcut(pi: ExtensionAPI): void {
         return { consume: true };
       }
 
-      // The shortcut is a command launcher, not an editor insertion. Discard
-      // any draft before dispatching the adapter's own command handler.
-      ctx.ui.setEditorText("");
       pi.sendUserMessage(MCP_COMMAND, { expandPromptTemplates: true });
       return { consume: true };
     });

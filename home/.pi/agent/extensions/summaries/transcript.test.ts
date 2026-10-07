@@ -75,6 +75,8 @@ test("transcript omits thinking, images, and recap entries while redacting tool 
           arguments: {
             command: "curl -H 'Authorization: Bearer very-secret-token' https://example.test",
             apiKey: "sk-super-secret-value",
+            secretary: "Alice Smith",
+            tokenizer: "bpe-vocabulary",
             payload: "x".repeat(10_000),
           },
         },
@@ -109,6 +111,8 @@ test("transcript omits thinking, images, and recap entries while redacting tool 
   assert.match(transcript, /Update the client/);
   assert.match(transcript, /TOOL CALL bash/);
   assert.match(transcript, /Updated the client/);
+  assert.match(transcript, /Alice Smith/);
+  assert.match(transcript, /bpe-vocabulary/);
   assert.doesNotMatch(transcript, /hidden chain of thought/);
   assert.doesNotMatch(transcript, /base64-image-bytes/);
   assert.doesNotMatch(transcript, /very-secret-token/);
@@ -116,6 +120,181 @@ test("transcript omits thinking, images, and recap entries while redacting tool 
   assert.doesNotMatch(transcript, /old recap/);
   assert.match(transcript, /\[REDACTED\]/);
   assert.match(transcript, /tool arguments capped/);
+});
+
+test("serialized transcripts redact complete and truncated PEM and OpenPGP private keys", () => {
+  const completeKey = [
+    "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "synthetic-complete-key-material",
+    "-----END OPENSSH PRIVATE KEY-----",
+  ].join("\n");
+  const truncatedKey = [
+    "-----BEGIN RSA PRIVATE KEY-----",
+    "synthetic-truncated-key-material",
+  ].join("\n");
+  const completeArmoredKey = [
+    "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+    "synthetic-complete-armored-key-material",
+    "-----END PGP PRIVATE KEY BLOCK-----",
+  ].join("\n");
+  const truncatedArmoredKey = [
+    "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+    "synthetic-truncated-armored-key-material",
+  ].join("\n");
+  const transcript = serializeRunTranscript([
+    entry("key-output", {
+      role: "toolResult",
+      toolCallId: "call-key-output",
+      toolName: "bash",
+      content: [
+        {
+          type: "text",
+          text: [completeKey, truncatedKey, completeArmoredKey, truncatedArmoredKey].join("\n"),
+        },
+      ],
+      isError: false,
+      timestamp: 0,
+    }),
+  ]);
+
+  assert.match(transcript, /\[REDACTED\]/);
+  assert.doesNotMatch(transcript, /synthetic-(?:complete|truncated)(?:-armored)?-key-material/);
+  assert.doesNotMatch(transcript, /-----BEGIN|-----END/);
+});
+
+test("serialized transcripts redact known provider secrets but preserve publishable Stripe keys", () => {
+  const credentials = [
+    "github_pat_0123456789abcdef",
+    "ghp_0123456789abcdef",
+    "glpat-0123456789abcdef",
+    "xoxb-12345678-abcdefgh",
+    "sk_live_0123456789abcdef",
+    "sk_test_0123456789abcdef",
+    "rk_live_0123456789abcdef",
+    "rk_test_0123456789abcdef",
+    "whsec_0123456789abcdef",
+    "sk-proj-0123456789abcdef",
+    "AIza0123456789abcdef",
+    "AKIA12345678",
+    "pypi-0123456789abcdef",
+    "npm_0123456789abcdef",
+    "hf_0123456789",
+    "dop_v1_0123456789abcdef",
+    "shpat_0123456789abcdef",
+    "SG.0123456789abcdef.abcdef0123456789",
+  ];
+  const publishableKeys = ["pk_live_0123456789abcdef", "pk_test_0123456789abcdef"];
+  const transcript = serializeRunTranscript([
+    entry("credentials", {
+      role: "toolResult",
+      toolCallId: "call-credentials",
+      toolName: "bash",
+      content: [{ type: "text", text: [...credentials, ...publishableKeys].join("\n") }],
+      isError: false,
+      timestamp: 0,
+    }),
+  ]);
+
+  for (const credential of credentials) assert.ok(!transcript.includes(credential));
+  for (const key of publishableKeys) assert.ok(transcript.includes(key));
+});
+
+test("serialized transcripts redact database URL credentials across message sources", () => {
+  const passwords = [
+    "synthetic-user-content-password",
+    "synthetic-tool-argument-password",
+    "synthetic-tool-output-password",
+    "synthetic-shell-command-password",
+    "synthetic-shell-output-password",
+  ];
+  const transcript = serializeRunTranscript([
+    entry("db-user-content", {
+      role: "user",
+      content: `Please check DATABASE_URL=postgres://fixture-user:${passwords[0]}@db.example.test/demo`,
+      timestamp: 0,
+    }),
+    entry("db-tool-call", {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "call-db",
+          name: "connect",
+          arguments: {
+            databaseUrl: `postgresql://fixture-user:${passwords[1]}@db.example.test/demo`,
+            customerName: "Ada Example",
+            customerEmail: "ada@example.test",
+          },
+        },
+      ],
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      model: "gpt-5.6-luna",
+      usage,
+      stopReason: "toolUse",
+      timestamp: 1,
+    }),
+    entry("db-tool-result", {
+      role: "toolResult",
+      toolCallId: "call-db",
+      toolName: "connect",
+      content: [
+        {
+          type: "text",
+          text: `DATABASE_URL=mysql://fixture-user:${passwords[2]}@db.example.test/demo`,
+        },
+      ],
+      isError: false,
+      timestamp: 2,
+    }),
+    entry("db-shell", {
+      role: "bashExecution",
+      command: `psql postgresql://fixture-user:${passwords[3]}@db.example.test/demo`,
+      output: `DATABASE_URL=postgres://fixture-user:${passwords[4]}@db.example.test/demo`,
+      exitCode: 0,
+      timestamp: 3,
+    }),
+  ]);
+
+  for (const password of passwords) assert.ok(!transcript.includes(password));
+  assert.match(transcript, /Ada Example/);
+  assert.match(transcript, /ada@example\.test/);
+});
+
+test("credential field matching preserves ordinary words in serialized output", () => {
+  const fields = {
+    secretary: "Alice Smith",
+    secretariat: "Operations team",
+    monkey: "Capuchin",
+    keynote: "Main stage",
+    tokenizer: "BPE vocabulary",
+    clientSecret: "synthetic-client-secret-value",
+    api_key: "synthetic-api-key-value",
+    refreshToken: "synthetic-refresh-token-value",
+    access_key: "synthetic-access-key-value",
+    privateKey: "synthetic-private-key-value",
+    passwd: "synthetic-passwd-value",
+    authorization: "synthetic-authorization-value",
+  };
+  const transcript = serializeRunTranscript([
+    entry("credential-fields", {
+      role: "toolResult",
+      toolCallId: "call-credential-fields",
+      toolName: "bash",
+      content: [{ type: "text", text: JSON.stringify(fields) }],
+      isError: false,
+      timestamp: 0,
+    }),
+  ]);
+
+  for (const [key, value] of Object.entries(fields).slice(0, 5)) {
+    assert.ok(transcript.includes(`"${key}":"${value}"`));
+  }
+  for (const value of Object.values(fields).slice(5)) {
+    assert.ok(!transcript.includes(value));
+  }
+  assert.match(transcript, /"clientSecret":"\[REDACTED\]"/);
+  assert.match(transcript, /"api_key":"\[REDACTED\]"/);
 });
 
 test("fallback recap derives a short title from the run request", () => {

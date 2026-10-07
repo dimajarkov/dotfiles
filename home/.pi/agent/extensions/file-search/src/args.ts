@@ -4,7 +4,7 @@
  * Everything here is synchronous and side-effect free so the exact argv
  * passed to pi.exec can be asserted in tests. Patterns are always placed
  * after a `--` separator so user-controlled input can never be parsed as a
- * flag, and paths are normalized (leading `@`, `~` expansion) before use.
+ * flag, and paths are normalized (`~` expansion) before use.
  */
 
 import { homedir } from "node:os";
@@ -17,10 +17,8 @@ export const RG_DEFAULT_COUNT_LIMIT = 100;
 export const RG_MAX_COUNT_LIMIT = 1000;
 export const RG_MAX_CONTEXT = 20;
 
-/** Some models prefix path arguments with @; built-in tools strip it, so do we. */
 export function normalizeSearchPath(raw: string) {
-  let path = raw.trim();
-  if (path.startsWith("@")) path = path.slice(1);
+  const path = raw.trim();
   if (path === "~") return homedir();
   if (path.startsWith("~/")) return join(homedir(), path.slice(2));
   return path;

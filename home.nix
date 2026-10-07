@@ -168,6 +168,13 @@ in {
       /bin/rm -- "$mcp_path"
     fi
 
+    custom_header_path="${config.home.homeDirectory}/.pi/agent/extensions/custom-header.ts"
+    if [ -f "$custom_header_path" ] && [ ! -L "$custom_header_path" ] && [ "$(
+      ${pkgs.coreutils}/bin/sha256sum "$custom_header_path" | ${pkgs.coreutils}/bin/cut -d ' ' -f 1
+    )" = "b100834e89b29978acfa4463d2ed98b3efe4f22c3fa3951d2de7c87ce8584b68" ]; then
+      /bin/rm -- "$custom_header_path"
+    fi
+
     for extension in browser web-fetch; do
       extension_path="${config.home.homeDirectory}/.pi/agent/extensions/$extension"
       extension_source="${dotfiles}/home/.pi/agent/extensions/$extension"
@@ -275,9 +282,6 @@ in {
     browser_path="${config.home.homeDirectory}/.pi/agent/extensions/browser"
     install_pi_extension_dependencies "$browser_path"
 
-    ask_user_path="${config.home.homeDirectory}/.pi/agent/extensions/ask-user"
-    install_pi_extension_dependencies "$ask_user_path"
-
     file_search_path="${config.home.homeDirectory}/.pi/agent/extensions/file-search"
     file_search_source="${dotfiles}/home/.pi/agent/extensions/file-search"
     install_pi_extension_dependencies "$file_search_path" production
@@ -367,14 +371,6 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/github-dark-default.json";
   home.file.".pi/agent/extensions/fullscreen-navigation.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/fullscreen-navigation.ts";
-  home.file.".pi/agent/extensions/ask-user/index.ts".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/ask-user/index.ts";
-  home.file.".pi/agent/extensions/ask-user/prompt.ts".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/ask-user/prompt.ts";
-  home.file.".pi/agent/extensions/ask-user/package.json".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/ask-user/package.json";
-  home.file.".pi/agent/extensions/ask-user/package-lock.json".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/ask-user/package-lock.json";
   home.file.".pi/agent/extensions/prime-style.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/prime-style.ts";
   home.file.".pi/agent/extensions/mcp-shortcut.ts".source =

@@ -1,10 +1,27 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import test from "node:test";
+import subagents from "./index.ts";
 
-const extensionSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+test("subagent dashboard registers a command without taking a shortcut", () => {
+  const commands: string[] = [];
+  const shortcuts: string[] = [];
+  const pi = {
+    on() {},
+    registerCommand(name: string) {
+      commands.push(name);
+    },
+    registerEntryRenderer() {},
+    registerMessageRenderer() {},
+    registerShortcut(name: string) {
+      shortcuts.push(name);
+    },
+    registerTool() {},
+    sendMessage() {},
+  } as unknown as ExtensionAPI;
 
-test("subagent navigation stays command-only", () => {
-  assert.match(extensionSource, /registerCommand\("subagents"/);
-  assert.doesNotMatch(extensionSource, /\bregisterShortcut\s*\(/);
+  subagents(pi);
+
+  assert.ok(commands.includes("subagents"));
+  assert.deepEqual(shortcuts, []);
 });
