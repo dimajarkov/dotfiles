@@ -38,10 +38,7 @@ test("registered ask_user guidance reaches Pi's runtime-built system prompt", as
         session.systemPrompt,
         /ask_user: Ask the user a multiple-choice question \(2-5 options plus a free-form answer\)/,
       );
-      assert.match(
-        session.systemPrompt,
-        /use the ask_user tool instead of asking in plain text/,
-      );
+      assert.match(session.systemPrompt, /use the ask_user tool instead of asking in plain text/);
       assert.match(
         session.systemPrompt,
         /Ask one question per ask_user call; ask follow-up questions in subsequent calls\./,

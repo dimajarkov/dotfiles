@@ -66,9 +66,7 @@ test("Ctrl+M opens the MCP panel without changing the editor draft", async () =>
       (data: string) => { consume?: boolean; data?: string } | undefined
     > = [];
     const uiContext = {
-      onTerminalInput(
-        handler: (data: string) => { consume?: boolean; data?: string } | undefined,
-      ) {
+      onTerminalInput(handler: (data: string) => { consume?: boolean; data?: string } | undefined) {
         terminalInputHandlers.push(handler);
         return () => {
           const index = terminalInputHandlers.indexOf(handler);

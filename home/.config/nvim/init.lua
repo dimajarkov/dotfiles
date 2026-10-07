@@ -227,7 +227,7 @@ require('kanagawa').setup({
 		}
 	}
 })
--- Keep Guts in dark mode and use Rose Pine Dawn in light mode.
+-- Keep GitHub Dark Default in dark mode and GitHub Light Default in light mode.
 require("rose-pine").setup()
 require('system-appearance').setup()
 
