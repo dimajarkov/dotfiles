@@ -2,21 +2,73 @@
 vim.g.mapleader = ' '
 vim.g.maplocalleader = ' '
 
--- Recover if a terminal pane's working directory was removed before Nvim started.
--- Oil's filetype fallback needs a valid cwd when it opens an unresolved path.
+-- Detect files changed by external coding agents while Nvim is idle.
+vim.o.autoread = true
+vim.o.updatetime = 500
+
+vim.api.nvim_create_autocmd({ 'FocusGained', 'BufEnter', 'CursorHold' }, {
+	group = vim.api.nvim_create_augroup('auto-read-files', { clear = true }),
+	desc = 'Reload buffers changed outside Neovim',
+	callback = function()
+		vim.cmd('checktime')
+	end,
+})
+
+-- Recover if a terminal pane's working directory was removed or is unreadable before Nvim starts.
+-- Oil's filetype fallback needs a readable cwd when it opens an unresolved path.
 local uv = vim.uv or vim.loop
+local function is_readable_dir(path)
+	if not path or vim.fn.isdirectory(path) ~= 1 then
+		return false
+	end
+
+	return uv.fs_scandir(path) ~= nil
+end
+
+local function fallback_dir()
+	local home = vim.env.HOME
+	return is_readable_dir(home) and home or nil
+end
+
+local function is_unreadable_dir(path)
+	return path ~= nil and vim.fn.isdirectory(path) == 1 and not is_readable_dir(path)
+end
+
 local function ensure_valid_cwd()
-	if uv.cwd() then
+	local cwd = uv.cwd()
+	if is_readable_dir(cwd) then
 		return true
 	end
 
-	local fallback = vim.env.HOME
-	if fallback and vim.fn.isdirectory(fallback) == 1 then
+	local fallback = fallback_dir()
+	if fallback then
 		vim.cmd.cd(fallback)
 	end
 
-	return uv.cwd() ~= nil
+	return is_readable_dir(uv.cwd())
 end
+
+-- Redirect explicit Oil directory URLs when a mounted volume is not readable.
+-- This runs before Oil's own BufReadCmd handler and prevents an avoidable render error.
+vim.api.nvim_create_autocmd('BufReadCmd', {
+	group = vim.api.nvim_create_augroup('oil-cwd-recovery', { clear = true }),
+	pattern = 'oil://*',
+	nested = true,
+	callback = function(args)
+		local bufname = vim.api.nvim_buf_get_name(args.buf)
+		local path = bufname:match('^oil://(.*)$')
+		local fallback = fallback_dir()
+		if path and vim.endswith(path, '/') and is_unreadable_dir(path) and fallback then
+			-- Oil may already have a buffer for the fallback directory. Its helper
+			-- handles both renaming and replacing the current buffer without E95.
+			require('oil.util').rename_buffer(args.buf, 'oil://' .. fallback .. '/')
+			vim.notify_once(
+				'Cannot read ' .. path .. '; Oil opened your home directory instead',
+				vim.log.levels.WARN
+			)
+		end
+	end,
+})
 
 local function open_oil()
 	if ensure_valid_cwd() then
@@ -111,6 +163,8 @@ vim.api.nvim_create_autocmd('TextYankPost', {
 
 -- Plugins
 -- Pack guide: https://echasnovski.com/blog/2026-03-13-a-guide-to-vim-pack#update
+vim.g.loaded_netrw = 1
+vim.g.loaded_netrwPlugin = 1
 vim.pack.add({
 	'https://github.com/ibhagwan/fzf-lua',
 	'https://github.com/nvim-treesitter/nvim-treesitter', -- also $ brew install tree-sitter-cli
@@ -118,6 +172,8 @@ vim.pack.add({
 	'https://github.com/karb94/neoscroll.nvim',
 	'https://github.com/mfussenegger/nvim-dap',
 	'https://github.com/stevearc/oil.nvim',
+	'https://github.com/nvim-tree/nvim-tree.lua',
+	'https://github.com/nvim-tree/nvim-web-devicons',
 	'https://github.com/esmuellert/codediff.nvim',
 	'https://github.com/goolord/alpha-nvim',
 	'https://github.com/MeanderingProgrammer/render-markdown.nvim',
@@ -127,6 +183,7 @@ vim.pack.add({
 	'https://github.com/kdheepak/lazygit.nvim',
 	{ src = 'https://github.com/saghen/blink.cmp', version = vim.version.range('1.x') }, -- pinning so rust binary dependency automatically downloads
 	-- Colorschemes
+	'https://github.com/projekt0n/github-nvim-theme',
 	'https://github.com/rebelot/kanagawa.nvim',
 	{ src = "https://github.com/rose-pine/neovim", name = "rose-pine" },
 	'https://github.com/vague-theme/vague.nvim',
@@ -135,6 +192,7 @@ vim.pack.add({
 
 -- Mini.nvim
 require('mini.ai').setup()
+require('mini.diff').setup()
 require('mini.icons').setup()
 
 -- Keybinding guide
@@ -149,8 +207,14 @@ require('which-key').setup({
 	},
 })
 
--- Vague Colorscheme
-vim.pack.add({ 'https://github.com/vague-theme/vague.nvim' })
+-- GitHub Colorscheme
+require('github-theme').setup({
+	options = {
+		hide_end_of_buffer = true,
+		terminal_colors = true,
+		transparent = false,
+	},
+})
 -- Kanagawa Colorscheme
 require('kanagawa').setup({
 	colors = {
@@ -163,7 +227,7 @@ require('kanagawa').setup({
 		}
 	}
 })
--- Keep Guts in dark mode and use Rose Pine Dawn in light mode.
+-- Keep GitHub Dark Default in dark mode and GitHub Light Default in light mode.
 require("rose-pine").setup()
 require('system-appearance').setup()
 
@@ -217,10 +281,69 @@ vim.keymap.set('n', 'gd', fzf.lsp_definitions, { desc = 'Go to definition' })
 vim.keymap.set('n', '<leader>fc', '<cmd>FzfLua colorschemes<cr>', { desc = 'Pick colorscheme' })
 
 -- Treesitter
+-- The plugin ships queries but not compiled parsers, so install the languages we
+-- use and keep them in Neovim's managed data directory.
+local treesitter_languages = {
+	'bash',
+	'css',
+	'html',
+	'javascript',
+	'json',
+	'lua',
+	'markdown',
+	'python',
+	'query',
+	'tsx',
+	'typescript',
+	'vim',
+	'vimdoc',
+	'yaml',
+}
+local treesitter = require('nvim-treesitter')
+treesitter.setup({
+	install_dir = vim.fn.stdpath('data') .. '/site',
+})
+
+local treesitter_filetypes = {
+	'bash',
+	'css',
+	'html',
+	'javascript',
+	'javascriptreact',
+	'json',
+	'lua',
+	'markdown',
+	'python',
+	'query',
+	'tsx',
+	'typescript',
+	'typescriptreact',
+	'vim',
+	'vimdoc',
+	'yaml',
+}
+local function start_treesitter(buf)
+	if vim.api.nvim_buf_is_valid(buf) then
+		pcall(vim.treesitter.start, buf)
+	end
+end
+
 vim.cmd('syntax off') -- Make it obvious if treesitter is missing
 vim.api.nvim_create_autocmd('FileType', {
-	callback = function() pcall(vim.treesitter.start) end,
+	pattern = treesitter_filetypes,
+	callback = function(args) start_treesitter(args.buf) end,
 })
+
+-- Refresh already-open buffers after a first-run parser installation finishes.
+local treesitter_install = treesitter.install(treesitter_languages)
+treesitter_install:await(function(err)
+	if err then return end
+	for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+		if vim.tbl_contains(treesitter_filetypes, vim.bo[buf].filetype) then
+			start_treesitter(buf)
+		end
+	end
+end)
 
 -- LSP
 vim.lsp.enable({
@@ -339,8 +462,22 @@ vim.keymap.set('n', '<Left>', dap.step_out, { desc = 'Debug step out' })
 vim.keymap.set('n', '<Up>', dap.restart_frame, { desc = 'Debug restart frame' })
 
 -- Oil.nvim
+local function select_oil_entry()
+	local oil = require("oil")
+	local entry = oil.get_cursor_entry()
+	local dir = oil.get_current_dir()
+
+	if entry and entry.type == "file" and dir and vim.endswith(entry.name:lower(), ".pdf") then
+		vim.ui.open(dir .. entry.name)
+		return
+	end
+
+	require("oil.actions").select.callback()
+end
+
 require("oil").setup({
 	keymaps = {
+		["<CR>"] = { callback = select_oil_entry, desc = "Open PDFs externally" },
 		["<C-h>"] = "<C-w>h",
 		["<BS>"] = "<C-w>h", -- only if your terminal sends Ctrl-h as BS
 		["<C-l>"] = "<C-w>l",
@@ -365,8 +502,8 @@ require("oil").setup({
 		},
 	},
 	columns = {
-		"icon",
 		{ "mtime", highlight = "Comment" },
+		"icon",
 	},
 	view_options = {
 		show_hidden = true,
@@ -377,6 +514,28 @@ require("oil").setup({
 	},
 })
 vim.keymap.set("n", "-", open_oil, { desc = "Open parent directory" })
+
+-- Nvim-tree
+require('nvim-tree').setup({
+	view = {
+		width = 30,
+		side = 'left',
+		preserve_window_proportions = true,
+	},
+	renderer = {
+		group_empty = true,
+	},
+	filters = {
+		dotfiles = false,
+	},
+	update_focused_file = {
+		enable = true,
+		update_root = false,
+	},
+	sync_root_with_cwd = true,
+})
+vim.keymap.set('n', '<leader>e', '<cmd>NvimTreeToggle<cr>', { desc = 'Toggle file explorer' })
+vim.keymap.set('n', '<leader>E', '<cmd>NvimTreeFindFile<cr>', { desc = 'Reveal current file' })
 
 local function git_line_history(start_line, end_line)
 	start_line, end_line = math.min(start_line, end_line), math.max(start_line, end_line)
@@ -455,6 +614,6 @@ dashboard.section.header.val = vim.split(
         ]], '\n', { trimempty = true })
 dashboard.section.header.opts.hl = 'Comment'
 dashboard.section.buttons.val = {}
-dashboard.section.footer.val = 'PookieVim v3000'
+dashboard.section.footer.val = "Do it poorly, that's easy!"
 dashboard.section.footer.opts.hl = 'Comment'
 alpha.setup(dashboard.opts)

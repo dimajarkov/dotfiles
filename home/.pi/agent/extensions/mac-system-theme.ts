@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const execFileAsync = promisify(execFile);
-const DARK_THEME = "prime";
+const DARK_THEME = "github-dark-default";
 const LIGHT_THEME = "catppuccin-latte";
 const FALLBACK_INTERVAL_MS = 500;
 const WATCH_DEBOUNCE_MS = 100;

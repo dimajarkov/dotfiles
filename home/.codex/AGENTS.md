@@ -5,4 +5,5 @@ Do not route work through Claude Code, Claude docs adapters, Claude compatibilit
 
 ## Shared agent instructions
 
-See the shared instructions in `home/AGENTS.md` for general agent behavior.
+Read `~/AGENTS.md` for shared instructions.
+For browser tasks, including local UI proof and PDF rendering, follow `~/.agents/skills/browser-routing/SKILL.md` before launching anything.

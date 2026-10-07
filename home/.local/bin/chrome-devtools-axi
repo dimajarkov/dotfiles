@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+printf '%s\n' 'chrome-devtools-axi: disabled by the Zen-only browser policy. CDP cannot control Zen; use Codex native Computer Use in Zen for interactive work.' >&2
+exit 78

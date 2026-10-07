@@ -1,30 +1,16 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const ALLOWED_PROVIDER = "openai-codex";
-const FALLBACK_MODEL_ID = "gpt-5.6-sol";
-
-export const ALLOWED_MODEL_IDS = [
-  "gpt-5.6-luna",
-  FALLBACK_MODEL_ID,
-  "gpt-5.6-terra",
-] as const;
-
-const allowedModelIds = new Set<string>(ALLOWED_MODEL_IDS);
+// Keep newly published Codex models available without requiring another policy update.
+const PREFERRED_FALLBACK_MODEL_IDS = ["gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-sol"] as const;
 
 type ModelIdentity = {
   id: string;
   provider: string;
 };
 
-export function isAllowedModel(
-  model: ModelIdentity | undefined,
-): model is ModelIdentity {
-  return (
-    model?.provider === ALLOWED_PROVIDER && allowedModelIds.has(model.id)
-  );
+export function isAllowedModel(model: ModelIdentity | undefined): model is ModelIdentity {
+  return model?.provider === ALLOWED_PROVIDER;
 }
 
 function modelLabel(model: ModelIdentity | undefined): string {
@@ -37,36 +23,32 @@ function restrictProviderCatalogs(pi: ExtensionAPI, ctx: ExtensionContext) {
 
   for (const provider of providers) {
     pi.registerProvider(provider, {
-      models:
-        provider === ALLOWED_PROVIDER
-          ? models.filter(isAllowedModel)
-          : [],
+      models: provider === ALLOWED_PROVIDER ? models.filter(isAllowedModel) : [],
     });
   }
 
-  return models.find(
-    (model) =>
-      model.provider === ALLOWED_PROVIDER && model.id === FALLBACK_MODEL_ID,
+  return (
+    PREFERRED_FALLBACK_MODEL_IDS.map((id) =>
+      models.find((model) => model.provider === ALLOWED_PROVIDER && model.id === id),
+    ).find((model) => model !== undefined) ??
+    models.find((model) => model.provider === ALLOWED_PROVIDER)
   );
 }
 
-export default function registerGpt56Only(pi: ExtensionAPI) {
+export default function registerCodexModelPolicy(pi: ExtensionAPI) {
   let correctingModel = false;
 
   // Remove Claude from the catalog as soon as extensions load, before any
   // session or subagent can resolve the embedded Haiku default.
   pi.registerProvider("anthropic", { models: [] });
 
-  const enforce = async (
-    ctx: ExtensionContext,
-    selectedModel: ModelIdentity | undefined,
-  ) => {
+  const enforce = async (ctx: ExtensionContext, selectedModel: ModelIdentity | undefined) => {
     const fallback = restrictProviderCatalogs(pi, ctx);
     if (isAllowedModel(selectedModel) || correctingModel) return;
 
     if (!fallback) {
       ctx.ui.notify(
-        "GPT-5.6 policy could not find openai-codex/gpt-5.6-sol. Pi is shutting down without making a model request.",
+        "Codex model policy could not find an available openai-codex model. Pi is shutting down without making a model request.",
         "error",
       );
       ctx.shutdown();
@@ -78,14 +60,14 @@ export default function registerGpt56Only(pi: ExtensionAPI) {
       const changed = await pi.setModel(fallback);
       if (!changed) {
         ctx.ui.notify(
-          `GPT-5.6 policy blocked ${modelLabel(selectedModel)}, but could not select openai-codex/${FALLBACK_MODEL_ID}. Pi is shutting down without making a model request.`,
+          `Codex model policy blocked ${modelLabel(selectedModel)}, but could not select an openai-codex model. Pi is shutting down without making a model request.`,
           "error",
         );
         ctx.shutdown();
         return;
       }
       ctx.ui.notify(
-        `GPT-5.6 policy blocked ${modelLabel(selectedModel)} and selected openai-codex/${FALLBACK_MODEL_ID}.`,
+        `Codex model policy blocked ${modelLabel(selectedModel)} and selected ${modelLabel(fallback)}.`,
         "warning",
       );
     } finally {
@@ -108,9 +90,6 @@ export default function registerGpt56Only(pi: ExtensionAPI) {
   pi.on("before_provider_request", (_event, ctx) => {
     if (isAllowedModel(ctx.model)) return;
     ctx.abort();
-    ctx.ui.notify(
-      `GPT-5.6 policy aborted a request to ${modelLabel(ctx.model)}.`,
-      "error",
-    );
+    ctx.ui.notify(`Codex model policy aborted a request to ${modelLabel(ctx.model)}.`, "error");
   });
 }

@@ -1,0 +1,27 @@
+{
+  "name": "hunk-human-review",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --deny-warnings .",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check ."
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "hunkdiff": "0.23.0",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
+    "typescript": "5.9.3"
+  },
+  "packageManager": "bun@1.3.14",
+  "hunk": {
+    "apiVersion": 28,
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

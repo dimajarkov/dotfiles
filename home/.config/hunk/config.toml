@@ -1,0 +1,2 @@
+[extensions]
+paths = ["~/.dotfiles/home/.config/hunk/extensions/human-review"]

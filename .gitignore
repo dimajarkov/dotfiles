@@ -3,7 +3,7 @@ home/.config/herdr/*.log
 home/.config/herdr/*.sock
 home/.config/herdr/.plugins.lock
 home/.config/herdr/plugins.json
-home/.config/herdr/plugins/
+home/.config/herdr/plugins/github/
 home/.config/herdr/release-notes.json
 home/.config/herdr/session.json
 home/.config/herdr/sessions/
@@ -16,8 +16,14 @@ home/.config/gh/*.token
 __pycache__/
 *.py[cod]
 .DS_Store
-result
-result-*
+/result
+/result-*
+
+# Local dependency state
+home/.pi/agent/**/node_modules
+
+# Local runtime binaries
+home/.pi/agent/bin/
 
 # Local validation state
 .no-mistakes/

@@ -1,0 +1,314 @@
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import {
+  isCredentialName,
+  redactRecognizableCredentialValues,
+} from "../../lib/credential-safety.ts";
+
+export const TOOL_ARGUMENT_MAX_BYTES = 2_000;
+export const TOOL_RESULT_MAX_BYTES = 5_000;
+export const TRANSCRIPT_MAX_BYTES = 48_000;
+
+const CREDENTIAL_ASSIGNMENT_PATTERN =
+  /(["']?)([A-Za-z_][A-Za-z0-9_.~-]*)\1(\s*[:=]\s*)(["']?)([^"'\s,;}]+)\4/gi;
+const URI_USERINFO_PATTERN = /\b([a-z][a-z0-9.+-]*:\/\/)([^/\s?#"'<>),;}]+@)/gi;
+
+function isDatabaseUrlFieldName(name: string) {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  return (
+    (words[0] === "db" || words[0] === "database") &&
+    ["url", "uri"].includes(words.at(-1) ?? "")
+  );
+}
+
+export interface RunMarker {
+  readonly baselineLeafId: string | null;
+}
+
+export function createRunBoundary() {
+  let pending: RunMarker | undefined;
+
+  return {
+    begin(baselineLeafId: string | null) {
+      pending = { baselineLeafId };
+    },
+    settle() {
+      const run = pending;
+      pending = undefined;
+      return run;
+    },
+    reset() {
+      pending = undefined;
+    },
+  };
+}
+
+export function getRunEntries(branch: readonly SessionEntry[], baselineLeafId: string | null) {
+  if (baselineLeafId === null) return [...branch];
+  const baselineIndex = branch.findIndex((entry) => entry.id === baselineLeafId);
+  return baselineIndex === -1 ? [] : branch.slice(baselineIndex + 1);
+}
+
+function truncateUtf8(text: string, maxBytes: number) {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const midpoint = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(text.slice(0, midpoint), "utf8") <= maxBytes) {
+      low = midpoint;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  let end = low;
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return text.slice(0, end);
+}
+
+function capped(text: string, maxBytes: number, notice: string) {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  const suffix = `\n[${notice}]`;
+  return `${truncateUtf8(text, maxBytes - Buffer.byteLength(suffix, "utf8"))}${suffix}`;
+}
+
+export function redactSecrets(text: string) {
+  return redactRecognizableCredentialValues(
+    text
+    .replace(
+      /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?)-----[\s\S]*?(?:-----END \1-----|(?=-----BEGIN )|$)/gi,
+      "[REDACTED]",
+    )
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [REDACTED]")
+    .replace(/\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, "[REDACTED]")
+    .replace(URI_USERINFO_PATTERN, "$1[REDACTED]@")
+  )
+    .replace(CREDENTIAL_ASSIGNMENT_PATTERN, (match, keyQuote, key, separator, valueQuote) =>
+      isCredentialName(key) || isDatabaseUrlFieldName(key)
+        ? `${keyQuote}${key}${keyQuote}${separator}${valueQuote}[REDACTED]${valueQuote}`
+        : match,
+    )
+    .replace(/([?&](?:api[_-]?key|access[_-]?token|key|secret|token)=)[^&#\s]+/gi, "$1[REDACTED]");
+}
+
+function sanitizeValue(value: unknown, key?: string, depth = 0): unknown {
+  if (key && (isCredentialName(key) || isDatabaseUrlFieldName(key))) return "[REDACTED]";
+  if (depth >= 6) return "[nested value omitted]";
+  if (typeof value === "string") return redactSecrets(value);
+  if (typeof value === "bigint") return `${value}n`;
+  if (typeof value === "function" || typeof value === "symbol") {
+    return `[${typeof value} omitted]`;
+  }
+  if (Array.isArray(value)) {
+    const items = value.slice(0, 30).map((item) => sanitizeValue(item, undefined, depth + 1));
+    if (value.length > items.length) items.push("[additional items omitted]");
+    return items;
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        sanitizeValue(entryValue, entryKey, depth + 1),
+      ]),
+    );
+  }
+  return value;
+}
+
+function serializeToolArguments(value: unknown) {
+  try {
+    return JSON.stringify(sanitizeValue(value), null, 2) ?? "(no arguments)";
+  } catch {
+    return "[tool arguments could not be serialized]";
+  }
+}
+
+function textContent(content: unknown) {
+  if (typeof content === "string") return redactSecrets(content);
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((block) => {
+      if (
+        typeof block === "object" &&
+        block !== null &&
+        "type" in block &&
+        block.type === "text" &&
+        "text" in block &&
+        typeof block.text === "string"
+      ) {
+        return [redactSecrets(block.text)];
+      }
+      return [];
+    })
+    .join("\n");
+}
+
+function serializeMessage(entry: Extract<SessionEntry, { type: "message" }>) {
+  const { message } = entry;
+
+  if (message.role === "user") {
+    const text = textContent(message.content);
+    return text ? `USER\n${text}` : "";
+  }
+
+  if (message.role === "assistant") {
+    const sections: string[] = [];
+    const text = message.content
+      .filter((block) => block.type === "text")
+      .map((block) => redactSecrets(block.text))
+      .join("\n");
+    if (text) sections.push(`ASSISTANT\n${text}`);
+
+    for (const block of message.content) {
+      if (block.type !== "toolCall") continue;
+      const args = capped(
+        redactSecrets(serializeToolArguments(block.arguments)),
+        TOOL_ARGUMENT_MAX_BYTES,
+        "tool arguments capped",
+      );
+      sections.push(`TOOL CALL ${block.name}\n${args}`);
+    }
+    return sections.join("\n\n");
+  }
+
+  if (message.role === "toolResult") {
+    const text = capped(textContent(message.content), TOOL_RESULT_MAX_BYTES, "tool result capped");
+    return `TOOL RESULT ${message.toolName}${message.isError ? " (error)" : ""}\n${text || "(no text output)"}`;
+  }
+
+  if (message.role === "bashExecution") {
+    const command = capped(
+      redactSecrets(message.command),
+      TOOL_ARGUMENT_MAX_BYTES,
+      "command capped",
+    );
+    const output = capped(
+      redactSecrets(message.output),
+      TOOL_RESULT_MAX_BYTES,
+      "command output capped",
+    );
+    return `USER SHELL${message.exitCode === undefined ? "" : ` (exit ${message.exitCode})`}\n${command}\n${output}`;
+  }
+
+  if (message.role === "custom") {
+    if (message.customType === "summary-recap") return "";
+    const text = textContent(message.content);
+    return text ? `EXTENSION ${message.customType}\n${text}` : "";
+  }
+
+  return "";
+}
+
+export function serializeRunTranscript(
+  entries: readonly SessionEntry[],
+  maxBytes = TRANSCRIPT_MAX_BYTES,
+) {
+  const sections = entries.flatMap((entry) => {
+    if (entry.type === "message") {
+      const section = serializeMessage(entry);
+      return section ? [section] : [];
+    }
+    if (entry.type === "custom_message" && entry.customType !== "summary-recap") {
+      const text = textContent(entry.content);
+      return text ? [`EXTENSION ${entry.customType}\n${text}`] : [];
+    }
+    return [];
+  });
+
+  const transcript = sections.join("\n\n---\n\n") || "(no textual run output)";
+  if (Buffer.byteLength(transcript, "utf8") <= maxBytes) return transcript;
+
+  const marker = "\n\n[... transcript capped; middle omitted ...]\n\n";
+  const markerBytes = Buffer.byteLength(marker, "utf8");
+  const headBytes = Math.floor((maxBytes - markerBytes) * 0.58);
+  const tailBytes = maxBytes - markerBytes - headBytes;
+  const head = truncateUtf8(transcript, headBytes);
+  const reversedTail = truncateUtf8([...transcript].reverse().join(""), tailBytes);
+  const tail = [...reversedTail].reverse().join("");
+  return `${head}${marker}${tail}`;
+}
+
+export function deriveRecapTitle(text: string) {
+  const safeText = text
+    .replace(
+      // eslint-disable-next-line no-control-regex
+      /\x1b(?:\][^\x07]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])/g,
+      "",
+    )
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "");
+  const fragments = safeText
+    .split(/\n+|(?<=[.!?])\s+/)
+    .map((fragment) => fragment.replace(/^(?:[-*#>]\s*)+/, "").trim())
+    .filter(Boolean);
+  const meaningful =
+    fragments.find(
+      (fragment) =>
+        !/^(?:(?:all set|completed|done|finished)[.!?]*|the main-agent run completed[.!?]*|the run used \d+ tool calls?\b.*)$/i.test(
+          fragment,
+        ),
+    ) ?? fragments[0];
+  if (!meaningful) return "Completed agent work";
+
+  const title = meaningful
+    .replace(
+      /^(?:(?:please\s+)?(?:can|could|would|will)\s+you\s+|i\s+(?:want|need|would like)\s+(?:you\s+)?to\s+|(?:we\s+)?(?:want|need)\s+to\s+)/i,
+      "",
+    )
+    .replace(/^[`"'_*~]+|[`"'_*~]+$/g, "")
+    .replace(/[.!?:;…]+$/, "")
+    .split(/\s+/)
+    .slice(0, 8)
+    .join(" ");
+  if (!title) return "Completed agent work";
+  const shortTitle =
+    title.length <= 80
+      ? title
+      : title
+          .slice(0, 80)
+          .replace(/\s+\S*$/, "")
+          .trimEnd();
+  return `${shortTitle[0]?.toUpperCase() ?? ""}${shortTitle.slice(1)}`;
+}
+
+export function buildFallbackRecap(entries: readonly SessionEntry[]) {
+  const toolNames: string[] = [];
+  let requestedWork = "";
+  let finalAssistantText = "";
+
+  for (const entry of entries) {
+    if (entry.type !== "message") continue;
+    if (entry.message.role === "user" && !requestedWork) {
+      requestedWork = textContent(entry.message.content).trim();
+      continue;
+    }
+    if (entry.message.role !== "assistant") continue;
+    for (const block of entry.message.content) {
+      if (block.type === "toolCall") toolNames.push(block.name);
+      if (block.type === "text" && block.text.trim()) {
+        finalAssistantText = redactSecrets(block.text.trim());
+      }
+    }
+  }
+
+  const tools = [...new Set(toolNames)];
+  const activity =
+    tools.length > 0
+      ? ` The run used ${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} across ${tools.join(", ")}.`
+      : "";
+  const result = finalAssistantText
+    ? ` ${capped(finalAssistantText.replace(/\s+/g, " "), 700, "final response capped")}`
+    : "";
+
+  return {
+    title: deriveRecapTitle(requestedWork || finalAssistantText),
+    recap: `The main-agent run completed.${activity}${result}`.trim(),
+    next: "Review the completed work above and continue if anything remains.",
+  };
+}

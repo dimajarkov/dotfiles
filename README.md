@@ -16,11 +16,10 @@ If you find a bug, please open a GitHub Issue using the bug report template.
 Running the switch builds:
 
 - System settings (dark mode, key repeat, dock, Finder, trackpad)
-- Keyboard-driven Arc navigation through Hammerspoon
 - Homebrew apps (casks and CLI tools)
 - Nix user packages (ripgrep, fd, fzf, jq, lazygit, Neovim, Hack Nerd Font)
 - Shell (zsh, aliases, starship prompt)
-- Editor (Neovim follows macOS appearance: Guts dark, Rosé Pine Dawn light)
+- Editor (Neovim follows macOS appearance: GitHub Dark Default and GitHub Light Default)
 - Terminal (WezTerm follows system appearance: Catppuccin Mocha dark, Latte light)
 - Agent configs (Claude, Codex, opencode all share one AGENTS.md)
 
@@ -79,21 +78,6 @@ Edit the config files in place, then apply:
 
 That's it.
 No separate build-and-copy step.
-
-## Arc keyboard navigation
-
-Hammerspoon treats backslash as a leader key while Arc is frontmost.
-Press the second key within 1.25 seconds.
-
-- `\e` toggles the sidebar, then `j` and `k` move to the next or previous tab while the sidebar is visible.
-- `\t` opens a new Arc tab directly at Google.
-  If the sidebar is visible, press `\e` to hide it before typing into Google's focused search field so `j` and `k` remain available for sidebar navigation.
-- `\h` creates Split View.
-- `\;` focuses the second split pane, and `\l` focuses the first.
-- `\x` closes the current split pane or archives the current tab.
-
-Vimium C provides page-level navigation when the extension is available in the active Arc profile.
-The current Vimium C mappings use `\,` or `\b` to search open tabs and `\f` to open its URL and search bar.
 
 ## Make it yours
 
@@ -155,7 +139,7 @@ You only run `./rebuild.sh` when you change something that isn't just a symlinke
 
 The first time you launch `nvim`, Neovim's built-in `vim.pack` clones the configured plugins from GitHub.
 That needs network access once; after that it's offline.
-Neovim uses Guts in macOS dark mode and Rosé Pine Dawn in light mode, with opaque backgrounds for readable contrast.
+Neovim uses GitHub Dark Default in macOS dark mode and GitHub Light Default in light mode, with opaque backgrounds for readable contrast.
 It reads the macOS appearance at startup, on focus, and every two seconds while open, without blocking editing or requiring a terminal theme notification.
 A manual colorscheme selection (`<leader>fc`) lasts until the system appearance changes.
 On non-macOS hosts, Neovim selects the palette using its `background` option, including terminal-driven changes.

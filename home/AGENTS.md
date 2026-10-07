@@ -19,8 +19,28 @@ These are common instructions for Dmitri's agents across all scenarios.
 - Apply that same high standard to engineering excellence: lint failures, test failures, and test flakiness.
   If you see one, even if it is not caused by what you are working on right now, still get it fixed.
 
+## Treehouse task lifecycle
+
+- Keep task worktrees durably leased (`get --lease` for new work or `lease` for an existing slot) until Dmitri explicitly declares that specific job finished.
+- A PR handoff, merge, passing CI, idle terminal, or agent exit is not completion approval.
+- In the same message as a PR handoff, name the job and slot and include: "Please tell me when Treehouse job '<job>' (slot <slot>) is finished so I can return its worktree."
+- After completion approval, verify the slot's identity and ownership and preserve uncommitted work and unmerged commits before returning it.
+- Pruning or deleting worktrees requires separate explicit approval; prefer returning finished slots for reuse with their ignored caches intact.
+
+## Browser tool routing
+
+- Use Computer Use through the Codex harness for end-user testing, visual QA, native macOS or cross-app workflows, and pixel-only surfaces such as canvas, video, and PDFs.
+  Job-application PDF package approval follows the job-application skill's exact-file text and rendered-page image checks without requiring native Computer Use or personal Chrome access.
+- Use Zen Browser's space named exactly `Development` for development automation, testing, and localhost UI, including Arena CRM.
+  Verify Zen and the selected Development space before navigating or interacting, and read `~/.agents/skills/browser-routing/SKILL.md` before launching anything.
+- Chrome-only DevTools, authentication, capture, and PDF tooling is not a Zen substitute.
+  Use Zen's Developer Tools for manual browser-internal inspection; stop when the required Zen route is unavailable rather than silently opening Chrome or Arc.
+
 ## Software installation
 
+- Follow repository policy, its declared manager, existing lockfile, and isolated environment; resolve conflicting evidence first.
+- Default to Bun only for confirmed new personal JavaScript/TypeScript projects.
+- Prefer project-local tools or one-off execution; avoid duplicate global installs and incidental manager migrations.
 - Use project-local Oxc (`oxlint` and `oxfmt`) as the sole linting and formatting toolchain in new or user-owned JavaScript and TypeScript projects.
 
 ## Container runtime policy
@@ -30,13 +50,12 @@ These are common instructions for Dmitri's agents across all scenarios.
 - Do not bypass the guarded `docker` and `docker-compose` commands or start a local container runtime when the verified OWC volume is unavailable.
 - Treat the retained internal migration copies as rollback data and never delete them without explicit approval and a verified independent backup.
 
-## Workspace routing
-
-- For source checkout placement, read `~/dev/AGENTS.md` and `~/dev/README.md`.
-- For home-directory cleanup, dotfile relocation, or shared skill installation, read `~/dev/_system/home-layout.md` and run `~/dev/bin/home-audit`.
-
 ## Dmitri's Opinions
 
 When you are working on something that would benefit from being informed by Dmitri's viewpoints, read `~/OPINIONS.md` to understand what Dmitri believes.
 Treat it as living context, not a source of objective facts or a replacement for current evidence.
 Preserve uncertainty and flag meaningful tension or opinion drift instead of silently forcing alignment.
+
+## Settled Pi Policies
+
+Read `~/.dotfiles/docs/agent-capability-policy.md` for approved Pi routing, data handling, and tool capability boundaries.

@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@earendil-works/pi-coding-agent": [
+        "./node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+      ]
+    },
+    "plugins": [{ "name": "@effect/language-service" }]
+  },
+  "include": ["index.ts", "src/**/*.ts", "*.test.ts"]
+}
