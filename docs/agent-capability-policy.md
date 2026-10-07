@@ -5,8 +5,6 @@ Route small changes through Pi with `openai-codex/gpt-6-luna` at `xhigh`, and ro
 Keep Claude compatibility-only unless it is explicitly requested, and keep Pi's default provider and model at `openai-codex/gpt-6.1-sol` with `xhigh` reasoning.
 Use `openai-codex/*` for Pi's enabled-model filter so newly published Codex model IDs remain selectable while provider enforcement remains Codex-only.
 Keep the submitted `OPINIONS.md` byte-unchanged even where its older viewpoints differ from current operational routing guidance.
-Automatic summaries may transmit serialized user and tool transcript content, including non-credential personal or customer data, to the configured remote summary model after credential redaction.
-Credential redaction covers recognized provider secrets, Stripe secret and restricted test or live keys, Stripe webhook signing secrets, PEM private keys, and armored OpenPGP private-key blocks without removing non-credential personal or customer data.
 Keep the generic Composio route enabled for connected-app reads and writes, connection management, Gmail operations, and remote sandbox tools.
 Keep Codex child agents on `approvalPolicy: "never"` with `sandbox: "danger-full-access"`, including when the selected working directory is untrusted.
 Allow file-search to use absolute and home-directory paths outside the project while preserving literal leading `@` path names.

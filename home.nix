@@ -308,7 +308,6 @@ in {
     fi
 
     install_pi_extension_dependencies "${config.home.homeDirectory}/.pi/agent/extensions/web-fetch"
-    install_pi_extension_dependencies "${config.home.homeDirectory}/.pi/agent/extensions/summaries"
     subagents_path="${config.home.homeDirectory}/.pi/agent/extensions/subagents"
     install_pi_extension_dependencies "$subagents_path" all effect-tsgo
     for extension in git-info model-info ui-customization; do
@@ -449,26 +448,6 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/package.json";
   home.file.".pi/agent/extensions/web-fetch/package-lock.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/web-fetch/package-lock.json";
-  home.file.".pi/agent/extensions/summaries/.gitignore".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/summaries/.gitignore";
-  home.file.".pi/agent/extensions/summaries/index.ts".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/summaries/index.ts";
-  home.file.".pi/agent/extensions/summaries/package.json".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/summaries/package.json";
-  home.file.".pi/agent/extensions/summaries/package-lock.json".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/summaries/package-lock.json";
-  home.file.".pi/agent/extensions/summaries/tsconfig.json".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/summaries/tsconfig.json";
-  home.file.".pi/agent/extensions/summaries/src/config.ts".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/summaries/src/config.ts";
-  home.file.".pi/agent/extensions/summaries/src/prompt.ts".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/summaries/src/prompt.ts";
-  home.file.".pi/agent/extensions/summaries/src/summarizer.ts".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/summaries/src/summarizer.ts";
-  home.file.".pi/agent/extensions/summaries/src/transcript.ts".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/summaries/src/transcript.ts";
-  home.file.".pi/agent/extensions/summaries/src/ui.ts".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/summaries/src/ui.ts";
   home.file.".pi/agent/extensions/copy-all/index.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/copy-all/index.ts";
   home.file.".pi/agent/extensions/gpt-5-6-only.ts".source =
