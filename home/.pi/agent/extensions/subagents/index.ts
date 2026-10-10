@@ -74,7 +74,7 @@ import {
   runTool,
   type SubagentRuntime,
 } from "./src/runtime.ts";
-import { openSubagentPicker, openSubagentTakeover } from "./src/ui/takeover.ts";
+import { compatibilityTerminalAttachment } from "./src/ui/terminal-attachment.ts";
 
 const SUBAGENT_OUTPUT_MAX_BYTES = 24 * 1024;
 const WAIT_OUTPUT_MAX_BYTES = 48 * 1024;
@@ -710,9 +710,12 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    await openSubagentTakeover(ctx, manager.view, snap.id, {
-      badge: "by the way",
-    });
+    await compatibilityTerminalAttachment.openTakeover(
+      ctx,
+      manager.view,
+      snap.id,
+      { badge: "by the way" },
+    );
   };
 
   pi.registerCommand("btw", {
@@ -738,7 +741,7 @@ export default function (pi: ExtensionAPI) {
       );
       return;
     }
-    await openSubagentPicker(ctx, manager.view);
+    await compatibilityTerminalAttachment.openPicker(ctx, manager.view);
   };
 
   // Keep the dashboard command-only. Pi reserves several global shortcuts,

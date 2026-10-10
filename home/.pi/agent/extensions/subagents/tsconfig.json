@@ -8,5 +8,5 @@
     },
     "plugins": [{ "name": "@effect/language-service" }]
   },
-  "include": ["index.ts", "src/**/*.ts", "*.test.ts"]
+  "include": ["index.ts", "src/**/*.ts", "*.test.ts", "types/**/*.d.ts"]
 }
