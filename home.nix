@@ -173,6 +173,26 @@ in {
     };
   };
 
+  home.activation.preflightAgentSkills = config.lib.dag.entryBefore [ "checkFilesChanged" "checkLinkTargets" ] ''
+    ${pkgs.python3}/bin/python3 ${./nix/migrate-agent-skills.py} \
+      "${config.home.homeDirectory}/.agents/skills" \
+      "${dotfiles}/home/.agents/skills" \
+      --dry-run
+  '';
+
+  home.activation.migrateAgentSkills = config.lib.dag.entryBetween [ "linkGeneration" ] [ "writeBoundary" ] ''
+    if [[ -v DRY_RUN ]]; then
+      ${pkgs.python3}/bin/python3 ${./nix/migrate-agent-skills.py} \
+        "${config.home.homeDirectory}/.agents/skills" \
+        "${dotfiles}/home/.agents/skills" \
+        --dry-run
+    else
+      ${pkgs.python3}/bin/python3 ${./nix/migrate-agent-skills.py} \
+        "${config.home.homeDirectory}/.agents/skills" \
+        "${dotfiles}/home/.agents/skills"
+    fi
+  '';
+
   home.activation.migrateLegacyPiFiles = config.lib.dag.entryBefore [ "checkFilesChanged" "checkLinkTargets" ] ''
     mcp_path="${config.home.homeDirectory}/.pi/agent/mcp.json"
     mcp_source="${dotfiles}/home/.pi/agent/mcp.json"
@@ -472,10 +492,12 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/AGENTS.md";
   home.file.".agents/AGENTS.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/AGENTS.md";
-  home.file.".agents/skills/browser-routing".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/browser-routing";
-  home.file.".agents/skills/one-bin".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/one-bin";
+  # The preflight and cutover hooks validate and preserve this directory before
+  # Home Manager replaces its out-of-store root link, so force is safe here.
+  home.file.".agents/skills" = {
+    source = config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills";
+    force = true;
+  };
   home.file.".pi/agent/skills/browser-routing".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/browser-routing";
   home.file.".pi/agent/skills/one-bin".source =
