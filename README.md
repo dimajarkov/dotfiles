@@ -135,6 +135,35 @@ The files under `home/` are the real files - editing them here is editing your l
 `home.nix` uses `mkOutOfStoreSymlink` to point paths like `~/.config/nvim` straight at `home/.config/nvim` in this repo, so the two never drift out of sync.
 You only run `./rebuild.sh` when you change something that isn't just a symlinked file, like a package list or a system default.
 
+## Agent skills
+
+Home Manager links `~/.agents/skills` as one writable directory to `home/.agents/skills` in this repo.
+Previously, only `browser-routing` and `one-bin` were linked individually, so other skills installed under `~/.agents/skills` were not tracked here.
+New skill installs and edits through `~/.agents/skills` now land in the repo immediately and appear in Git status.
+Runtime metadata such as `~/.agents/.skill-lock.json` and other files at the `~/.agents` root are not moved into the repo by this link.
+
+Home Manager runs a read-only migration preflight before its file-collision checks, then repeats the validation and performs the cutover after its write boundary and before linking the new generation.
+If Home Manager defines `DRY_RUN`, even with an empty value or `0`, the cutover remains read-only.
+The migration checks that every non-cache local file and directory is represented in the canonical repo directory, including file contents and executable bits.
+It accepts skills-root child links that resolve to their matching canonical directories, including the old Home Manager links; other non-cache local symlinks, including nested symlinks, are refused.
+It preserves the complete original directory in a unique sibling backup and never deletes backups.
+Moving an existing directory requires macOS's atomic no-overwrite rename; other platforms refuse that cutover without moving the original directory.
+Only `.pyc`, `.pyo`, `__pycache__`, and `.DS_Store` are excluded from validation; backups retain them too.
+Compiled `.pyd` extensions are validated as regular data, not ignored as cache.
+The single root `~/.agents/skills` Home Manager target uses `force = true` because the validated cutover creates an out-of-store directory link that Home Manager cannot recognize as one of its generation links.
+The migration refuses divergent or missing local data, unrelated root symlinks, and recursive paths, and never overwrites concurrently created paths.
+Preview the migration directly before running the same command without `--dry-run` to apply it:
+
+```sh
+python3 nix/migrate-agent-skills.py "$HOME/.agents/skills" "$HOME/.dotfiles/home/.agents/skills" --dry-run
+```
+
+Run the subprocess behavior tests with:
+
+```sh
+python3 tests/agent-skills.py
+```
+
 ## Notes
 
 The first time you launch `nvim`, Neovim's built-in `vim.pack` clones the configured plugins from GitHub.
