@@ -119,6 +119,7 @@ test("journal recovery requires reconciliation against the observed owner and ge
   const recovered = await restartedPolicy.reconcileRecoveredOwner("run-1", observedGeneration);
   assert.ok(recovered);
   assert.ok(recovered.generation > observedGeneration);
+  assert.strictEqual(restartedPolicy.reservationForOwner("run-1"), recovered);
   assert.equal(await restartedPolicy.settle("run-1", first.reservation, {
     goalStatus: "paused",
     pauseBarrierObserved: true,
@@ -130,6 +131,57 @@ test("journal recovery requires reconciliation against the observed owner and ge
     pauseBarrierObserved: true,
   }), true);
   assert.equal(restartedAuthority.snapshot().active, 0);
+});
+
+test("native starts hand reservations to the local owner without putting them on the wire", async () => {
+  const authority = new AdmissionAuthority({ capacity: 4 });
+  const policy = new NativeRequestPolicy({ authority, threadId: "managed-thread" });
+  const start = (id, forward) => policy.handleNativeRequest(
+    { id, method: "turn/start", params: { threadId: "managed-thread" } },
+    forward,
+  );
+
+  await assert.rejects(
+    start("reused-run-id", async () => {
+      throw new Error("downstream write outcome is ambiguous");
+    }),
+    /downstream write outcome is ambiguous/,
+  );
+
+  const reservationA = policy.reservationForOwner("reused-run-id");
+  assert.deepEqual(reservationA, { id: "managed-thread", generation: 1 });
+  assert.equal(await policy.settle("reused-run-id", reservationA, {
+    goalStatus: "paused",
+    pauseBarrierObserved: false,
+  }), false);
+  assert.strictEqual(policy.reservationForOwner("reused-run-id"), reservationA);
+  assert.equal(authority.snapshot().active, 1);
+
+  assert.equal(await policy.settle("reused-run-id", reservationA, {
+    goalStatus: "paused",
+    turnActive: false,
+    pauseBarrierObserved: true,
+  }), true);
+
+  const nativeResponse = await start("reused-run-id", async () => ({ accepted: true }));
+  assert.deepEqual(nativeResponse, { result: { accepted: true } });
+  assert.equal(Object.hasOwn(nativeResponse, "reservation"), false);
+  const reservationB = policy.reservationForOwner("reused-run-id");
+  assert.deepEqual(reservationB, { id: "managed-thread", generation: 2 });
+  assert.notStrictEqual(reservationB, reservationA);
+  assert.equal(JSON.stringify(nativeResponse).includes(JSON.stringify(reservationB)), false);
+
+  assert.equal(await policy.settle("reused-run-id", reservationA, {
+    goalStatus: "paused",
+    pauseBarrierObserved: true,
+  }), false);
+  assert.strictEqual(policy.reservationForOwner("reused-run-id"), reservationB);
+  assert.equal(authority.snapshot().active, 1);
+  assert.equal(await policy.settle("reused-run-id", reservationB, {
+    goalStatus: "paused",
+    pauseBarrierObserved: true,
+  }), true);
+  assert.equal(authority.snapshot().active, 0);
 });
 
 test("a malformed journal prevents authority startup", (context) => {

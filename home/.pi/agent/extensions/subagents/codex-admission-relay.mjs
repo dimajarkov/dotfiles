@@ -408,6 +408,11 @@ export class NativeRequestPolicy {
     return handle;
   }
 
+  // Local owner-control handoff only; never include this handle in native RPC results.
+  reservationForOwner(runId) {
+    return this.#activeRuns.get(runId);
+  }
+
   async handleNativeRequest(request, forward) {
     if (!request || typeof request.method !== "string") {
       return { error: { code: "UNCLASSIFIED_ROUTE" } };
