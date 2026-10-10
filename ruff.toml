@@ -1,0 +1,9 @@
+# Honor formatter exclusions even when changed files are passed explicitly.
+force-exclude = true
+
+[format]
+# Preserve the imported refine package byte-for-byte; linting remains enabled.
+exclude = [
+    "home/.agents/skills/refine/src/refine/__init__.py",
+    "home/.agents/skills/refine/test_refine.py",
+]
