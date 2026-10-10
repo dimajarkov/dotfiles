@@ -168,32 +168,19 @@ def _compare_tree(
 
 def _rename_without_replacing(source: Path, destination: Path) -> None:
     """Atomically rename without replacing a concurrently-created destination."""
+    if sys.platform != "darwin":
+        raise OSError(errno.ENOTSUP, "atomic no-replace rename is unsupported here")
+
     libc = ctypes.CDLL(None, use_errno=True)
     source_bytes = os.fsencode(source)
     destination_bytes = os.fsencode(destination)
 
-    if sys.platform == "darwin":
-        rename_exclusive = getattr(libc, "renamex_np", None)
-        if rename_exclusive is None:
-            raise OSError(errno.ENOTSUP, "renamex_np is unavailable")
-        rename_exclusive.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
-        rename_exclusive.restype = ctypes.c_int
-        result = rename_exclusive(source_bytes, destination_bytes, 0x00000004)
-    elif sys.platform.startswith("linux"):
-        rename_exclusive = getattr(libc, "renameat2", None)
-        if rename_exclusive is None:
-            raise OSError(errno.ENOTSUP, "renameat2 is unavailable")
-        rename_exclusive.argtypes = [
-            ctypes.c_int,
-            ctypes.c_char_p,
-            ctypes.c_int,
-            ctypes.c_char_p,
-            ctypes.c_uint,
-        ]
-        rename_exclusive.restype = ctypes.c_int
-        result = rename_exclusive(-100, source_bytes, -100, destination_bytes, 1)
-    else:
-        raise OSError(errno.ENOTSUP, "atomic no-replace rename is unsupported here")
+    rename_exclusive = getattr(libc, "renamex_np", None)
+    if rename_exclusive is None:
+        raise OSError(errno.ENOTSUP, "renamex_np is unavailable")
+    rename_exclusive.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    rename_exclusive.restype = ctypes.c_int
+    result = rename_exclusive(source_bytes, destination_bytes, 0x00000004)
 
     if result != 0:
         error_number = ctypes.get_errno()

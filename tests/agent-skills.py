@@ -87,6 +87,42 @@ sys.exit(migrator.main(sys.argv[1:]))
         self.assertFalse(self.live.is_symlink())
         self.assertEqual(self.backups(), [])
 
+    def test_unsupported_platforms_refuse_rename_without_changes(self) -> None:
+        for root in (self.live, self.canonical):
+            self.write_file(root, "skill/run.sh", b"#!/bin/sh\n", 0o755)
+        runner = f"""
+import importlib.util
+import sys
+spec = importlib.util.spec_from_file_location("migrator", {str(MIGRATOR)!r})
+migrator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(migrator)
+migrator.sys.platform = sys.argv[1]
+sys.exit(migrator.main(sys.argv[2:]))
+"""
+        for platform in ("linux", "win32"):
+            with self.subTest(platform=platform):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        runner,
+                        platform,
+                        str(self.live),
+                        str(self.canonical),
+                    ],
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                )
+
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("atomic no-replace rename is unsupported", result.stderr)
+                self.assert_refused_without_changes(result)
+                for root in (self.live, self.canonical):
+                    script = root / "skill/run.sh"
+                    self.assertEqual(script.read_bytes(), b"#!/bin/sh\n")
+                    self.assertEqual(stat.S_IMODE(script.stat().st_mode), 0o755)
+
     def test_absent_directory_is_linked_to_canonical_directory(self) -> None:
         self.live.rmdir()
         result = self.run_migration()
