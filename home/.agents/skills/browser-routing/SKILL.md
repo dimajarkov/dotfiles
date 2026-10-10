@@ -20,11 +20,26 @@ Use Zen Browser for interactive browser work, including Arena CRM localhost and 
 Select the installed macOS application by its full path `/Applications/Zen.app` through Codex Computer Use (`cua.getApp("/Applications/Zen.app")`); confirm the returned app is Zen before interacting.
 If that installed application is unavailable, report the missing installation before choosing another copy.
 Do not rely on the default browser or select `"chrome"` in a browser API.
-For development automation, browser testing, and localhost work, switch to Zen's space named exactly `development` before opening a task tab.
-Verify the selected space is `development` and the returned app is Zen before navigating or interacting; keep task-owned tabs there and observe the target URL and state after each action.
-Do not create a separate workspace or use an unrelated space as a substitute.
-If the development space or native Zen access is unavailable, stop and report the blocker rather than opening Chrome or Arc.
+For development automation, browser testing, and localhost work, acquire Zen's existing space named exactly `development` before opening a task tab.
+Prefer reusing a persistent normal Zen window kept on that space; a dedicated window is a routing target, not a separate workspace or proof of session isolation.
+Zen's [window synchronization](https://docs.zen-browser.app/user-manual/window-sync) can mirror tabs across windows, so keeping a window dedicated does not replace identity checks.
+
 For job applications, use Zen through Codex Computer Use and verify the intended account and task before taking an external action.
+
+### Acquire and recover the development window
+
+1. Read the native capability's documented window enumeration and activation methods, then discover and activate the matching existing Zen window yourself.
+   When explicit window handles are unavailable, use Zen's native Window menu and fresh chrome/space observations; the first returned window is not evidence that another space is absent.
+2. Select the existing `development` space using its confirmed native control and reread the selected-space state.
+   App selection and window Raise are not by themselves proof of foreground activation; duplicate titles and changing menu ordinals are not durable window identities.
+3. Verify app, selected space, target URL, and rendered task state agree before page interaction or accepting capture evidence.
+   Confirm the actual foreground target before keyboard input; if accessibility state and screenshot identify different windows, stop input and report the native routing/capture mismatch rather than proceeding blindly.
+4. Reacquire and revalidate after focus changes, title changes, or restart instead of trusting cached selectors.
+   Keep task-owned tabs in the verified space and observe the target URL and state after each action.
+
+Routine human foregrounding is a fallback only after supported native acquisition paths have been exhausted and the exact capability or permission gap is evidenced.
+Do not create or rename spaces/profiles, change synchronization preferences, or use an unrelated space as a substitute.
+If the required space or native Zen access genuinely remains unavailable, report the blocker rather than opening Chrome or Arc.
 
 ## Chrome-only debugging (disabled)
 
