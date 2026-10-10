@@ -176,7 +176,6 @@ vim.pack.add({
 	'https://github.com/nvim-tree/nvim-web-devicons',
 	'https://github.com/esmuellert/codediff.nvim',
 	'https://github.com/goolord/alpha-nvim',
-	'https://github.com/MeanderingProgrammer/render-markdown.nvim',
 	'https://github.com/nvim-mini/mini.nvim',
 	'https://github.com/folke/which-key.nvim',
 	'https://github.com/nvim-lua/plenary.nvim',
@@ -232,7 +231,66 @@ require("rose-pine").setup()
 require('system-appearance').setup()
 
 -- Markdown
-require('render-markdown').setup({})
+local function open_with_glow()
+	local path = vim.api.nvim_buf_get_name(0)
+	if path == '' then
+		vim.notify('Save this buffer before opening Glow', vim.log.levels.WARN)
+		return
+	end
+	if vim.bo.modified then
+		vim.notify('Save changes before opening Glow', vim.log.levels.WARN)
+		return
+	end
+	if vim.fn.executable('glow') ~= 1 then
+		vim.notify('Glow is not installed or is not on PATH', vim.log.levels.ERROR)
+		return
+	end
+
+	local source = vim.api.nvim_get_current_buf()
+	local window = vim.api.nvim_get_current_win()
+	local view = vim.fn.winsaveview()
+	local preview = vim.api.nvim_create_buf(false, true)
+	local function close_preview()
+		if vim.api.nvim_get_current_buf() == preview then
+			vim.cmd.stopinsert()
+		end
+		if vim.api.nvim_win_is_valid(window) and vim.api.nvim_win_get_buf(window) == preview
+			and vim.api.nvim_buf_is_valid(source) then
+			vim.api.nvim_win_set_buf(window, source)
+			vim.api.nvim_win_call(window, function() vim.fn.winrestview(view) end)
+		end
+		if vim.api.nvim_buf_is_valid(preview) then
+			vim.api.nvim_buf_delete(preview, { force = true })
+		end
+	end
+
+	vim.api.nvim_win_set_buf(window, preview)
+	vim.bo[preview].bufhidden = 'wipe'
+	-- :! uses pipes, causing Glow to replace the theme with its plain "notty" style.
+	-- Give the reader a real terminal and keep the user's style/width settings.
+	local job = vim.fn.jobstart({ 'glow', '--tui', path }, {
+		term = true,
+		-- Glow 2.x treats even --pager=false as a request for an external pager.
+		env = { GLOW_PAGER = 'false' },
+		on_exit = function(_, code)
+			vim.schedule(function()
+				close_preview()
+				if code ~= 0 then
+					vim.notify('Glow exited with code ' .. code, vim.log.levels.ERROR)
+				end
+			end)
+		end,
+	})
+	if job <= 0 then
+		close_preview()
+		vim.notify('Could not start Glow', vim.log.levels.ERROR)
+		return
+	end
+	vim.cmd.startinsert()
+end
+
+vim.api.nvim_create_user_command('Glow', open_with_glow, { desc = 'Read current file with Glow' })
+vim.keymap.set('n', '<leader>mp', open_with_glow, { desc = 'Read Markdown with Glow' })
 
 -- FzfLua Setup
 local fzf = require('fzf-lua')

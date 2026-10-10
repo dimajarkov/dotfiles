@@ -19,10 +19,10 @@ Use Computer Use through the Codex harness for:
 Use Zen Browser for interactive browser work, including Arena CRM localhost and visual QA.
 Resolve the native macOS app by bundle identifier `app.zen-browser.zen` through Codex Computer Use; confirm the returned app is Zen before interacting.
 Do not rely on the default browser or select `"chrome"` in a browser API.
-For development automation, browser testing, and localhost work, switch to Zen's space named exactly `Development` before opening a task tab.
-Verify the selected space is `Development` and the returned app is Zen before navigating or interacting; keep task-owned tabs there and observe the target URL and state after each action.
+For development automation, browser testing, and localhost work, switch to Zen's space named exactly `development` before opening a task tab.
+Verify the selected space is `development` and the returned app is Zen before navigating or interacting; keep task-owned tabs there and observe the target URL and state after each action.
 Do not create a separate workspace or use an unrelated space as a substitute.
-If the Development space or native Zen access is unavailable, stop and report the blocker rather than opening Chrome or Arc.
+If the development space or native Zen access is unavailable, stop and report the blocker rather than opening Chrome or Arc.
 For job applications, use Zen through Codex Computer Use and verify the intended account and task before taking an external action.
 
 ## Chrome-only debugging (disabled)
@@ -48,7 +48,7 @@ Codex pre-execution hooks are supplemental and require host support and hook tru
 
 ## Diagnosis in Zen
 
-Use native Computer Use to reproduce the user-facing problem in Zen's `Development` space, then inspect Zen's Developer Tools in that same task tab when browser internals matter.
+Use native Computer Use to reproduce the user-facing problem in Zen's `development` space, then inspect Zen's Developer Tools in that same task tab when browser internals matter.
 Do not treat evidence from an isolated Chrome run as proof of Zen behavior.
 Keep the same target and session identity during reproduction and verification.
 Confirm state after every interaction instead of treating a successful command as proof of behavior.

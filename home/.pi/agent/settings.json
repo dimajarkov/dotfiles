@@ -3,7 +3,9 @@
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6.1-sol",
   "defaultThinkingLevel": "xhigh",
-  "enabledModels": ["openai-codex/*"],
+  "enabledModels": [
+    "openai-codex/*"
+  ],
   "theme": "github-dark-default",
   "externalEditor": "nvim",
   "defaultProjectTrust": "ask",
@@ -61,6 +63,6 @@
     "openai-codex/gpt-6.1-sol"
   ],
   "fullscreenScrollbar": "auto",
-  "lastChangelogVersion": "1.0.3",
+  "lastChangelogVersion": "1.1.0",
   "treeFilterMode": "default"
 }

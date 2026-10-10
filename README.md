@@ -145,11 +145,18 @@ A manual colorscheme selection (`<leader>fc`) lasts until the system appearance 
 On non-macOS hosts, Neovim selects the palette using its `background` option, including terminal-driven changes.
 WezTerm independently follows system appearance with Catppuccin Mocha and Latte.
 
-After launching Neovim once to install the plugins, run the appearance regression tests from the repo root:
+Read a saved Markdown buffer with `:Glow` or `<leader>mp` (Space, M, P).
+The preview runs Glow's interactive reader in a real terminal, using Glow's configured colors and width; press `q` to return to the document and its original cursor position.
+Restart Neovim after changing its configuration; no rebuild is needed for these symlinked files.
+Glow 2.1.2 carries a local content-caching backport in `nix/patches/glow-resize.patch` to prevent blank previews when shrinking the terminal.
+Run `./rebuild.sh` to activate Glow package changes, then close any existing preview and reopen it with `:Glow`.
+
+After launching Neovim once to install the plugins, run the Neovim regression tests from the repo root:
 
 ```sh
 nvim --headless -u NONE -l tests/nvim-appearance.lua
 python3 tests/nvim-appearance-tui.py # macOS: full TUI against the real system appearance
+python3 tests/nvim-glow-tui.py # real visible content/colors after width/height resizes, and returning to the source buffer
 ```
 
 The Lua tests exercise both palettes, live changes, failure recovery, reload safety, and non-macOS behavior without changing the system appearance.

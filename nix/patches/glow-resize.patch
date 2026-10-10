@@ -1,0 +1,91 @@
+diff --git a/ui/ui.go b/ui/ui.go
+--- a/ui/ui.go
++++ b/ui/ui.go
+@@ -178,6 +178,13 @@ func newModel(cfg Config, content string) tea.Model {
+ 			Note:      stripAbsolutePath(path, cwd),
+ 			Modtime:   info.ModTime(),
+ 		}
++		content, err := os.ReadFile(path)
++		if err != nil {
++			log.Error("unable to read file", "file", path, "error", err)
++			m.fatalErr = err
++			return m
++		}
++		m.pager.currentDocument.Body = string(utils.RemoveFrontmatter(content))
+ 	}
+ 
+ 	return m
+@@ -190,13 +197,7 @@ func (m model) Init() tea.Cmd {
+ 	case stateShowStash:
+ 		cmds = append(cmds, findLocalFiles(*m.common))
+ 	case stateShowDocument:
+-		content, err := os.ReadFile(m.common.cfg.Path)
+-		if err != nil {
+-			log.Error("unable to read file", "file", m.common.cfg.Path, "error", err)
+-			return func() tea.Msg { return errMsg{err} }
+-		}
+-		body := string(utils.RemoveFrontmatter(content))
+-		cmds = append(cmds, renderWithGlamour(m.pager, body))
++		cmds = append(cmds, renderWithGlamour(m.pager, m.pager.currentDocument.Body))
+ 	}
+ 
+ 	return tea.Batch(cmds...)
+diff --git a/ui/direct_file_test.go b/ui/direct_file_test.go
+new file mode 100644
+--- /dev/null
++++ b/ui/direct_file_test.go
+@@ -0,0 +1,54 @@
++package ui
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++
++	tea "github.com/charmbracelet/bubbletea"
++)
++
++func TestDirectFileContentSurvivesResize(t *testing.T) {
++	previous := config
++	config = Config{GlamourEnabled: false}
++	t.Cleanup(func() { config = previous })
++
++	const body = "# Resize regression\n\nDocument must remain visible.\n"
++	path := filepath.Join(t.TempDir(), "reader's resize check.md")
++	if err := os.WriteFile(path, []byte("---\ntitle: Hidden metadata\n---\n"+body), 0600); err != nil {
++		t.Fatal(err)
++	}
++	m := newModel(Config{Path: path}, "").(model)
++	t.Cleanup(func() { _ = m.pager.watcher.Close() })
++	if m.fatalErr != nil {
++		t.Fatal(m.fatalErr)
++	}
++	if m.pager.currentDocument.Body != body {
++		t.Fatalf("direct-file document was not cached: %q", m.pager.currentDocument.Body)
++	}
++	for _, size := range []tea.WindowSizeMsg{
++		{Width: 120, Height: 40}, {Width: 80, Height: 25},
++		{Width: 40, Height: 12}, {Width: 120, Height: 40},
++	} {
++		m.pager.setSize(size.Width, size.Height)
++		var cmd tea.Cmd
++		m.pager, cmd = m.pager.update(size)
++		if cmd == nil {
++			t.Fatal("resize did not request a render")
++		}
++		rendered, ok := cmd().(contentRenderedMsg)
++		if !ok || string(rendered) != body {
++			t.Fatalf("resize rendered wrong content at %dx%d: %q", size.Width, size.Height, rendered)
++		}
++	}
++}
++
++func TestDirectFileReadError(t *testing.T) {
++	// A missing path must remain a clean fatal error, not a panic.
++	path := filepath.Join(t.TempDir(), "missing.md")
++	m := newModel(Config{Path: path}, "").(model)
++	t.Cleanup(func() { _ = m.pager.watcher.Close() })
++	if m.fatalErr == nil {
++		t.Fatal("missing document should report a fatal error")
++	}
++}

@@ -31,8 +31,8 @@ These are common instructions for Dmitri's agents across all scenarios.
 
 - Use Computer Use through the Codex harness for end-user testing, visual QA, native macOS or cross-app workflows, and pixel-only surfaces such as canvas, video, and PDFs.
   Job-application PDF package approval follows the job-application skill's exact-file text and rendered-page image checks without requiring native Computer Use or personal Chrome access.
-- Use Zen Browser's space named exactly `Development` for development automation, testing, and localhost UI, including Arena CRM.
-  Verify Zen and the selected Development space before navigating or interacting, and read `~/.agents/skills/browser-routing/SKILL.md` before launching anything.
+- Use Zen Browser's space named exactly `development` for development automation, testing, and localhost UI, including Arena CRM.
+  Verify Zen and the selected development space before navigating or interacting, and read `~/.agents/skills/browser-routing/SKILL.md` before launching anything.
 - Chrome-only DevTools, authentication, capture, and PDF tooling is not a Zen substitute.
   Use Zen's Developer Tools for manual browser-internal inspection; stop when the required Zen route is unavailable rather than silently opening Chrome or Arc.
 

@@ -5,6 +5,7 @@ let
   backpassCli = pkgs.callPackage ./nix/packages/backpass-cli.nix {};
   piUpstream = pkgs.callPackage ./nix/packages/pi-coding-agent.nix {};
   hunkReview = pkgs.callPackage ./nix/packages/hunk.nix {};
+  glowReader = pkgs.callPackage ./nix/packages/glow.nix {};
   hunkCommand = pkgs.writeShellApplication {
     name = "hunk";
     text = ''
@@ -29,6 +30,7 @@ in {
     entr
     fd
     fzf
+    glowReader
     git-lfs
     hunkCommand
     jq
