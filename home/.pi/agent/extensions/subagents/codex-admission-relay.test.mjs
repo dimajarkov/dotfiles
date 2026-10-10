@@ -68,8 +68,32 @@ test("concurrent native starts cannot exceed four shared reservations", async ()
   assert.equal(authority.snapshot().active, 4);
 });
 
-test("durable leases survive manager restart and release only after goal quiescence", async (context) => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-admission-"));
+test("settlement is fenced by the exact reservation generation", async () => {
+  const authority = new AdmissionAuthority({ capacity: 4 });
+  const policy = new NativeRequestPolicy({ authority, threadId: "managed-thread" });
+  const first = await policy.admitStart("reused-run-id", async () => ({ accepted: true }));
+
+  assert.equal(await policy.settle("reused-run-id", first.reservation, {
+    goalStatus: "paused",
+    pauseBarrierObserved: true,
+  }), true);
+
+  const second = await policy.admitStart("reused-run-id", async () => ({ accepted: true }));
+  assert.ok(second.reservation.generation > first.reservation.generation);
+  assert.equal(await policy.settle("reused-run-id", first.reservation, {
+    goalStatus: "paused",
+    pauseBarrierObserved: true,
+  }), false);
+  assert.equal(authority.snapshot().active, 1);
+  assert.equal(await policy.settle("reused-run-id", second.reservation, {
+    goalStatus: "paused",
+    pauseBarrierObserved: true,
+  }), true);
+  assert.equal(authority.snapshot().active, 0);
+});
+
+test("journal recovery requires reconciliation against the observed owner and generation", async (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-admission-recovery-"));
   fs.chmodSync(directory, 0o700);
   context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const journalPath = path.join(directory, "admission.jsonl");
@@ -78,46 +102,37 @@ test("durable leases survive manager restart and release only after goal quiesce
     authority: firstAuthority,
     threadId: "managed-thread",
   });
-  let upstreamStarts = 0;
-  const admission = await firstPolicy.handleNativeRequest(
-    { id: 1, method: "turn/start", params: { threadId: "managed-thread" } },
-    async () => {
-      upstreamStarts += 1;
-      return { accepted: true };
-    },
-  );
-  assert.equal(admission.result.accepted, true);
+  const first = await firstPolicy.admitStart("run-1", async () => ({ accepted: true }));
+  assert.equal(firstAuthority.snapshot().active, 1);
   assert.equal(fs.statSync(journalPath).mode & 0o777, 0o600);
 
   const restartedAuthority = new AdmissionAuthority({ capacity: 4, journalPath });
-  assert.equal(await restartedAuthority.reacquire("managed-thread"), true);
+  const observedGeneration = restartedAuthority.snapshot().leases[0].generation;
   const restartedPolicy = new NativeRequestPolicy({
     authority: restartedAuthority,
     threadId: "managed-thread",
   });
-  const blockedRestart = await restartedPolicy.handleNativeRequest(
-    { id: 2, method: "turn/start", params: { threadId: "managed-thread" } },
-    async () => {
-      upstreamStarts += 1;
-      return { accepted: true };
-    },
-  );
-  assert.equal(blockedRestart.error.code, "THREAD_BUSY_OR_LEASE_HELD");
-  assert.equal(upstreamStarts, 1);
+  assert.equal(await restartedPolicy.reconcileRecoveredOwner("other-run", observedGeneration), false);
+  assert.equal(await restartedPolicy.reconcileRecoveredOwner("run-1", observedGeneration + 1), false);
+  assert.equal(restartedAuthority.snapshot().active, 1);
 
-  assert.equal(await restartedPolicy.settle("1", { goalStatus: "active" }), false);
-  assert.equal(await restartedPolicy.settle("1", { goalStatus: "paused" }), false);
-  assert.equal(
-    await restartedPolicy.settle("1", {
-      goalStatus: "paused",
-      pauseBarrierObserved: true,
-    }),
-    true,
-  );
+  const recovered = await restartedPolicy.reconcileRecoveredOwner("run-1", observedGeneration);
+  assert.ok(recovered);
+  assert.ok(recovered.generation > observedGeneration);
+  assert.equal(await restartedPolicy.settle("run-1", first.reservation, {
+    goalStatus: "paused",
+    pauseBarrierObserved: true,
+  }), false);
+  assert.equal(await restartedPolicy.settle("run-1", recovered, { goalStatus: "active" }), false);
+  assert.equal(restartedAuthority.snapshot().active, 1);
+  assert.equal(await restartedPolicy.settle("run-1", recovered, {
+    goalStatus: "paused",
+    pauseBarrierObserved: true,
+  }), true);
   assert.equal(restartedAuthority.snapshot().active, 0);
 });
 
-test("a malformed durable journal prevents authority startup", (context) => {
+test("a malformed journal prevents authority startup", (context) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-admission-corrupt-"));
   fs.chmodSync(directory, 0o700);
   context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -129,19 +144,20 @@ test("a malformed durable journal prevents authority startup", (context) => {
   );
 });
 
-test("native queue additions remain manager-owned and never reach the host", async () => {
+test("queued submission and fallback IDs stay unique after dequeue and preserve caller IDs", async () => {
   const authority = new AdmissionAuthority({ capacity: 4 });
   const queue = new ManagerOwnedQueue("managed-thread");
   const policy = new NativeRequestPolicy({ authority, threadId: "managed-thread", queue });
   let upstreamEffects = 0;
-  const response = await policy.handleNativeRequest(
+
+  const enqueue = async (id, clientUserMessageId) => policy.handleNativeRequest(
     {
-      id: 1,
+      id,
       method: "thread/queue/add",
       params: {
         threadId: "managed-thread",
-        clientUserMessageId: "client-message",
-        input: [{ type: "text", text: "queued work" }],
+        ...(clientUserMessageId === undefined ? {} : { clientUserMessageId }),
+        input: [{ type: "text", text: `queued work ${id}` }],
       },
     },
     async () => {
@@ -150,9 +166,74 @@ test("native queue additions remain manager-owned and never reach the host", asy
     },
   );
 
-  assert.equal(response.result.queuedSubmission.clientUserMessageId, "client-message");
-  assert.equal(queue.size, 1);
+  const first = await enqueue(1, "client-2");
+  const firstTaken = queue.take();
+  const second = await enqueue(2);
+  const secondTaken = queue.take();
+  const third = await enqueue(3);
+  const thirdTaken = queue.take();
+  const fourth = await enqueue(4);
+  const fourthTaken = queue.take();
+
+  assert.equal(first.result.queuedSubmission.clientUserMessageId, "client-2");
+  assert.equal(third.result.queuedSubmission.clientUserMessageId, "client-3");
+  assert.deepEqual(
+    [firstTaken.id, secondTaken.id, thirdTaken.id, fourthTaken.id],
+    ["manager-queue-1", "manager-queue-2", "manager-queue-3", "manager-queue-4"],
+  );
+  assert.deepEqual(
+    [
+      secondTaken.clientUserMessageId,
+      thirdTaken.clientUserMessageId,
+      fourthTaken.clientUserMessageId,
+    ],
+    ["client-1", "client-3", "client-4"],
+  );
+  assert.equal(queue.size, 0);
   assert.equal(upstreamEffects, 0);
+});
+
+test("thread resume forwards only canonical parameters for the assigned thread", async () => {
+  const authority = new AdmissionAuthority({ capacity: 4 });
+  const policy = new NativeRequestPolicy({ authority, threadId: "managed-thread" });
+  const forwarded = [];
+  const accepted = await policy.handleNativeRequest(
+    { id: "resume", method: "thread/resume", params: { threadId: "managed-thread" } },
+    async (request) => {
+      forwarded.push(request);
+      return { thread: { id: "managed-thread" } };
+    },
+  );
+
+  assert.deepEqual(accepted, { result: { thread: { id: "managed-thread" } } });
+  assert.deepEqual(forwarded, [
+    { id: "resume", method: "thread/resume", params: { threadId: "managed-thread" } },
+  ]);
+
+  for (const override of [
+    { history: [] },
+    { path: "" },
+    { path: "/tmp/other-thread.jsonl" },
+    { config: { model: "different-model" } },
+    { cwd: "/tmp/other-worktree" },
+    { model: "different-model" },
+    { unsupported: true },
+  ]) {
+    const rejected = await policy.handleNativeRequest(
+      {
+        id: `resume-${Object.keys(override)[0]}`,
+        method: "thread/resume",
+        params: { threadId: "managed-thread", ...override },
+      },
+      async (request) => {
+        forwarded.push(request);
+        return { thread: { id: "managed-thread" } };
+      },
+    );
+    assert.deepEqual(rejected, { error: { code: "NONCANONICAL_THREAD_RESUME_PARAMS" } });
+  }
+
+  assert.equal(forwarded.length, 1, "noncanonical resume requests must not reach the host");
 });
 
 test("native thread, session, and settings replacement routes fail before execution", async () => {
