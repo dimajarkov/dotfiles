@@ -22,7 +22,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Cause, Scope } from "effect";
 import { Effect, Queue, Stream } from "effect";
-import type { SubagentBackend, SubagentSession } from "../backend.ts";
+import type { ScopedSubagentBackend, SubagentSession } from "../backend.ts";
 import type {
   QueuedMessage,
   ReasoningEffort,
@@ -693,7 +693,7 @@ const makeClaudeSession = (
 
 // --- Backend -----------------------------------------------------------------
 
-export const claudeBackend: SubagentBackend = {
+export const claudeBackend: ScopedSubagentBackend = {
   name: "claude",
   capabilities: { steering: true, modelSelection: true, reasoningEffort: true },
   available: Effect.sync(() => resolveClaudeBinary() !== undefined),

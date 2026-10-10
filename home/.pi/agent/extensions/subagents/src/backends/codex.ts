@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Cause, Scope } from "effect";
 import { Effect, Queue, Stream } from "effect";
-import type { SubagentBackend, SubagentSession } from "../backend.ts";
+import type { ScopedSubagentBackend, SubagentSession } from "../backend.ts";
 import type {
   ReasoningEffort,
   RunOutcome,
@@ -1048,7 +1048,7 @@ function terminateChild(
   });
 }
 
-export const codexBackend: SubagentBackend = {
+export const codexBackend: ScopedSubagentBackend = {
   name: "codex",
   capabilities: {
     steering: false,
