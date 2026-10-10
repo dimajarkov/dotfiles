@@ -4,7 +4,7 @@ Status: exploratory policy model only; this is not a Codex relay or supported de
 
 Run its unit tests with `npm run test:admission` from this directory.
 
-The tests exercise reservation races, journal recovery, pause-barrier release, manager-owned queue staging, default-deny route classification, and a single in-memory responder owner.
+The tests exercise reservation races, generation-fenced settlement, sequential journal reload and owner reconciliation, pause-barrier release, manager-owned queue staging, default-deny route classification, and a single in-memory responder owner.
 
 The journal test covers sequential authority recreation only; it does not provide cross-process locking or prove durable admission in a running Codex host.
 

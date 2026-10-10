@@ -71,6 +71,70 @@ function readClientFrames(
   });
 }
 
+test("server requests with a colliding client id are not mistaken for replies", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-native-proof-collision-"));
+  const socketPath = join(directory, "app-server.sock");
+  const server = createServer();
+  server.on("connection", (socket) => {
+    readClientFrames(socket, (message) => {
+      if (message.method === "initialized") return;
+      if (message.method === "initialize") {
+        socket.write(websocketText({ id: message.id, result: { userAgent: "fixture" } }));
+        return;
+      }
+      if (message.method === "client/request") {
+        socket.write(
+          Buffer.concat([
+            websocketText({
+              id: message.id,
+              method: "approval/request",
+              params: { prompt: "server-originated request" },
+            }),
+            websocketText({
+              method: "turn/started",
+              params: { threadId, turnId: "turn_server_notification" },
+            }),
+            websocketText({ id: message.id, result: { acknowledgement: "client reply" } }),
+          ]),
+        );
+      }
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(
+      { path: socketPath, readableAll: false, writableAll: false },
+      resolve,
+    );
+  });
+
+  const connection = new CodexUnixAppServerConnection(socketPath);
+  t.after(async () => {
+    connection.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(directory, { recursive: true, force: true });
+  });
+  await connection.connect();
+  await connection.initialize();
+
+  const incoming: Record<string, unknown>[] = [];
+  connection.onMessage((message) => incoming.push(message));
+  const response = await connection.request("client/request");
+
+  assert.deepEqual(response, { acknowledgement: "client reply" });
+  assert.deepEqual(incoming, [
+    {
+      id: 2,
+      method: "approval/request",
+      params: { prompt: "server-originated request" },
+    },
+    {
+      method: "turn/started",
+      params: { threadId, turnId: "turn_server_notification" },
+    },
+  ]);
+});
+
 test("history reconciliation deduplicates exact-thread item notifications and drops auxiliary threads", () => {
   const notifications = [
     {

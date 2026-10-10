@@ -14,6 +14,21 @@ function record(value: unknown): JsonRecord | undefined {
     : undefined;
 }
 
+type RpcMessageKind = "request" | "notification" | "reply" | "other";
+
+function classifyRpcMessage(message: JsonRecord): RpcMessageKind {
+  if (typeof message.method === "string") {
+    return Object.hasOwn(message, "id") ? "request" : "notification";
+  }
+  if (
+    Object.hasOwn(message, "id") &&
+    (Object.hasOwn(message, "result") || Object.hasOwn(message, "error"))
+  ) {
+    return "reply";
+  }
+  return "other";
+}
+
 function encodeFrame(opcode: number, payload: Buffer) {
   const mask = randomBytes(4);
   const extendedLength =
@@ -277,24 +292,26 @@ export class CodexUnixAppServerConnection {
       return;
     }
     if (!message) return;
-    const id = typeof message.id === "number" ? message.id : undefined;
-    if (id !== undefined && this.pending.has(id)) {
-      const pending = this.pending.get(id)!;
-      this.pending.delete(id);
-      clearTimeout(pending.timer);
-      if (message.error !== undefined) {
-        const error = record(message.error);
-        pending.reject(
-          new Error(
-            typeof error?.message === "string"
-              ? error.message
-              : "Codex app-server request failed.",
-          ),
-        );
-      } else {
-        pending.resolve(record(message.result) ?? {});
+    if (classifyRpcMessage(message) === "reply") {
+      const id = typeof message.id === "number" ? message.id : undefined;
+      if (id !== undefined && this.pending.has(id)) {
+        const pending = this.pending.get(id)!;
+        this.pending.delete(id);
+        clearTimeout(pending.timer);
+        if (message.error !== undefined) {
+          const error = record(message.error);
+          pending.reject(
+            new Error(
+              typeof error?.message === "string"
+                ? error.message
+                : "Codex app-server request failed.",
+            ),
+          );
+        } else {
+          pending.resolve(record(message.result) ?? {});
+        }
+        return;
       }
-      return;
     }
     for (const handler of this.messageHandlers) handler(message);
   }

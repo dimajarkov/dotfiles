@@ -49,8 +49,10 @@ export class AdmissionAuthority {
   #capacity;
   #available;
   #leases = new Map();
+  #handles = new WeakMap();
   #tail = Promise.resolve();
   #journalPath;
+  #nextGeneration = 0;
 
   constructor({ capacity = 4, available = true, existing = [], journalPath: journal } = {}) {
     if (!Number.isInteger(capacity) || capacity < 1) {
@@ -67,7 +69,12 @@ export class AdmissionAuthority {
         if (typeof reservation !== "string" || !reservation) {
           throw new TypeError("existing reservations must be non-empty strings");
         }
-        this.#leases.set(reservation, { kind: "external" });
+        this.#leases.set(reservation, {
+          kind: "external",
+          generation: 0,
+          ownerId: undefined,
+          ownerToken: undefined,
+        });
       }
     }
     if (this.#leases.size > this.#capacity) {
@@ -94,16 +101,52 @@ export class AdmissionAuthority {
       } catch {
         throw new Error("admission journal contains an invalid record");
       }
-      if (typeof record.id !== "string" || !record.id || !["reserve", "release"].includes(record.event)) {
+      if (
+        typeof record.id !== "string" ||
+        !record.id ||
+        !["reserve", "reconcile", "release"].includes(record.event)
+      ) {
         throw new Error("admission journal contains an unknown record");
       }
       if (record.event === "reserve") {
         if (this.#leases.has(record.id)) throw new Error("admission journal repeats an active reservation");
+        if (!Number.isSafeInteger(record.generation) || record.generation <= this.#nextGeneration) {
+          throw new Error("admission journal contains an invalid lease generation");
+        }
         const kind = record.kind ?? "managed";
         if (typeof kind !== "string" || !kind) throw new Error("admission journal contains an invalid lease kind");
-        this.#leases.set(record.id, { kind });
+        if (record.ownerId !== undefined && (typeof record.ownerId !== "string" || !record.ownerId)) {
+          throw new Error("admission journal contains an invalid owner id");
+        }
+        this.#leases.set(record.id, {
+          kind,
+          generation: record.generation,
+          ownerId: record.ownerId,
+          ownerToken: undefined,
+        });
+        this.#nextGeneration = record.generation;
+      } else if (record.event === "reconcile") {
+        const lease = this.#leases.get(record.id);
+        if (!lease) throw new Error("admission journal reconciles an unknown reservation");
+        if (
+          !Number.isSafeInteger(record.generation) ||
+          record.generation <= this.#nextGeneration ||
+          record.ownerId !== lease.ownerId
+        ) {
+          throw new Error("admission journal contains an invalid owner reconciliation");
+        }
+        this.#leases.set(record.id, {
+          ...lease,
+          generation: record.generation,
+          ownerToken: undefined,
+        });
+        this.#nextGeneration = record.generation;
       } else {
-        if (!this.#leases.has(record.id)) throw new Error("admission journal releases an unknown reservation");
+        const lease = this.#leases.get(record.id);
+        if (!lease) throw new Error("admission journal releases an unknown reservation");
+        if (record.generation !== lease.generation) {
+          throw new Error("admission journal releases a stale lease generation");
+        }
         this.#leases.delete(record.id);
       }
     }
@@ -156,40 +199,86 @@ export class AdmissionAuthority {
     this.#available = Boolean(available);
   }
 
-  async reserve(id, kind = "managed") {
+  #createHandle(id, generation) {
+    const handle = Object.freeze({ id, generation });
+    const ownerToken = Symbol("admission-lease-owner");
+    this.#handles.set(handle, ownerToken);
+    return { handle, ownerToken };
+  }
+
+  async reserve(id, kind = "managed", ownerId) {
     if (typeof id !== "string" || !id) throw new TypeError("lease id is required");
+    if (typeof kind !== "string" || !kind) throw new TypeError("lease kind is required");
+    if (ownerId !== undefined && (typeof ownerId !== "string" || !ownerId)) {
+      throw new TypeError("lease owner id must be a non-empty string");
+    }
     return this.#exclusive(() => {
       if (!this.#available) return { admitted: false, reason: "authority-unavailable" };
       if (this.#leases.has(id)) return { admitted: false, reason: "already-reserved" };
       if (this.#leases.size >= this.#capacity) return { admitted: false, reason: "capacity" };
+      const generation = this.#nextGeneration + 1;
+      const { handle, ownerToken } = this.#createHandle(id, generation);
       try {
-        this.#appendRecord({ event: "reserve", id, kind });
+        this.#appendRecord({ event: "reserve", id, kind, generation, ownerId });
       } catch {
         this.#available = false;
         return { admitted: false, reason: "journal-unavailable" };
       }
-      this.#leases.set(id, { kind });
-      return { admitted: true, reason: "reserved" };
+      this.#nextGeneration = generation;
+      this.#leases.set(id, { kind, generation, ownerId, ownerToken });
+      return { admitted: true, reason: "reserved", handle };
     });
   }
 
-  async release(id) {
+  async release(handle) {
     return this.#exclusive(() => {
-      if (!this.#leases.has(id)) return false;
+      if (handle === null || typeof handle !== "object") return false;
+      const ownerToken = this.#handles.get(handle);
+      if (!ownerToken) return false;
+      const lease = this.#leases.get(handle.id);
+      if (
+        !lease ||
+        lease.generation !== handle.generation ||
+        lease.ownerToken !== ownerToken
+      ) {
+        return false;
+      }
       try {
-        this.#appendRecord({ event: "release", id });
+        this.#appendRecord({ event: "release", id: handle.id, generation: handle.generation });
       } catch {
         this.#available = false;
         return false;
       }
-      return this.#leases.delete(id);
+      return this.#leases.delete(handle.id);
     });
   }
 
-  async reacquire(id) {
+  async reacquire(id, expectedGeneration, ownerId) {
     return this.#exclusive(() => {
-      if (!this.#available || !this.#leases.has(id)) return false;
-      return true;
+      const lease = this.#leases.get(id);
+      if (
+        !this.#available ||
+        !this.#journalPath ||
+        !lease ||
+        lease.kind === "external" ||
+        lease.ownerToken !== undefined ||
+        lease.generation !== expectedGeneration ||
+        typeof ownerId !== "string" ||
+        lease.ownerId !== ownerId
+      ) {
+        return false;
+      }
+      const generation = this.#nextGeneration + 1;
+      const { handle, ownerToken } = this.#createHandle(id, generation);
+      try {
+        this.#appendRecord({ event: "reconcile", id, generation, ownerId });
+      } catch {
+        this.#available = false;
+        return false;
+      }
+      this.#nextGeneration = generation;
+      this.#leases.set(id, { ...lease, generation, ownerToken });
+      return handle;
     });
   }
 
@@ -199,7 +288,11 @@ export class AdmissionAuthority {
       capacity: this.#capacity,
       active: this.#leases.size,
       leases: Object.freeze(
-        [...this.#leases.entries()].map(([id, value]) => ({ id, ...value })),
+        [...this.#leases.entries()].map(([id, value]) => ({
+          id,
+          kind: value.kind,
+          generation: value.generation,
+        })),
       ),
     });
   }
@@ -208,6 +301,9 @@ export class AdmissionAuthority {
 export class ManagerOwnedQueue {
   #threadId;
   #items = [];
+  #nextSubmissionId = 0;
+  #nextFallbackClientId = 0;
+  #usedClientUserMessageIds = new Set();
 
   constructor(threadId) {
     if (typeof threadId !== "string" || !threadId) throw new TypeError("threadId is required");
@@ -219,9 +315,17 @@ export class ManagerOwnedQueue {
     if (params.threadId !== this.#threadId || !Array.isArray(params.input)) {
       return { error: { code: "FOREIGN_THREAD_OR_INVALID_QUEUE_ITEM" } };
     }
+    const sequence = ++this.#nextSubmissionId;
+    let clientUserMessageId = params.clientUserMessageId;
+    if (clientUserMessageId == null) {
+      do {
+        clientUserMessageId = `client-${++this.#nextFallbackClientId}`;
+      } while (this.#usedClientUserMessageIds.has(clientUserMessageId));
+    }
+    this.#usedClientUserMessageIds.add(clientUserMessageId);
     const submission = {
-      id: `manager-queue-${this.#items.length + 1}`,
-      clientUserMessageId: params.clientUserMessageId ?? `client-${this.#items.length + 1}`,
+      id: `manager-queue-${sequence}`,
+      clientUserMessageId,
       input: params.input,
     };
     this.#items.push(submission);
@@ -241,7 +345,7 @@ export class NativeRequestPolicy {
   #authority;
   #threadId;
   #queue;
-  #activeRuns = new Set();
+  #activeRuns = new Map();
 
   constructor({ authority, threadId, queue = new ManagerOwnedQueue(threadId) }) {
     if (!(authority instanceof AdmissionAuthority)) {
@@ -256,31 +360,52 @@ export class NativeRequestPolicy {
   }
 
   async admitStart(runId, forward) {
+    if (typeof runId !== "string" || !runId) throw new TypeError("runId is required");
     const existingLease = this.#authority.snapshot().leases.some(
       (lease) => lease.id === this.#threadId,
     );
     if (existingLease || this.#activeRuns.size > 0) {
       return { admitted: false, error: { code: "THREAD_BUSY_OR_LEASE_HELD" } };
     }
-    const reservation = await this.#authority.reserve(this.#threadId);
-    if (!reservation.admitted) {
+    const decision = await this.#authority.reserve(this.#threadId, "managed", runId);
+    if (!decision.admitted) {
       return {
         admitted: false,
         error: {
-          code: reservation.reason === "authority-unavailable"
+          code: decision.reason === "authority-unavailable"
             ? "ADMISSION_UNAVAILABLE"
             : "ADMISSION_DENIED",
         },
       };
     }
-    this.#activeRuns.add(runId);
+    this.#activeRuns.set(runId, decision.handle);
     try {
-      return { admitted: true, result: await forward() };
+      return { admitted: true, result: await forward(), reservation: decision.handle };
     } catch (error) {
       // A failed downstream write has an ambiguous outcome. Keep the lease until
       // the owner proves the host is quiescent and explicitly releases it.
       throw error;
     }
+  }
+
+  async reconcileRecoveredOwner(runId, expectedGeneration) {
+    if (
+      typeof runId !== "string" ||
+      !runId ||
+      !Number.isSafeInteger(expectedGeneration) ||
+      expectedGeneration < 1 ||
+      this.#activeRuns.has(runId)
+    ) {
+      return false;
+    }
+    const handle = await this.#authority.reacquire(
+      this.#threadId,
+      expectedGeneration,
+      runId,
+    );
+    if (!handle) return false;
+    this.#activeRuns.set(runId, handle);
+    return handle;
   }
 
   async handleNativeRequest(request, forward) {
@@ -306,16 +431,36 @@ export class NativeRequestPolicy {
         ? { result: decision.result }
         : { error: decision.error };
     }
-    if (NATIVE_READ_METHODS.has(request.method) || request.method === "thread/resume") {
+    if (request.method === "thread/resume") {
+      const canonicalParams =
+        params !== null &&
+        typeof params === "object" &&
+        !Array.isArray(params) &&
+        Object.keys(params).length === 1 &&
+        params.threadId === this.#threadId;
+      if (!canonicalParams) {
+        return { error: { code: "NONCANONICAL_THREAD_RESUME_PARAMS" } };
+      }
+      return { result: await forward(request) };
+    }
+    if (NATIVE_READ_METHODS.has(request.method)) {
       return { result: await forward(request) };
     }
     return { error: { code: "UNCLASSIFIED_ROUTE" } };
   }
 
-  async settle(runId, { goalStatus = "none", turnActive = false, pauseBarrierObserved = false } = {}) {
-    this.#activeRuns.delete(runId);
+  async settle(
+    runId,
+    reservation,
+    { goalStatus = "none", turnActive = false, pauseBarrierObserved = false } = {},
+  ) {
+    if (!runId || this.#activeRuns.get(runId) !== reservation) return false;
     if (turnActive || goalStatus === "active" || !pauseBarrierObserved) return false;
-    return this.#authority.release(this.#threadId);
+    const released = await this.#authority.release(reservation);
+    if (released && this.#activeRuns.get(runId) === reservation) {
+      this.#activeRuns.delete(runId);
+    }
+    return released;
   }
 
   queueSize() {
