@@ -54,7 +54,7 @@
   "extensions": [
     "-builtin:mcp",
     "-extensions/ask-user/index.ts",
-    "-extensions/subagents/index.ts"
+    "+extensions/subagents/index.ts"
   ],
   "skills": [
     "~/.agents/skills"
