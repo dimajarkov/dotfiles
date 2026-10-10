@@ -474,12 +474,16 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/AGENTS.md";
   home.file.".agents/skills/browser-routing".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/browser-routing";
+  home.file.".agents/skills/lavish".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/lavish";
   home.file.".agents/skills/one-bin".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/one-bin";
   home.file.".agents/skills/no-mistakes".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/no-mistakes";
   home.file.".pi/agent/skills/browser-routing".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/browser-routing";
+  home.file.".pi/agent/skills/lavish".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/lavish";
   home.file.".pi/agent/skills/one-bin".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/one-bin";
   home.file.".pi/agent/skills/no-mistakes".source =
