@@ -17,7 +17,8 @@ Use Computer Use through the Codex harness for:
 - Canvas, video, PDF, and anything whose important state exists only in rendered pixels.
 
 Use Zen Browser for interactive browser work, including Arena CRM localhost and visual QA.
-Resolve the native macOS app by bundle identifier `app.zen-browser.zen` through Codex Computer Use; confirm the returned app is Zen before interacting.
+Select the installed macOS application by its full path `/Applications/Zen.app` through Codex Computer Use (`cua.getApp("/Applications/Zen.app")`); confirm the returned app is Zen before interacting.
+If that installed application is unavailable, report the missing installation before choosing another copy.
 Do not rely on the default browser or select `"chrome"` in a browser API.
 For development automation, browser testing, and localhost work, switch to Zen's space named exactly `development` before opening a task tab.
 Verify the selected space is `development` and the returned app is Zen before navigating or interacting; keep task-owned tabs there and observe the target URL and state after each action.
