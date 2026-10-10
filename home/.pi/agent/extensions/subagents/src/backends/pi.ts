@@ -26,7 +26,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Cause, Scope } from "effect";
 import { Effect, Queue, Stream } from "effect";
-import type { SubagentBackend, SubagentSession } from "../backend.ts";
+import type { ScopedSubagentBackend, SubagentSession } from "../backend.ts";
 import type {
   SpawnTask,
   SubagentEvent,
@@ -566,7 +566,7 @@ const makePiSession = (
     } satisfies SubagentSession;
   });
 
-export const piBackend: SubagentBackend = {
+export const piBackend: ScopedSubagentBackend = {
   name: "pi",
   capabilities: { steering: true, modelSelection: true, reasoningEffort: true },
   // In-process SDK: always available.

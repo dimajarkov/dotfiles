@@ -18,7 +18,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Cause, Scope } from "effect";
 import { Duration, Effect, Fiber, Queue, Ref, Stream } from "effect";
-import type { SubagentBackend, SubagentSession } from "../backend.ts";
+import type { ScopedSubagentBackend, SubagentSession } from "../backend.ts";
 import type {
   BackendName,
   QueuedMessage,
@@ -40,7 +40,7 @@ export interface StubProfile {
 const STUB_DIR = path.join(os.tmpdir(), "subagents-stub");
 let sessionCounter = 0;
 
-export function makeStubBackend(profile: StubProfile): SubagentBackend {
+export function makeStubBackend(profile: StubProfile): ScopedSubagentBackend {
   return {
     name: profile.backend,
     capabilities: {

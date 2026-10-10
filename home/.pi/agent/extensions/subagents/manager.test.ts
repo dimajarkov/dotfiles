@@ -8,20 +8,34 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Effect, Layer, ManagedRuntime } from "effect";
-import { BackendRegistry, type SubagentBackend } from "./src/backend.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Effect, Layer, ManagedRuntime, Scope, Stream } from "effect";
+import {
+  BackendRegistry,
+  type ScopedSubagentBackend,
+  type SubagentBackend,
+  type SubagentSession,
+} from "./src/backend.ts";
 import { piBackend } from "./src/backends/pi.ts";
 import { makeStubBackend } from "./src/backends/stub.ts";
-import type { BackendName, ParentContext, SpawnTask } from "./src/domain.ts";
+import {
+  SpawnError,
+  type BackendName,
+  type ParentContext,
+  type SpawnTask,
+  type SubagentMeta,
+} from "./src/domain.ts";
 import {
   SubagentManager,
   SubagentManagerLive,
   type SubagentManagerShape,
 } from "./src/manager.ts";
+import { adaptScopedBackend } from "./src/lifecycle.ts";
 import { runTool } from "./src/runtime.ts";
+import { compatibilityTerminalAttachment } from "./src/ui/terminal-attachment.ts";
 
 const TestRegistryLive = Layer.sync(BackendRegistry, () => {
-  const backends: SubagentBackend[] = [
+  const backends: ScopedSubagentBackend[] = [
     piBackend,
     makeStubBackend({
       backend: "claude",
@@ -38,8 +52,9 @@ const TestRegistryLive = Layer.sync(BackendRegistry, () => {
       cadenceMs: 30,
     }),
   ];
+  const managedBackends = backends.map(adaptScopedBackend);
   return new Map<BackendName, SubagentBackend>(
-    backends.map((backend) => [backend.name, backend]),
+    managedBackends.map((backend) => [backend.name, backend]),
   );
 });
 
@@ -72,6 +87,251 @@ async function withManager(
   }
 }
 
+test("runtime shutdown waits for an in-flight scoped child acquisition", async () => {
+  let announceStarted!: () => void;
+  let releaseAcquisition!: () => void;
+  const started = new Promise<void>((resolve) => {
+    announceStarted = resolve;
+  });
+  const acquisitionGate = new Promise<void>((resolve) => {
+    releaseAcquisition = resolve;
+  });
+  let scopeReleases = 0;
+  const delayedBackend: ScopedSubagentBackend = {
+    name: "claude",
+    capabilities: {
+      steering: true,
+      modelSelection: true,
+      reasoningEffort: true,
+    },
+    available: Effect.succeed(true),
+    spawn: () =>
+      Effect.gen(function* () {
+        announceStarted();
+        yield* Effect.promise(() => acquisitionGate);
+        const childScope = yield* Scope.Scope;
+        yield* Scope.addFinalizer(
+          childScope,
+          Effect.sync(() => {
+            scopeReleases++;
+          }),
+        );
+        return {
+          meta: Effect.succeed({ backend: "claude" }),
+          events: Stream.empty,
+          send: () => Effect.void,
+          interrupt: Effect.void,
+        } satisfies SubagentSession;
+      }),
+  };
+  const Registry = Layer.sync(
+    BackendRegistry,
+    () => {
+      const backend = adaptScopedBackend(delayedBackend);
+      return new Map([[backend.name, backend]]);
+    },
+  );
+  const runtime = ManagedRuntime.make(
+    SubagentManagerLive.pipe(Layer.provide(Registry)),
+  );
+
+  try {
+    const manager = await runtime.runPromise(SubagentManager);
+    const spawning = runTool(runtime, manager.spawn("claude", task("delayed")));
+    await started;
+
+    let shutdownReturned = false;
+    const shuttingDown = runTool(runtime, manager.disposeAll).then(() => {
+      shutdownReturned = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const returnedBeforeAcquisitionFinished = shutdownReturned;
+
+    releaseAcquisition();
+    await shuttingDown;
+    await assert.rejects(spawning);
+
+    assert.equal(
+      returnedBeforeAcquisitionFinished,
+      false,
+      "shutdown must join pending ownership acquisition before returning",
+    );
+    assert.equal(scopeReleases, 1, "the compatibility scope must close once");
+  } finally {
+    releaseAcquisition();
+    await runtime.dispose();
+  }
+});
+
+test("shutdown stops a managed child whose metadata acquisition is pending", async () => {
+  let announceMetaStarted!: () => void;
+  let releaseMeta!: (meta: SubagentMeta) => void;
+  const metaStarted = new Promise<void>((resolve) => {
+    announceMetaStarted = resolve;
+  });
+  const metaGate = new Promise<SubagentMeta>((resolve) => {
+    releaseMeta = resolve;
+  });
+  let stops = 0;
+  const backend: SubagentBackend = {
+    name: "claude",
+    capabilities: {
+      steering: true,
+      modelSelection: true,
+      reasoningEffort: true,
+    },
+    available: Effect.succeed(true),
+    spawn: () =>
+      Effect.succeed({
+        conversation: {
+          id: "metadata-pending-conversation",
+          meta: Effect.promise(() => {
+            announceMetaStarted();
+            return metaGate;
+          }),
+        },
+        execution: {
+          send: () => Effect.void,
+          interrupt: Effect.void,
+          stop: Effect.sync(() => {
+            stops++;
+          }),
+        },
+        management: { events: Stream.empty },
+      }),
+  };
+  const Registry = Layer.sync(
+    BackendRegistry,
+    () => new Map<BackendName, SubagentBackend>([[backend.name, backend]]),
+  );
+  const runtime = ManagedRuntime.make(
+    SubagentManagerLive.pipe(Layer.provide(Registry)),
+  );
+
+  try {
+    const manager = await runtime.runPromise(SubagentManager);
+    const spawning = runTool(
+      runtime,
+      manager.spawn("claude", task("metadata pending")),
+    );
+    await metaStarted;
+
+    let shutdownReturned = false;
+    const shutdown = runTool(runtime, manager.disposeAll).then(() => {
+      shutdownReturned = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(shutdownReturned, false);
+
+    releaseMeta({ backend: "claude" });
+    await shutdown;
+    await assert.rejects(spawning, /shut down while spawning/);
+    assert.equal(stops, 1);
+  } finally {
+    releaseMeta({ backend: "claude" });
+    await runtime.dispose();
+  }
+});
+
+test("scoped adapter releases partial resources after a failed spawn", async () => {
+  let releases = 0;
+  const backend: ScopedSubagentBackend = {
+    name: "claude",
+    capabilities: {
+      steering: true,
+      modelSelection: true,
+      reasoningEffort: true,
+    },
+    available: Effect.succeed(true),
+    spawn: () =>
+      Effect.gen(function* () {
+        const scope = yield* Scope.Scope;
+        yield* Scope.addFinalizer(scope, Effect.sync(() => releases++));
+        return yield* new SpawnError({ message: "mock acquisition failed" });
+      }),
+  };
+  const managedBackend = adaptScopedBackend(backend);
+  const Registry = Layer.sync(
+    BackendRegistry,
+    () =>
+      new Map<BackendName, SubagentBackend>([
+        [managedBackend.name, managedBackend],
+      ]),
+  );
+  const runtime = ManagedRuntime.make(
+    SubagentManagerLive.pipe(Layer.provide(Registry)),
+  );
+
+  try {
+    const manager = await runtime.runPromise(SubagentManager);
+    await assert.rejects(
+      runTool(runtime, manager.spawn("claude", task("failed acquisition"))),
+      /mock acquisition failed/,
+    );
+    assert.equal(releases, 1);
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+test("manager accepts an execution owner without a compatibility scope", async () => {
+  let stopped = 0;
+  const backend: SubagentBackend = {
+    name: "claude",
+    capabilities: {
+      steering: true,
+      modelSelection: true,
+      reasoningEffort: true,
+    },
+    available: Effect.succeed(true),
+    spawn: () =>
+      Effect.succeed({
+        conversation: {
+          id: "independently-owned-conversation",
+          meta: Effect.succeed({ backend: "claude" }),
+        },
+        execution: {
+          send: () => Effect.void,
+          interrupt: Effect.void,
+          stop: Effect.sync(() => {
+            stopped++;
+          }),
+        },
+        management: {
+          events: Stream.make(
+            { _tag: "RunStarted" },
+            {
+              _tag: "RunSettled",
+              outcome: { _tag: "Completed", finalText: "managed result" },
+            },
+          ),
+        },
+      }),
+  };
+  const Registry = Layer.sync(
+    BackendRegistry,
+    () => new Map<BackendName, SubagentBackend>([[backend.name, backend]]),
+  );
+  const runtime = ManagedRuntime.make(
+    SubagentManagerLive.pipe(Layer.provide(Registry)),
+  );
+
+  try {
+    const manager = await runtime.runPromise(SubagentManager);
+    const snap = await runTool(
+      runtime,
+      manager.spawn("claude", task("direct ownership")),
+    );
+    await runTool(runtime, manager.waitFor([snap.id]));
+    assert.equal(manager.view.get(snap.id)?.finalText, "managed result");
+
+    await runTool(runtime, manager.disposeAll);
+    assert.equal(stopped, 1, "manager shutdown releases the execution owner");
+  } finally {
+    await runtime.dispose();
+  }
+});
+
 test("stub subagent completes and delivers a final result", async () => {
   await withManager(async (manager, runtime) => {
     const settled: Array<{ id: string; consumed: boolean }> = [];
@@ -99,6 +359,51 @@ test("stub subagent completes and delivers a final result", async () => {
     assert.ok(done.transcript.some((item) => item.kind === "toolResult"));
     // The waitFor marked the settle as consumed.
     assert.deepEqual(settled, [{ id: snap.id, consumed: true }]);
+  });
+});
+
+test("closing the terminal attachment leaves child execution running", async () => {
+  await withManager(async (manager, runtime) => {
+    const snap = await runTool(
+      runtime,
+      manager.spawn("claude", task("Finish after the dashboard closes")),
+    );
+    const ctx = {
+      ui: {
+        custom: (createComponent: (
+          tui: unknown,
+          theme: unknown,
+          keybindings: unknown,
+          done: (result: null) => void,
+        ) => {
+          handleInput(data: string): void;
+          dispose(): void;
+        }) =>
+          new Promise<null>((resolve) => {
+            const component = createComponent(
+              { requestRender() {}, terminal: { rows: 24 } },
+              {},
+              {
+                matches: (data: string, binding: string) =>
+                  data === "escape" && binding === "tui.select.cancel",
+              },
+              resolve,
+            );
+            component.handleInput("escape");
+            component.dispose();
+          }),
+      },
+    } as unknown as ExtensionContext;
+
+    await compatibilityTerminalAttachment.openTakeover(
+      ctx,
+      manager.view,
+      snap.id,
+    );
+    assert.equal(manager.view.get(snap.id)?.status, "running");
+
+    await runTool(runtime, manager.waitFor([snap.id]));
+    assert.equal(manager.view.get(snap.id)?.status, "done");
   });
 });
 
@@ -135,6 +440,27 @@ test("cancel interrupts a running stub subagent", async () => {
       { id: snap.id, title: "test", status: "error", cancelled: true },
     ]);
     assert.equal(manager.view.get(snap.id)?.errorText, "Run was aborted");
+  });
+});
+
+test("aborting a wait releases interest without cancelling the child", async () => {
+  await withManager(async (manager, runtime) => {
+    const snap = await runTool(
+      runtime,
+      manager.spawn("claude", task("Long running task")),
+    );
+    const controller = new AbortController();
+    const waiting = runTool(runtime, manager.waitFor([snap.id]), {
+      signal: controller.signal,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    controller.abort();
+    await assert.rejects(waiting, /Operation was aborted/);
+    assert.equal(manager.view.get(snap.id)?.status, "running");
+
+    const report = await runTool(runtime, manager.cancel([snap.id]));
+    assert.equal(report[0]?.cancelled, true);
   });
 });
 

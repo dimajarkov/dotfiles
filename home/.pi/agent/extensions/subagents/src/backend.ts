@@ -1,15 +1,14 @@
 /**
- * The unified backend interface: one `SubagentBackend` per agent runtime
- * (pi, Claude Code, Codex), all producing the same `SubagentSession` shape.
+ * Backend contracts for the subagent manager.
  *
- * Planned real implementations (currently stubbed in ./backends/):
- * - pi: in-process `createAgentSession()` via the pi SDK.
- * - claude: `@anthropic-ai/claude-agent-sdk` `query()` in streaming-input mode.
- * - codex: `codex app-server` child process speaking JSON-RPC over stdio.
+ * `SubagentBackend` is the lifecycle-independent orchestration seam. Existing
+ * Pi, Claude, and Codex implementations retain `ScopedSubagentBackend` and
+ * are wrapped by the compatibility adapter in lifecycle.ts.
  */
 
 import type { Effect, Scope, Stream } from "effect";
 import { Context } from "effect";
+import type { ManagedSubagent } from "./lifecycle.ts";
 import type {
   BackendName,
   SendError,
@@ -27,8 +26,8 @@ export interface BackendCapabilities {
 }
 
 /**
- * A live subagent session. The manager is the single consumer of `events`;
- * it folds them into the `SubagentSnapshot` everything else reads.
+ * A live compatibility session. The manager's controller is the single
+ * consumer of `events`; it folds them into the read-model snapshot.
  */
 export interface SubagentSession {
   /** Current metadata snapshot. Updates also arrive as MetaChanged events. */
@@ -51,19 +50,27 @@ export interface SubagentSession {
   readonly interrupt: Effect.Effect<void>;
 }
 
-export interface SubagentBackend {
+/** Existing headless backend contract, retained behind the scoped adapter. */
+export interface ScopedSubagentBackend {
   readonly name: BackendName;
   readonly capabilities: BackendCapabilities;
   /** Probe availability (binary on PATH, SDK importable, credentials). */
   readonly available: Effect.Effect<boolean>;
-  /**
-   * Spawn a session. Scoped: closing the scope interrupts/kills the
-   * underlying session or process and ends `events`. Fire-and-forget
-   * semantics (background fibers, result delivery) live in the manager.
-   */
+  /** Spawn a legacy session whose resources belong to the provided scope. */
   spawn(
     task: SpawnTask,
   ): Effect.Effect<SubagentSession, SpawnError, Scope.Scope>;
+}
+
+/**
+ * Backend boundary consumed by orchestration. Implementations own conversation
+ * and execution lifetimes independently; manager teardown calls `stop`.
+ */
+export interface SubagentBackend {
+  readonly name: BackendName;
+  readonly capabilities: BackendCapabilities;
+  readonly available: Effect.Effect<boolean>;
+  spawn(task: SpawnTask): Effect.Effect<ManagedSubagent, SpawnError>;
 }
 
 /** Registry of all wired backends, keyed by name. */
