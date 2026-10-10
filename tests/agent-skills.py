@@ -312,22 +312,23 @@ sys.exit(migrator.main(sys.argv[2:]))
         result = self.run_migration()
 
         self.assert_refused_without_changes(result)
-        self.assertIn("missing from the canonical", result.stderr)
+        self.assertIn("Unsupported local symlink at external-link", result.stderr)
 
-    def test_relative_internal_symlink_is_accepted_and_preserved(self) -> None:
-        self.write_file(self.canonical, "assets/data", b"canonical data")
-        self.write_file(self.live, "assets/data", b"canonical data")
-        (self.canonical / "current").symlink_to("assets/data")
-        (self.live / "current").symlink_to("assets/data")
+    def test_matching_nested_symlinks_are_refused_without_changes(self) -> None:
+        self.write_file(self.canonical, "skill/assets/data", b"canonical data")
+        self.write_file(self.live, "skill/assets/data", b"canonical data")
+        (self.canonical / "skill/current").symlink_to("assets/data")
+        (self.live / "skill/current").symlink_to("assets/data")
 
         result = self.run_migration()
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        backup = self.backups()[0]
-        self.assertTrue((backup / "current").is_symlink())
-        self.assertEqual(os.readlink(backup / "current"), "assets/data")
+        self.assert_refused_without_changes(result)
+        self.assertIn("Unsupported local symlink at skill/current", result.stderr)
+        self.assertTrue((self.live / "skill/current").is_symlink())
+        self.assertTrue((self.canonical / "skill/current").is_symlink())
         self.assertEqual(
-            (backup / "current").resolve(), (backup / "assets/data").resolve()
+            os.readlink(self.live / "skill/current"),
+            os.readlink(self.canonical / "skill/current"),
         )
 
     def test_dry_run_checks_existing_directory_without_mutation(self) -> None:

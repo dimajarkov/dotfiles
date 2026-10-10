@@ -47,28 +47,7 @@ def _is_managed_child_link(source: Path, canonical_root: Path, child_name: str) 
         return False
 
 
-def _same_symlink_target(
-    source: Path,
-    canonical: Path,
-    source_root: Path,
-    canonical_root: Path,
-) -> bool:
-    try:
-        source_target = source.resolve(strict=False)
-        canonical_target = canonical.resolve(strict=False)
-        source_root_resolved = source_root.resolve(strict=True)
-        source_relative_target = source_target.relative_to(source_root_resolved)
-    except (OSError, RuntimeError):
-        return False
-    except ValueError:
-        return source_target == canonical_target
-    return (canonical_root / source_relative_target).resolve(
-        strict=False
-    ) == canonical_target
-
-
 def _compare_tree(
-    source_root: Path,
     canonical_root: Path,
     source_dir: Path,
     canonical_dir: Path,
@@ -99,6 +78,11 @@ def _compare_tree(
             and _is_managed_child_link(source, canonical_root, entry.name)
         ):
             continue
+        if stat.S_ISLNK(source_stat.st_mode):
+            raise MigrationError(
+                f"Unsupported local symlink at {display_path}; only managed skills-root "
+                "child links are allowed"
+            )
 
         canonical = canonical_dir / entry.name
         try:
@@ -115,9 +99,7 @@ def _compare_tree(
                     f"Local directory {display_path} is not a directory in the "
                     "canonical skills directory"
                 )
-            _compare_tree(
-                source_root, canonical_root, source, canonical, child_relative
-            )
+            _compare_tree(canonical_root, source, canonical, child_relative)
         elif stat.S_ISREG(source_stat.st_mode):
             if not stat.S_ISREG(canonical_stat.st_mode):
                 raise MigrationError(
@@ -140,29 +122,11 @@ def _compare_tree(
                 raise MigrationError(
                     f"File contents differ for local file {display_path}"
                 )
-        elif stat.S_ISLNK(source_stat.st_mode):
-            if not stat.S_ISLNK(canonical_stat.st_mode):
-                raise MigrationError(
-                    f"Local symlink {display_path} is not a symlink in the canonical "
-                    "skills directory"
-                )
-            try:
-                source_target = os.readlink(source)
-                canonical_target = os.readlink(canonical)
-            except OSError as error:
-                raise MigrationError(
-                    f"Cannot compare local symlink {display_path}: {error}"
-                ) from error
-            if source_target != canonical_target or not _same_symlink_target(
-                source, canonical, source_root, canonical_root
-            ):
-                raise MigrationError(
-                    f"Symlink targets differ for local path {display_path}"
-                )
         else:
             raise MigrationError(
                 f"Unsupported local filesystem entry at {display_path}; "
-                "only files, directories, and symlinks can be checked"
+                "only regular files, directories, and managed root child symlinks "
+                "can be checked"
             )
 
 
@@ -258,7 +222,7 @@ def _migrate(live_dir: Path, canonical_dir: Path, dry_run: bool) -> None:
                 "The canonical skills directory is inside the live skills directory; "
                 "refusing to move it"
             )
-        _compare_tree(live_dir, canonical, live_dir, canonical)
+        _compare_tree(canonical, live_dir, canonical)
     elif os.path.lexists(live_dir.parent) and not live_dir.parent.is_dir():
         raise MigrationError(
             f"Skills parent path is not a directory: {live_dir.parent}"
@@ -292,7 +256,7 @@ def _migrate(live_dir: Path, canonical_dir: Path, dry_run: bool) -> None:
         )
 
     try:
-        _compare_tree(backup, canonical, backup, canonical)
+        _compare_tree(canonical, backup, canonical)
     except MigrationError as error:
         restore_error = _restore_backup(backup, live_dir)
         if restore_error:
