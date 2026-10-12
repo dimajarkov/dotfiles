@@ -36,14 +36,14 @@ const UNSAFE_ATTACH_FLAGS = new Set([
 ]);
 const ROUTING_GUIDANCE =
   "Chrome DevTools is opt-in for authorized repository/application QA only.\n" +
-  "Use: chrome-devtools-axi --repo-qa <task-name> prepare-profile | attach <receipt> --pid <PID> --port <port> <bridge|Axi-command|stop|cleanup> [args...]\n" +
+  "Use: chrome-devtools-axi --repo-qa <task-name> prepare-profile | attach <receipt> --pid <PID> --port <port> <bridge|Axi-command|diagnose|stop|cleanup> [args...]\n" +
   "Run --help for supported commands and proof-target limitations.\n" +
   "Zen remains the personal browser. This guard is not an OS sandbox.\n";
 
 const HELP =
   "Usage: chrome-devtools-axi [--help | --version]\n" +
   "       chrome-devtools-axi --repo-qa <task-name> prepare-profile [--target <HTTP-loopback-origin> ...]\n" +
-  "       chrome-devtools-axi --repo-qa <task-name> attach <receipt> --pid <Chrome-PID> --port <CDP-port> <bridge|Axi-command|stop|cleanup> [args...]\n\n" +
+  "       chrome-devtools-axi --repo-qa <task-name> attach <receipt> --pid <Chrome-PID> --port <CDP-port> <bridge|Axi-command|diagnose|stop|cleanup> [args...]\n\n" +
   "No arguments print inert routing guidance. Standalone launch and setup are disabled.\n" +
   "The attach route connects only to externally owned Chrome verified against a\n" +
   "fresh signed task profile, exact live process/start/port, endpoint and Herdr binding.\n" +
@@ -75,11 +75,26 @@ const HELP =
   "Without --target, only about:blank is accepted. localhost is also supported.\n" +
   "Run attach ... bridge synchronously in an ordinary Herdr proof shell at the\n" +
   "physical Git root. Its verified lifecycle remains owned by that workspace.\n" +
+  "attach ... diagnose is read-only and launch-free: canonical signed allocation,\n" +
+  "profile inode and current Herdr context are checked. Live Chrome requires fresh\n" +
+  "process, signature and listener checks before categorical target/inventory counts.\n" +
+  "After Chrome exits, exact PID absence and an empty listener are rechecked around\n" +
+  "metadata-free profile inventory; CDP is not queried and targets remain unobserved.\n" +
+  "No URLs, titles, target IDs, argv or environment values are emitted; the receipt\n" +
+  "is never bound or updated. Exit 0 means a report, not cleanup or proof readiness.\n" +
+  "Expiry blocks new proof/control, not read-only diagnosis or exact-owner\n" +
+  "stop/cleanup recovery. Recovery still needs fresh resource ownership/absence\n" +
+  "checks and the coordinator's separate exact-target approval; no receipt renewal.\n" +
+  "Stop requires live Chrome ownership; cleanup requires complete fresh absence.\n" +
   "attach ... stop closes only the verified bridge, retaining externally owned\n" +
-  "Chrome. Its runtime owner closes Chrome; attach ... cleanup then removes\n" +
+  "Chrome; stopping is independent of target and bridge health readiness, with\n" +
+  "all resource ownership checks retained. No owned bridge was created is a\n" +
+  "launch-free result only for an unbound allocation with no lock/state/listener.\n" +
+  "The runtime owner closes Chrome; attach ... cleanup then removes\n" +
   "only the exact allocated profile after kernel absence/listener/user checks.\n" +
-  "Failed proof locks and inconclusive inspection retain resources; recovery\n" +
-  "requires a fresh allocation. Attach requires macOS, signed stable Chrome,\n" +
+  "Failed proof locks and inconclusive inspection retain resources; a new proof\n" +
+  "requires a fresh allocation. Ownership-scoped retirement preserves failure evidence.\n" +
+  "Attach requires macOS, signed stable Chrome,\n" +
   "exact live Herdr metadata and Node module.registerHooks support.\n" +
   "Scoped attach/preparation neutralize inherited EXECUTABLE_PATH, HEADED and\n" +
   "PLAYWRIGHT_BROWSERS_PATH controls. Other transport/runtime overrides must\n" +
@@ -180,8 +195,8 @@ function parseRequest(args) {
     const attached = args[8];
     requireAttachmentLifecycle(attached);
     const commandArgs = args.slice(9);
-    if (["bridge", "stop", "cleanup"].includes(attached) && commandArgs.length)
-      reject("bridge, stop and cleanup accept no additional arguments");
+    if (["bridge", "stop", "cleanup", "diagnose"].includes(attached) && commandArgs.length)
+      reject("bridge, stop, cleanup and diagnose accept no additional arguments");
     if (["open", "newpage"].includes(attached) && !requestedNavigationTarget(attached, commandArgs))
       reject(`${attached} requires an explicit URL`);
     const unsafeFlag = commandArgs.some((value) => {

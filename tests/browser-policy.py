@@ -109,24 +109,44 @@ class BrowserPolicyContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 78)
         self.assertNotIn("private-marker", result.stdout + result.stderr)
 
-    def available_attachment_task(self):
-        for index in range(100):
-            task = f"multi-origin-{index}"
-            with socket.socket() as probe:
-                try:
-                    probe.bind(("127.0.0.1", self.session_port(task)))
-                    return task
-                except OSError:
-                    continue
-        self.fail("no free synthetic bridge port is available for the multi-origin proof")
+    def available_attachment_task(self, preferred=None, reserve=False):
+        candidates = ([preferred] if preferred is not None else [])
+        candidates.extend(f"multi-origin-{index}" for index in range(1000))
+        for task in candidates:
+            probe = socket.socket()
+            try:
+                probe.bind(("127.0.0.1", self.session_port(task)))
+            except OSError:
+                probe.close()
+                continue
+            if self.session_state_dir(task).exists():
+                probe.close()
+                continue
+            if reserve:
+                self.fixture_port_reservation = probe
+                self.addCleanup(self.release_attachment_port_reservation)
+            else:
+                probe.close()
+            return task
+        self.fail("no free synthetic bridge port is available for the attachment fixture")
 
-    def install_attachment_fixture(self, targets=(), task="attach-check"):
-        self.attachment_task = task
+    def release_attachment_port_reservation(self):
+        reservation = getattr(self, "fixture_port_reservation", None)
+        if reservation is not None:
+            reservation.close()
+            self.fixture_port_reservation = None
+
+    def install_attachment_fixture(self, targets=(), task="attach-check", allow_occupied_port=False):
+        self.release_attachment_port_reservation()
+        self.attachment_task = (
+            task if allow_occupied_port else self.available_attachment_task(task, reserve=True)
+        )
         self.install_fake_packages()
         mcp_entry = self.home / ".npm-global/lib/node_modules/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js"
         mcp_entry.write_text("process.title = 'chrome-devtools-mcp'; setInterval(() => {}, 1000);\n")
         owner = self
         self.probes = []
+        (self.home / 'inspection-calls.jsonl').unlink(missing_ok=True)
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
@@ -152,7 +172,7 @@ class BrowserPolicyContractTests(unittest.TestCase):
         thread.start()
         self.addCleanup(self.cdp.server_close)
         self.addCleanup(self.cdp.shutdown)
-        self.allocation = self.prepare_profile(task=task, targets=targets)
+        self.allocation = self.prepare_profile(task=self.attachment_task, targets=targets)
         self.mock_path = self.home / "mock-inspection.json"
         self.mock = {"receipt": self.allocation["receipt"], "port": self.cdp.server_port,
                      "repo": str(self.repo.resolve()), "browser_pid": 123456789,
@@ -171,8 +191,17 @@ class BrowserPolicyContractTests(unittest.TestCase):
             value = json.loads(pathlib.Path(mock['receipt']).read_text())['value']
             op, *args = sys.argv[1:]
             time.sleep(mock.get('inspection_delay', 0))
+            calls_path = pathlib.Path(os.environ['HOME']) / 'inspection-calls.jsonl'
+            with calls_path.open('a') as calls:
+                calls.write(json.dumps({'op': op, 'args': args}) + '\\n')
             if op == 'record' and int(args[0]) == mock['browser_pid']:
-                result = None if mock.get('browser_gone') else {
+                observed_records = sum(
+                    call['op'] == 'record' and call['args'] == [str(mock['browser_pid'])]
+                    for call in (json.loads(line) for line in calls_path.read_text().splitlines())
+                )
+                gone = mock.get('browser_gone') and not (
+                    mock.get('pid_reappears') and observed_records >= 3)
+                result = None if gone else {
                     'pid': mock['browser_pid'], 'ppid': 1, 'uid': mock.get('browser_uid', os.getuid()),
                     'exe': real.CHROME, 'start': mock['browser_start'],
                     'argv': [real.CHROME, '--disable-sync', '--disable-extensions',
@@ -192,8 +221,15 @@ class BrowserPolicyContractTests(unittest.TestCase):
             elif op == 'trusted-chrome':
                 result = True
             elif op == 'listeners' and int(args[0]) == mock['port']:
-                result = [] if mock.get('browser_gone') else [{'pid': mock.get('listener_pid', mock['browser_pid']),
-                                                           'address': '127.0.0.1:' + str(mock['port'])}]
+                observed_listeners = sum(
+                    call['op'] == 'listeners' and call['args'] == [str(mock['port'])]
+                    for call in (json.loads(line) for line in calls_path.read_text().splitlines())
+                )
+                listener_is_empty = mock.get('browser_gone') and not mock.get('listener_survives') and not (
+                    mock.get('listener_reappears') and observed_listeners >= 2)
+                result = [] if listener_is_empty else [
+                    {'pid': mock.get('listener_pid', mock['browser_pid']),
+                     'address': '127.0.0.1:' + str(mock['port'])}]
             elif op == 'listeners':
                 # Mock the listener seam for the synthetic backend. State is
                 # published by the fake bridge's actual listen callback.
@@ -208,6 +244,11 @@ class BrowserPolicyContractTests(unittest.TestCase):
                 owner = (value.get('binding') or {}).get('owner')
                 guard_pid = owner['guard']['pid'] if owner and pane_id == owner['pane'] else os.getppid()
                 guard = real.record(guard_pid)
+                # An exited bridge is not the current foreground command in its
+                # retained shell. Model the new invocation, not stale ownership.
+                if guard is None:
+                    guard_pid = os.getppid()
+                    guard = real.record(guard_pid)
                 if 'process-info' in args:
                     result = {'process_info': {'pane_id': pane_id, 'shell_pid': guard['ppid'],
                               'foreground_process_group_id': guard['pgid'],
@@ -220,6 +261,14 @@ class BrowserPolicyContractTests(unittest.TestCase):
                     result = {'pane': pane}
             elif op == 'profile-users':
                 result = mock.get('profile_users', [])
+            elif op == 'profile-users-summary':
+                if mock.get('summary_unavailable'):
+                    sys.stderr.write('private-inspector-error-marker')
+                    sys.exit(78)
+                result = mock.get('profile_summary', {
+                    'status': 'complete', 'counts': {'enumerated': 1, 'inspected_same_uid': 1,
+                    'known_foreign_uid': 0, 'confirmed_gone': 0, 'matching_profile': 1, 'unknown_live': 0},
+                    'failures': []})
             else:
                 result = real.main([op, *args])
             print(json.dumps(result))
@@ -352,6 +401,7 @@ class BrowserPolicyContractTests(unittest.TestCase):
         return path
 
     def start_attachment_bridge(self, env=None, timeout=None):
+        self.release_attachment_port_reservation()
         # The public CLI allows three seconds per inspection, then ten seconds
         # for bridge startup. This fixture has 12 preflight inspections and two
         # 10-inspection bridge verification passes, with two preflight HTTP
@@ -485,7 +535,7 @@ class BrowserPolicyContractTests(unittest.TestCase):
         result = self.invoke(*self.attach_args("bridge"), env=self.attach_env())
         self.assertEqual(result.returncode, 78)
         self.assertEqual(self.probes, [])
-        self.assertFalse(self.session_state_dir("attach-check").exists())
+        self.assertFalse(self.session_state_dir(self.attachment_task).exists())
 
     def test_attachment_foreign_endpoint_metadata_is_never_emitted(self):
         self.install_attachment_fixture()
@@ -500,6 +550,236 @@ class BrowserPolicyContractTests(unittest.TestCase):
             self.assertNotIn("private-marker", result.stdout + result.stderr)
             self.assertNotIn("private-title-marker", result.stdout + result.stderr)
         self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
+    def test_attachment_stop_before_binding_is_launch_free_and_scope_independent(self):
+        self.install_attachment_fixture()
+        self.endpoint_override = lambda path, value: (
+            [{"type": "other", "url": "chrome://private-marker/", "title": "private-title-marker"}]
+            if path == "/json/list" else value)
+        result = self.invoke(*self.attach_args("stop"), env=self.attach_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("No owned foreground bridge", result.stdout)
+        self.assertEqual(self.probes, [], "stop must not depend on endpoint readiness")
+        self.assertFalse(self.session_state_dir(self.attachment_task).exists())
+        self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
+    def test_attachment_stop_with_failed_binding_checks_resource_ownership_without_targets(self):
+        self.install_attachment_fixture()
+        self.endpoint_override = lambda path, value: (
+            [{"type": "page", "url": "https://private-marker/"}]
+            if path == "/json/list" else value)
+        self.rewrite_signed_receipt(lambda value: value.update(binding={
+            "pid": self.mock["browser_pid"], "port": self.mock["port"],
+            "start": self.mock["browser_start"], "owner": None, "bridge": None}))
+        result = self.invoke(*self.attach_args("stop"), env=self.attach_env())
+        self.assertEqual(result.returncode, 78)
+        self.assertIn("foreground bridge", result.stderr)
+        self.assertNotIn("non-synthetic target", result.stderr)
+        self.assertEqual(self.probes, [])
+        self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
+    def test_attachment_unbound_stop_retains_busy_allocation(self):
+        self.install_attachment_fixture()
+        lock = pathlib.Path(self.allocation["receipt"]).parent / "lock"
+        lock.mkdir(mode=0o700)
+        result = self.invoke(*self.attach_args("stop"), env=self.attach_env())
+        self.assertEqual(result.returncode, 78)
+        self.assertIn("busy", result.stderr)
+        self.assertTrue(lock.exists())
+        self.assertEqual(self.probes, [])
+
+    def test_attachment_diagnose_after_chrome_exit_is_readonly_and_reports_inventory_without_targets(self):
+        self.install_attachment_fixture()
+        self.mock['browser_gone'] = True
+        expected_inventory = {'status': 'incomplete', 'counts': {
+            'enumerated': 3, 'inspected_same_uid': 2, 'known_foreign_uid': 1,
+            'confirmed_gone': 0, 'matching_profile': 1, 'unknown_live': 1},
+            'failures': [{'stage': 'procargs_read', 'reason': 'unavailable', 'errno': 1, 'count': 1}]}
+        self.mock['profile_summary'] = expected_inventory
+        self.mock_path.write_text(json.dumps(self.mock))
+        receipt = pathlib.Path(self.allocation['receipt'])
+        self.rewrite_signed_receipt(lambda value: value.update(
+            created=value['created'] - 7200001, expires=value['expires'] - 7200001))
+        before = receipt.read_bytes()
+
+        result = self.invoke(*self.attach_args('diagnose'), env=self.attach_env())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report, {
+            'version': 1,
+            'process': {'requested_pid_absent': True},
+            'listener': {'requested_port_empty': True},
+            'targets': {'status': 'not_observed', 'initial_target': 'not_proven'},
+            'inventory': expected_inventory,
+        })
+        self.assertEqual(receipt.read_bytes(), before)
+        self.assertTrue(pathlib.Path(self.allocation['profile']).exists())
+        self.assertEqual(self.probes, [], 'post-stop diagnosis must not request CDP endpoints')
+        self.assertFalse((self.home / 'backend-calls.jsonl').exists())
+        calls = [json.loads(line) for line in (self.home / 'inspection-calls.jsonl').read_text().splitlines()]
+        relevant = [(call['op'], call['args'][0] if call['args'] else None) for call in calls
+                    if (call['op'] == 'record' and call['args'] == [str(self.mock['browser_pid'])])
+                    or (call['op'] == 'listeners' and call['args'] == [str(self.mock['port'])])
+                    or call['op'] == 'profile-users-summary']
+        self.assertEqual(relevant[:6], [
+            ('record', str(self.mock['browser_pid'])),
+            ('record', str(self.mock['browser_pid'])),
+            ('listeners', str(self.mock['port'])),
+            ('profile-users-summary', str(self.allocation['profile'])),
+            ('record', str(self.mock['browser_pid'])),
+            ('listeners', str(self.mock['port'])),
+        ])
+        self.assertEqual(sum(op == 'profile-users-summary' for op, _ in relevant), 1)
+
+    def test_attachment_diagnose_after_exit_refuses_reused_pid_and_nonempty_listener(self):
+        self.install_attachment_fixture(task='diagnose-after-exit-refusal')
+        for condition in ('pid_reappears', 'listener_survives', 'listener_reappears'):
+            with self.subTest(condition=condition):
+                self.mock['browser_gone'] = True
+                self.mock['pid_reappears'] = condition == 'pid_reappears'
+                self.mock['listener_survives'] = condition == 'listener_survives'
+                self.mock['listener_reappears'] = condition == 'listener_reappears'
+                self.mock_path.write_text(json.dumps(self.mock))
+                (self.home / 'inspection-calls.jsonl').unlink(missing_ok=True)
+                self.probes.clear()
+                before = pathlib.Path(self.allocation['receipt']).read_bytes()
+                result = self.invoke(*self.attach_args('diagnose'), env=self.attach_env())
+                self.assertEqual(result.returncode, 78)
+                self.assertEqual(result.stdout, '')
+                self.assertNotIn('private-', result.stderr)
+                self.assertEqual(self.probes, [])
+                self.assertEqual(pathlib.Path(self.allocation['receipt']).read_bytes(), before)
+                self.assertTrue(pathlib.Path(self.allocation['profile']).exists())
+
+    def test_attachment_diagnose_after_exit_checks_allocation_identity_before_inventory(self):
+        self.install_attachment_fixture()
+        receipt = pathlib.Path(self.allocation['receipt'])
+        profile = pathlib.Path(self.allocation['profile'])
+        for invalidation in ('wrong_task', 'wrong_repo', 'receipt_symlink', 'profile_inode'):
+            with self.subTest(invalidation=invalidation):
+                if invalidation == 'wrong_task':
+                    args = self.attach_args('diagnose')
+                    args[1] = 'different-task'
+                    result = self.invoke(*args, env=self.attach_env())
+                elif invalidation == 'wrong_repo':
+                    self.rewrite_signed_receipt(lambda value: value.update(repo=str(self.home)))
+                    result = self.invoke(*self.attach_args('diagnose'), env=self.attach_env())
+                    self.rewrite_signed_receipt(lambda value: value.update(repo=str(self.repo.resolve())))
+                elif invalidation == 'receipt_symlink':
+                    retained = receipt.with_name('retained-receipt.json')
+                    receipt.rename(retained)
+                    receipt.symlink_to(retained)
+                    result = self.invoke(*self.attach_args('diagnose'), env=self.attach_env())
+                    receipt.unlink()
+                    retained.rename(receipt)
+                else:
+                    retained = profile.with_name('retained-profile')
+                    profile.rename(retained)
+                    profile.mkdir(mode=0o700)
+                    result = self.invoke(*self.attach_args('diagnose'), env=self.attach_env())
+                    profile.rmdir()
+                    retained.rename(profile)
+                self.assertEqual(result.returncode, 78)
+                self.assertEqual(result.stdout, '')
+                self.assertFalse((self.home / 'inspection-calls.jsonl').exists())
+                self.assertEqual(self.probes, [])
+
+    def test_attachment_diagnose_classifies_targets_without_releasing_metadata_or_binding(self):
+        self.install_attachment_fixture()
+        self.endpoint_override = lambda path, value: [
+            {"type": "page", "url": "about:blank", "title": "private-title-marker", "id": "private-id-marker"},
+            {"type": "other", "url": "chrome://private-marker/", "title": "private-title-marker"},
+            {"type": "page", "url": "https://private-marker/", "id": "private-id-marker"},
+            {"type": "private-type-marker", "url": "chrome://private-marker/"},
+        ] if path == "/json/list" else value
+        before = pathlib.Path(self.allocation["receipt"]).read_bytes()
+        result = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["targets"], {
+            "status": "blocked", "reason": "scope_refused", "counts": {
+                "permitted_page": 1, "permitted_worker": 0,
+                "internal_page": 0, "internal_non_page": 1,
+                "foreign_target": 1, "unsupported_type": 1, "malformed_target": 0,
+            }})
+        for marker in ["private-marker", "private-title-marker", "private-id-marker", "private-type-marker"]:
+            self.assertNotIn(marker, result.stdout + result.stderr)
+        self.assertEqual(pathlib.Path(self.allocation["receipt"]).read_bytes(), before)
+        self.assertFalse(self.session_state_dir(self.attachment_task).exists())
+        self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
+    def test_attachment_diagnose_reports_inventory_unknown_without_claiming_absence(self):
+        self.install_attachment_fixture()
+        expected = {"status": "incomplete", "counts": {
+            "enumerated": 2, "inspected_same_uid": 2, "known_foreign_uid": 0,
+            "confirmed_gone": 0, "matching_profile": 1, "unknown_live": 1},
+            "failures": [{"stage": "procargs_size", "reason": "unavailable", "errno": 1, "count": 1}]}
+        self.mock["profile_summary"] = {**expected, "argv": ["private-argv-marker"], "env": {"SECRET": "private-env-marker"}}
+        self.mock_path.write_text(json.dumps(self.mock))
+        result = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["inventory"], expected)
+        self.assertNotIn("private-", result.stdout + result.stderr)
+        self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
+    def test_attachment_diagnose_withholds_report_when_profile_identity_changes(self):
+        self.install_attachment_fixture()
+        profile = pathlib.Path(self.allocation["profile"])
+        def replace(path, value):
+            if path == "/json/list":
+                profile.rename(profile.with_name("retained-fixture"))
+                profile.mkdir(mode=0o700)
+            return value
+        self.endpoint_override = replace
+        result = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
+        self.assertEqual(result.returncode, 78)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("profile identity changed", result.stderr)
+
+    def test_attachment_diagnose_keeps_failed_inventory_unknown_without_error_values(self):
+        self.install_attachment_fixture()
+        self.mock["summary_unavailable"] = True
+        self.mock_path.write_text(json.dumps(self.mock))
+        result = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["inventory"], {
+            "status": "incomplete", "counts": None,
+            "failures": [{"stage": "inspector", "reason": "unavailable", "errno": None, "count": 1}]})
+        self.assertNotIn("private-inspector-error-marker", result.stdout + result.stderr)
+
+    def test_attachment_diagnose_and_unbound_stop_refuse_bad_ownership_before_endpoint(self):
+        self.install_attachment_fixture()
+        baseline = self.mock.copy()
+        for override in [
+            {"browser_uid": os.getuid() + 1}, {"browser_start": "1:0"},
+            {"extra_args": ["--user-data-dir=/private-marker"]},
+            {"listener_pid": 999}, {"foreground_cwd": str(self.home)},
+        ]:
+            self.mock_path.write_text(json.dumps({**baseline, **override}))
+            for command in ["diagnose", "stop"]:
+                with self.subTest(override=next(iter(override)), command=command):
+                    result = self.invoke(*self.attach_args(command), env=self.attach_env())
+                    self.assertEqual(result.returncode, 78)
+                    self.assertEqual(result.stdout, "")
+                    self.assertNotIn("private-marker", result.stderr)
+                    self.assertEqual(self.probes, [])
+        self.assertTrue(pathlib.Path(self.allocation["profile"]).exists())
+        self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
+    def test_attachment_diagnose_withholds_report_after_process_identity_changes(self):
+        self.install_attachment_fixture()
+        def change_start(path, value):
+            if path == "/json/list":
+                sec, usec = self.mock["browser_start"].split(":")
+                self.mock["browser_start"] = f"{int(sec) + 1}:{usec}"
+                self.mock_path.write_text(json.dumps(self.mock))
+            return value
+        self.endpoint_override = change_start
+        result = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
+        self.assertEqual(result.returncode, 78)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("process changed", result.stderr)
 
     def test_attachment_requires_foreground_bridge_and_exact_herdr_placement(self):
         self.install_attachment_fixture()
@@ -516,7 +796,7 @@ class BrowserPolicyContractTests(unittest.TestCase):
         self.mock_path.write_text(json.dumps(self.mock))
         result = self.invoke(*self.attach_args("bridge"), env=self.attach_env())
         self.assertEqual(result.returncode, 78)
-        self.assertFalse(self.session_state_dir("attach-check").exists())
+        self.assertFalse(self.session_state_dir(self.attachment_task).exists())
 
     def test_attachment_stale_start_pid_reuse_and_foreign_uid_fail_closed(self):
         self.install_attachment_fixture()
@@ -767,6 +1047,39 @@ class BrowserPolicyContractTests(unittest.TestCase):
         )
         self.assertIsNone(bridge.poll())
 
+    def test_attachment_fixture_uses_an_available_identity_around_an_owned_port(self):
+        task = "attach-check"
+        port = self.session_port(task)
+        with socket.socket() as owner:
+            owner.bind(("127.0.0.1", port))
+            owner.listen()
+            self.install_attachment_fixture(task=task)
+
+            self.assertNotEqual(self.attachment_task, task)
+            bridge = self.start_attachment_bridge()
+            try:
+                self.assertIsNone(bridge.poll())
+                self.assertEqual(owner.getsockname(), ("127.0.0.1", port))
+            finally:
+                bridge.terminate()
+                self.wait_attachment_bridge(bridge)
+
+    def test_attachment_guard_rejects_an_intentionally_occupied_fixture_port(self):
+        task = "attach-check"
+        port = self.session_port(task)
+        with socket.socket() as owner:
+            owner.bind(("127.0.0.1", port))
+            owner.listen()
+            self.install_attachment_fixture(task=task, allow_occupied_port=True)
+
+            result = self.invoke(*self.attach_args("bridge"), env=self.attach_env())
+
+            self.assertEqual(result.returncode, 78)
+            self.assertIn("task bridge state or port already exists", result.stderr)
+            self.assertEqual(owner.getsockname(), ("127.0.0.1", port))
+            self.assertFalse(self.session_state_dir(task).exists())
+            self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
     def test_attachment_lifecycle_includes_bounded_inspection_time(self):
         self.install_attachment_fixture(task=self.available_attachment_task())
         # Each inspection remains below the guard's three-second limit, but
@@ -908,6 +1221,13 @@ class BrowserPolicyContractTests(unittest.TestCase):
         return 9225 + abs(value) % 1000
 
     def invoke(self, *args, cwd=None, env=None):
+        if (
+            len(args) >= 3
+            and args[0] == "--repo-qa"
+            and args[1] == getattr(self, "attachment_task", None)
+            and args[2] == "attach"
+        ):
+            self.release_attachment_port_reservation()
         return subprocess.run(
             [str(LAUNCHER), *args],
             cwd=cwd or self.repo,
@@ -945,6 +1265,15 @@ class BrowserPolicyContractTests(unittest.TestCase):
         self.assertEqual(version_result.returncode, 0, version_result.stderr)
         self.assertIn("0.1.35", version_result.stdout)
         self.assertFalse((self.home / ".chrome-devtools-axi").exists())
+
+    def test_help_explains_metadata_free_diagnosis_and_scope_independent_stop(self):
+        result = self.invoke("--help", cwd=self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("diagnose", result.stdout)
+        self.assertIn("categorical", result.stdout)
+        self.assertRegex(result.stdout, r"not (?:cleanup or )?proof readiness")
+        self.assertIn("No owned bridge", result.stdout)
+        self.assertIn("independent of target", result.stdout)
 
     def test_browser_commands_require_explicit_repository_qa_intent(self):
         self.install_fake_packages()
@@ -1000,6 +1329,29 @@ class BrowserPolicyContractTests(unittest.TestCase):
 
         self.assertFalse((self.home / "backend-calls.jsonl").exists())
         self.assertFalse((self.home / ".chrome-devtools-axi").exists())
+
+    def test_cleanup_requires_current_herdr_caller_before_retirement(self):
+        self.install_attachment_fixture()
+        self.mock["browser_gone"] = True
+        self.mock["profile_users"] = []
+        self.mock_path.write_text(json.dumps(self.mock))
+        receipt = pathlib.Path(self.allocation["receipt"])
+        before = receipt.read_bytes()
+        profile = pathlib.Path(self.allocation["profile"])
+        missing_context = self.env.copy()
+        for key in tuple(missing_context):
+            if key.startswith("HERDR_"):
+                missing_context.pop(key)
+        cases = [missing_context, self.attach_env("wForeign:p1")]
+        for env in cases:
+            with self.subTest(caller=env.get("HERDR_PANE_ID", "absent")):
+                result = self.invoke(*self.attach_args("cleanup"), env=env)
+                self.assertEqual(result.returncode, 78, result.stdout + result.stderr)
+                self.assertTrue(profile.exists())
+                self.assertEqual(receipt.read_bytes(), before)
+        result = self.invoke(*self.attach_args("cleanup"), env=self.attach_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(profile.exists())
 
     def test_attachment_requires_explicit_live_herdr_binding(self):
         self.install_attachment_fixture()

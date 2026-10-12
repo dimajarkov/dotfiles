@@ -1,6 +1,6 @@
 """Exact Darwin process inspection. Never emits the raw process environment.
 
-Only the guard uses this helper's JSON; public diagnostics stay generic.
+Only the guard uses process records; public diagnostics expose fixed categories.
 Unsupported platforms, permissions, and ambiguous kernel observations fail closed.
 """
 
@@ -66,7 +66,7 @@ def control_name(name):
     } or name.lower().startswith("npm_config_")
 
 
-def parse_procargs(data):
+def parse_procargs(data, include_environment=True):
     """KERN_PROCARGS2 is argc, executable NUL padding, argv NULs, then env.
 
     Decode argv exactly, preserving embedded spaces. Filter environment in this
@@ -85,6 +85,8 @@ def parse_procargs(data):
         end = data.index(b"\0", offset)
         argv.append(data[offset:end].decode("utf-8", "strict"))
         offset = end + 1
+    if not include_environment:
+        return argv, {}, []
     env = {}
     names = []
     for token in data[offset:].split(b"\0"):
@@ -182,6 +184,12 @@ def record(pid):
         raise
 
 
+class InventoryObservationError(ValueError):
+    def __init__(self, stage, reason, error_number=None):
+        super().__init__("process inventory identity or arguments unavailable")
+        self.stage, self.reason, self.error_number = stage, reason, error_number
+
+
 def live_info(proc, pid):
     """Fresh kernel observation; unreadable identity is never absence."""
     info = BsdInfo()
@@ -190,7 +198,7 @@ def live_info(proc, pid):
     if size == 0 and ctypes.get_errno() == errno.ESRCH:
         return None
     if size != ctypes.sizeof(info) or info.pid != pid:
-        raise ValueError("process identity unavailable")
+        raise InventoryObservationError("bsdinfo", "unavailable", ctypes.get_errno() or None)
     if info.status == 5:
         return None
     return info
@@ -211,50 +219,150 @@ def listeners(port):
     return result
 
 
-def profile_users(profile):
-    libc, proc = kernel()
-    count = proc.proc_listallpids(None, 0)
-    if count <= 0:
-        raise ValueError("process inventory unavailable")
-    pids = (ctypes.c_int * (count + 1024))()
-    actual = proc.proc_listallpids(pids, ctypes.sizeof(pids))
-    if actual <= 0 or actual >= len(pids):
-        raise ValueError("process inventory changed")
+def profile_argument_matches(argv, profile):
+    """Match only absolute profile arguments; relative paths lack candidate cwd."""
+    canonical_profile = os.path.realpath(profile)
+    matches = False
+    index = 0
+    while index < len(argv):
+        argument = argv[index]
+        if argument == "--user-data-dir":
+            if index + 1 >= len(argv):
+                raise InventoryObservationError("procargs_parse", "unclassified")
+            value = argv[index + 1]
+            index += 2
+        elif argument.startswith("--user-data-dir="):
+            value = argument.partition("=")[2]
+            index += 1
+        else:
+            index += 1
+            continue
+        if not value or not os.path.isabs(value):
+            raise InventoryObservationError("procargs_parse", "unclassified")
+        if os.path.realpath(value) == canonical_profile:
+            matches = True
+    return matches
+
+
+def profile_inventory(profile):
+    """Return users privately and a separate metadata-free completeness report."""
+    summary = {"status": "complete", "counts": {
+        "enumerated": 0, "inspected_same_uid": 0, "known_foreign_uid": 0,
+        "confirmed_gone": 0, "matching_profile": 0, "unknown_live": 0,
+    }, "failures": []}
+    counts = summary["counts"]
+
+    def failed(error):
+        summary["status"] = "incomplete"
+        category = {"stage": "inventory_list", "reason": "unclassified", "errno": None}
+        if isinstance(error, InventoryObservationError):
+            category = {"stage": error.stage, "reason": error.reason, "errno": error.error_number}
+        for failure in summary["failures"]:
+            if all(failure[key] == value for key, value in category.items()):
+                failure["count"] += 1
+                return
+        summary["failures"].append({**category, "count": 1})
+
+    try:
+        libc, proc = kernel()
+    except Exception:
+        failed(InventoryObservationError("inventory_platform", "unsupported"))
+        return [], summary
+    try:
+        ctypes.set_errno(0)
+        count = proc.proc_listallpids(None, 0)
+        if count <= 0:
+            raise InventoryObservationError("inventory_list", "unavailable", ctypes.get_errno() or None)
+        pids = (ctypes.c_int * (count + 1024))()
+        ctypes.set_errno(0)
+        actual = proc.proc_listallpids(pids, ctypes.sizeof(pids))
+        if actual <= 0 or actual >= len(pids):
+            raise InventoryObservationError("inventory_list", "invalid_size", ctypes.get_errno() or None)
+    except Exception as error:
+        failed(error)
+        return [], summary
+    counts["enumerated"] = actual
     users = []
     for pid in pids[:actual]:
+        stage = "bsdinfo"
+        matches_profile = False
         try:
             info = live_info(proc, pid)
-            if info is None or info.uid != os.getuid():
+            if info is None:
+                counts["confirmed_gone"] += 1
                 continue
+            if os.getuid() in (info.uid, info.ruid) and info.uid != info.ruid:
+                counts["inspected_same_uid"] += 1
+                raise InventoryObservationError("bsdinfo", "setuid")
+            if info.uid != os.getuid():
+                stage = "identity_recheck"
+                after = live_info(proc, pid)
+                if after is None:
+                    counts["confirmed_gone"] += 1
+                    continue
+                if (after.start_sec, after.start_usec, after.uid, after.ruid) != (
+                    info.start_sec, info.start_usec, info.uid, info.ruid
+                ):
+                    raise InventoryObservationError(stage, "identity_changed")
+                counts["known_foreign_uid"] += 1
+                continue
+            counts["inspected_same_uid"] += 1
             # Query only same-UID argv in memory; never emit another process's argv.
             mib = (ctypes.c_int * 3)(1, 49, pid)
             length = ctypes.c_size_t()
+            stage = "procargs_size"
+            ctypes.set_errno(0)
             if libc.sysctl(mib, 3, None, ctypes.byref(length), None, 0):
-                raise ValueError("process inventory incomplete")
+                raise InventoryObservationError(stage, "unavailable", ctypes.get_errno() or None)
             if not 0 < length.value <= 2**20:
-                raise ValueError("process inventory unsupported")
+                raise InventoryObservationError(stage, "invalid_size")
             data = ctypes.create_string_buffer(length.value)
+            stage = "procargs_read"
+            ctypes.set_errno(0)
             if libc.sysctl(mib, 3, data, ctypes.byref(length), None, 0):
-                raise ValueError("process inventory changed")
-            argv, _, _ = parse_procargs(data.raw[:length.value])
+                raise InventoryObservationError(stage, "unavailable", ctypes.get_errno() or None)
+            if not 0 < length.value <= len(data):
+                raise InventoryObservationError(stage, "invalid_size")
+            stage = "procargs_parse"
+            argv, _, _ = parse_procargs(data.raw[:length.value], include_environment=False)
+            stage = "identity_recheck"
             after = live_info(proc, pid)
             if after is None:
+                counts["confirmed_gone"] += 1
                 continue
             if (after.start_sec, after.start_usec, after.uid, after.ruid) != (
                 info.start_sec, info.start_usec, info.uid, info.ruid
             ):
-                raise ValueError("process inventory identity changed")
-        except Exception:
+                raise InventoryObservationError(stage, "identity_changed")
+            stage = "procargs_parse"
+            matches_profile = profile_argument_matches(argv, profile)
+        except Exception as error:
             # A PID can exit during inspection. Re-probe before accepting that
             # explanation; a live unreadable/reused PID keeps ownership unknown.
-            if live_info(proc, pid) is None:
+            try:
+                gone = live_info(proc, pid) is None
+            except Exception as reprobe_error:
+                gone = False
+                error = InventoryObservationError("identity_reprobe", "unavailable",
+                    reprobe_error.error_number if isinstance(reprobe_error, InventoryObservationError) else None)
+            if gone:
+                counts["confirmed_gone"] += 1
                 continue
-            raise ValueError("process inventory incomplete")
-        if any(arg.startswith("--user-data-dir=") and os.path.realpath(arg.split("=", 1)[1]) == profile for arg in argv) or any(
-            arg == "--user-data-dir" and i + 1 < len(argv) and os.path.realpath(argv[i + 1]) == profile
-            for i, arg in enumerate(argv)
-        ):
+            counts["unknown_live"] += 1
+            if not isinstance(error, InventoryObservationError):
+                error = InventoryObservationError(stage, "malformed" if stage == "procargs_parse" else "unclassified")
+            failed(error)
+            continue
+        if matches_profile:
             users.append(pid)
+    counts["matching_profile"] = len(users)
+    return users, summary
+
+
+def profile_users(profile):
+    users, summary = profile_inventory(profile)
+    if summary["status"] != "complete":
+        raise ValueError("process inventory incomplete")
     return users
 
 
@@ -276,6 +384,8 @@ def main(args):
         return [int(pid) for pid in command(["/usr/bin/pgrep", "-P", args[1]], empty_ok=True).split()]
     if operation == "profile-users":
         return profile_users(args[1])
+    if operation == "profile-users-summary":
+        return profile_inventory(args[1])[1]
     if operation == "trusted-chrome":
         kernel()
         stat = os.stat(CHROME)

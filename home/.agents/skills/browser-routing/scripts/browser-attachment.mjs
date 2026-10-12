@@ -85,6 +85,7 @@ const ATTACHED_COMMANDS = new Set([
   "bridge",
   "stop",
   "cleanup",
+  "diagnose",
 ]);
 const MAX_BACKEND_OUTPUT_BYTES = 256_000;
 
@@ -451,40 +452,238 @@ function validateVersion(version, port) {
 
 export function validateEndpoint(version, pages, port, origins) {
   validateVersion(version, port);
-  if (
-    !Array.isArray(pages) ||
-    !pages.length ||
-    pages.some(
-      (page) =>
-        !["page", "service_worker", "worker"].includes(page.type) ||
-        !allowedTarget(page.url, origins),
-    ) ||
-    !pages.some((page) => page.type === "page")
-  )
+  if (targetSummary(pages, origins).status !== "ready")
     refuse("owned Chrome contains a foreign or non-synthetic target; no page metadata was emitted");
 }
 
-async function verifyChrome(inspect, allocation, request) {
-  const before = inspect("record", request.pid);
+function targetSummary(pages, origins) {
+  const counts = {
+    permitted_page: 0,
+    permitted_worker: 0,
+    internal_page: 0,
+    internal_non_page: 0,
+    foreign_target: 0,
+    unsupported_type: 0,
+    malformed_target: 0,
+  };
+  if (!Array.isArray(pages)) return { status: "blocked", reason: "invalid_list", counts };
+  for (const page of pages) {
+    if (!page || typeof page.type !== "string" || typeof page.url !== "string") {
+      counts.malformed_target++;
+      continue;
+    }
+    const supported = ["page", "service_worker", "worker"].includes(page.type);
+    if (supported && allowedTarget(page.url, origins)) {
+      counts[page.type === "page" ? "permitted_page" : "permitted_worker"]++;
+    } else if (
+      [
+        "page",
+        "service_worker",
+        "worker",
+        "other",
+        "browser",
+        "tab",
+        "iframe",
+        "background_page",
+        "shared_worker",
+      ].includes(page.type) &&
+      /^(chrome:|chrome-untrusted:|devtools:|about:)/.test(page.url)
+    ) {
+      // Classification only. Internal URLs and every unsupported type still
+      // refuse proof; no Chromium-internal allowlist is inferred from counts.
+      counts[page.type === "page" ? "internal_page" : "internal_non_page"]++;
+    } else if (!supported) {
+      counts.unsupported_type++;
+    } else {
+      counts.foreign_target++;
+    }
+  }
+  const rejected = Object.entries(counts).some(
+    ([key, count]) => !key.startsWith("permitted_") && count,
+  );
+  const reason = rejected ? "scope_refused" : counts.permitted_page ? "ready" : "missing_page";
+  return { status: reason === "ready" ? "ready" : "blocked", reason, counts };
+}
+
+function chromeOwnership(inspect, allocation, request, observed) {
+  const before = observed ?? inspect("record", request.pid);
   const binding = validateChromeRecord(before, allocation.value, request.pid, request.cdpPort);
   if (inspect("trusted-chrome") !== true)
     refuse("installed Chrome signature could not be verified");
   validateListener(inspect("listeners", request.cdpPort), request.pid, request.cdpPort);
+  return { before, binding };
+}
+
+function recheckChromeOwnership(inspect, allocation, request, before) {
+  const after = inspect("record", request.pid);
+  validateChromeRecord(after, allocation.value, request.pid, request.cdpPort);
+  if (after.start !== before.start || JSON.stringify(after.argv) !== JSON.stringify(before.argv))
+    refuse("Chrome process changed during inspection");
+  validateListener(inspect("listeners", request.cdpPort), request.pid, request.cdpPort);
+}
+
+async function verifyChrome(inspect, allocation, request) {
+  const { before, binding } = chromeOwnership(inspect, allocation, request);
   const url = `http://127.0.0.1:${request.cdpPort}`;
   // No endpoint, including /json/version, is read before the kernel checks.
   const version = await readJson(`${url}/json/version`);
   validateVersion(version, request.cdpPort);
   const pages = await readJson(`${url}/json/list`);
   validateEndpoint(version, pages, request.cdpPort, allocation.value.origins);
-  const after = inspect("record", request.pid);
-  if (
-    !after ||
-    after.start !== before.start ||
-    JSON.stringify(after.argv) !== JSON.stringify(before.argv)
-  )
-    refuse("Chrome process changed during inspection");
-  validateListener(inspect("listeners", request.cdpPort), request.pid, request.cdpPort);
+  recheckChromeOwnership(inspect, allocation, request, before);
   return binding;
+}
+
+function assertAllocationCurrent(home, allocation, request) {
+  const current = readAllocation(home, allocation.value.repo, request.task, request.receipt, true);
+  if (JSON.stringify(current.value) !== JSON.stringify(allocation.value))
+    refuse("allocation changed during diagnosis; resources retained");
+}
+
+function assertCallerCurrent(inspect, repo, caller) {
+  const current = callerContext(inspect, repo, false);
+  if (JSON.stringify(current) !== JSON.stringify(caller))
+    refuse("Herdr caller context changed during diagnosis; resources retained");
+}
+
+function assertRequestedProcessAbsent(inspect, request) {
+  if (inspect("record", request.pid) !== null)
+    refuse("requested process is live or its PID was reused; inventory not reported");
+}
+
+function assertRequestedListenerEmpty(inspect, request) {
+  const listeners = inspect("listeners", request.cdpPort);
+  if (!Array.isArray(listeners) || listeners.length)
+    refuse("requested loopback port has a listener; inventory not reported");
+}
+
+function readInventoryDiagnostic(inspect, profile) {
+  let report;
+  try {
+    report = inspect("profile-users-summary", profile);
+  } catch {
+    // Failure to run the bounded inspector is unknown, never zero users.
+  }
+  return report === undefined
+    ? {
+        status: "incomplete",
+        counts: null,
+        failures: [{ stage: "inspector", reason: "unavailable", errno: null, count: 1 }],
+      }
+    : inventorySummary(report);
+}
+
+async function diagnoseAfterChromeExit(home, inspect, allocation, request, caller) {
+  assertAllocationCurrent(home, allocation, request);
+  assertRequestedProcessAbsent(inspect, request);
+  assertRequestedListenerEmpty(inspect, request);
+
+  let inventory;
+  let inventoryError;
+  try {
+    inventory = readInventoryDiagnostic(inspect, allocation.value.profile);
+  } catch (error) {
+    inventoryError = error;
+  }
+
+  // Re-probe absence after inventory, even when the summary itself is unusable.
+  assertRequestedProcessAbsent(inspect, request);
+  assertRequestedListenerEmpty(inspect, request);
+  assertCallerCurrent(inspect, allocation.value.repo, caller);
+  assertAllocationCurrent(home, allocation, request);
+  if (inventoryError) throw inventoryError;
+
+  process.stdout.write(
+    `${JSON.stringify({
+      version: 1,
+      process: { requested_pid_absent: true },
+      listener: { requested_port_empty: true },
+      targets: { status: "not_observed", initial_target: "not_proven" },
+      inventory,
+    })}\n`,
+  );
+  return 0;
+}
+
+async function diagnose(home, inspect, allocation, request, caller) {
+  const observed = inspect("record", request.pid);
+  if (observed === null) return diagnoseAfterChromeExit(home, inspect, allocation, request, caller);
+
+  const { before } = chromeOwnership(inspect, allocation, request, observed);
+  const url = `http://127.0.0.1:${request.cdpPort}`;
+  const version = await readJson(`${url}/json/version`);
+  validateVersion(version, request.cdpPort);
+  const pages = await readJson(`${url}/json/list`);
+  const targets = targetSummary(pages, allocation.value.origins);
+  const inventory = readInventoryDiagnostic(inspect, allocation.value.profile);
+  recheckChromeOwnership(inspect, allocation, request, before);
+  assertCallerCurrent(inspect, allocation.value.repo, caller);
+  assertAllocationCurrent(home, allocation, request);
+  process.stdout.write(
+    `${JSON.stringify({ version: 1, ownership: "verified", targets, inventory })}\n`,
+  );
+  return 0;
+}
+
+function inventorySummary(report) {
+  const stages = [
+    "inventory_platform",
+    "inventory_list",
+    "bsdinfo",
+    "procargs_size",
+    "procargs_read",
+    "procargs_parse",
+    "identity_recheck",
+    "identity_reprobe",
+  ];
+  const reasons = [
+    "unsupported",
+    "unavailable",
+    "invalid_size",
+    "setuid",
+    "identity_changed",
+    "malformed",
+    "unclassified",
+  ];
+  const keys = [
+    "enumerated",
+    "inspected_same_uid",
+    "known_foreign_uid",
+    "confirmed_gone",
+    "matching_profile",
+    "unknown_live",
+  ];
+  const integer = (value) => Number.isSafeInteger(value) && value >= 0;
+  if (
+    !["complete", "incomplete"].includes(report?.status) ||
+    !keys.every((key) => integer(report.counts?.[key])) ||
+    !Array.isArray(report.failures) ||
+    report.failures.length > 512
+  )
+    refuse("profile inventory diagnostic is unavailable; resources retained");
+  const failures = report.failures.map((failure) => {
+    if (
+      !stages.includes(failure?.stage) ||
+      !reasons.includes(failure.reason) ||
+      !(failure.errno === null || (integer(failure.errno) && failure.errno <= 4095)) ||
+      !integer(failure.count) ||
+      !failure.count
+    )
+      refuse("profile inventory diagnostic is unavailable; resources retained");
+    return {
+      stage: failure.stage,
+      reason: failure.reason,
+      errno: failure.errno,
+      count: failure.count,
+    };
+  });
+  if (report.status === "complete" && (failures.length || report.counts.unknown_live))
+    refuse("profile inventory diagnostic is inconsistent; resources retained");
+  return {
+    status: report.status,
+    counts: Object.fromEntries(keys.map((key) => [key, report.counts[key]])),
+    failures,
+  };
 }
 
 function paneMetadata(inspect, session, pane) {
@@ -646,6 +845,7 @@ async function verifyBridge(
   repo,
   caller,
   api,
+  requireReadiness = true,
 ) {
   const binding = allocation.value.binding;
   if (!binding?.owner || !binding.bridge)
@@ -702,9 +902,11 @@ async function verifyBridge(
     refuse("foreground bridge is not using only the pinned external Chrome MCP child");
   checkBridgeEnvironment(children[0], ownerEnv);
   validateListener(inspect("listeners", identity.port), bridge.pid, identity.port);
-  const health = await readJson(`http://127.0.0.1:${identity.port}/health?deep=1`);
-  if (health.status !== "ok" || health.session !== identity.session || health.pageIdentityChanged)
-    refuse("foreground bridge is unhealthy or reconnected; prepare a fresh proof");
+  if (requireReadiness) {
+    const health = await readJson(`http://127.0.0.1:${identity.port}/health?deep=1`);
+    if (health.status !== "ok" || health.session !== identity.session || health.pageIdentityChanged)
+      refuse("foreground bridge is unhealthy or reconnected; prepare a fresh proof");
+  }
   if (inspect("record", bridge.pid)?.start !== bridge.start)
     refuse("foreground bridge changed during its health probe");
   validateListener(inspect("listeners", identity.port), bridge.pid, identity.port);
@@ -1029,11 +1231,16 @@ async function runAttachmentLocked(home, repo, request, api) {
     repo,
     request.task,
     request.receipt,
-    ["cleanup", "stop"].includes(request.command),
+    ["cleanup", "stop", "diagnose"].includes(request.command),
   );
   if (realpathSync.native(process.cwd()) !== repo)
     refuse("attachment requires the physical Git root as current directory");
-  if (request.command === "cleanup") return cleanup(inspector(), allocation, request);
+  const inspect = inspector();
+  if (request.command === "cleanup") {
+    // Expired allocations identify retained resources, not stale caller authority.
+    callerContext(inspect, repo, false);
+    return cleanup(inspect, allocation, request);
+  }
   if (
     ["open", "newpage"].includes(request.command) &&
     !allowedTarget(
@@ -1042,11 +1249,36 @@ async function runAttachmentLocked(home, repo, request, api) {
     )
   )
     refuse("navigation is outside this allocation's exact synthetic loopback target");
-  const inspect = inspector();
+  if (request.command === "diagnose") {
+    const caller = callerContext(inspect, repo, false);
+    return diagnose(home, inspect, allocation, request, caller);
+  }
   if (typeof nodeModule.registerHooks !== "function")
     refuse("this Node runtime cannot guard the pinned backend lifecycle");
   const owner = callerContext(inspect, repo, request.command === "bridge");
   const identity = api.makeIdentity(home, repo, request.task);
+  if (request.command === "stop" && !allocation.value.binding) {
+    const { before } = chromeOwnership(inspect, allocation, request);
+    const unbound = () => {
+      try {
+        lstatSync(join(dirname(request.receipt), "lock"));
+        refuse("allocation is busy or retains a failed proof lock; resources retained");
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      if (api.stateExists(home, identity.stateDir) || inspect("listeners", identity.port).length)
+        refuse("unbound task has bridge state or a listener; resources retained");
+      const current = readAllocation(home, repo, request.task, request.receipt, true);
+      if (current.value.binding) refuse("allocation acquired a proof binding; resources retained");
+    };
+    unbound();
+    recheckChromeOwnership(inspect, allocation, request, before);
+    unbound();
+    process.stdout.write(
+      "No owned foreground bridge was created; externally owned Chrome and profile retained.\n",
+    );
+    return 0;
+  }
   const backend = api.checkedPackage(
     home,
     "chrome-devtools-axi",
@@ -1078,10 +1310,13 @@ async function runAttachmentLocked(home, repo, request, api) {
       owner,
       api,
     );
+  let verifiedBridge;
   const verify = async () => {
     readAllocation(home, repo, request.task, request.receipt, request.command === "stop");
-    await verifyChrome(inspect, allocation, request);
-    await verifyBridge(
+    const stopping = request.command === "stop";
+    const chrome = stopping ? chromeOwnership(inspect, allocation, request) : undefined;
+    if (!stopping) await verifyChrome(inspect, allocation, request);
+    verifiedBridge = await verifyBridge(
       inspect,
       allocation,
       request,
@@ -1092,12 +1327,14 @@ async function runAttachmentLocked(home, repo, request, api) {
       repo,
       owner,
       api,
+      !stopping,
     );
+    if (stopping) recheckChromeOwnership(inspect, allocation, request, chrome.before);
     return identity.port;
   };
   await verify();
   if (request.command === "stop") {
-    await stopOwnedBridge(inspect, inspect("record", allocation.value.binding.bridge.pid));
+    await stopOwnedBridge(inspect, verifiedBridge);
     if (inspect("listeners", identity.port).length)
       refuse("bridge listener survived stop; resources retained");
     process.stdout.write(
@@ -1115,7 +1352,7 @@ export async function runAttachment(home, repo, request, api) {
     repo,
     request.task,
     request.receipt,
-    ["cleanup", "stop"].includes(request.command),
+    ["cleanup", "stop", "diagnose"].includes(request.command),
   );
   if (!["bridge", "cleanup"].includes(request.command))
     return runAttachmentLocked(home, repo, request, api);
