@@ -99,7 +99,9 @@ Its retained root is `/private/tmp/hunk-bash-repair-hx0gli5g/roots/profile`.
 Its `bin/bash` resolves to `/nix/store/42qfy5a6fhfa3fk2krvpx1ifzw5kb4wm-bash-interactive-5.3p16/bin/bash`.
 Its wrapper interpreter is `/nix/store/wd2ys7yi9ns7fwvlrkq3mgimi2j69da4-bash-5.3p16/bin/bash`.
 The one-bin audit with that profile first selects repaired Nix Bash and also reports the retained p9 user/per-user/system routes and `/bin/bash`.
-Those duplicates are retained for rollback; the live global routes remain p9 because activation is outside this maintenance scope.
+Those duplicates were retained for rollback, and this maintenance phase did not change live global routes.
+The subsequent authorized feature-only activation selects repaired Bash 5.3p16 in fresh login shells while retaining the old p9 routes.
+See [installed finalization state](hunk-turn-review-finalization.md) for the exact transferred profile, live health, and remaining human acceptance.
 
 ## Regression and native proof
 

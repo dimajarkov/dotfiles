@@ -115,7 +115,13 @@ The profile provides `bin/bash`; Home Manager omits its separate Bash package wh
 The Codex wrapper and installed PATH hook select repaired Bash for unchanged generated Herdr hooks.
 The 48 heredoc cases, 31 core, 40 UI, 29 SDK/Codex, 29 native installer, 26 migration cases, and all four native Codex/Pi direct/default workflows pass.
 See [current finalization evidence](implementation/hunk-turn-review-finalization.md) and [Bash source/owner evidence](implementation/hunk-bash-heredoc-diagnosis.md) for exact paths, hashes, commands, and preservation receipts.
-This was source-only package maintenance; dotfiles staging, commits, transfer, production activation, and global PATH writes have not occurred.
+After the reviewed source-only maintenance, feature commit `fe21f6a1` was transferred to primary `master` while preserving unrelated work.
+The exact transferred profile `/nix/store/f9r36kbxbb5s0myp7sbi9yrm6z00i889-hunk-turn-review-profile-1.0.0` passed all eight newly rooted checks, the whole-flake check, byte/provenance/type comparisons, and four repeated native synthetic workflows.
+Its feature-only activation succeeded against the approved existing acceptance socket.
+Launchd `dev.dmitri.hunk-turn-review` is running the exact packaged runtime, and a fresh public protocol health check passed.
+Fresh login shells select the installed Nix profile for Bash 5.3p16, Hunk 0.23.0, Pi 1.1.0, Codex orchestration, and the control CLI.
+The existing Codex credential entrypoint/configuration and all original panes are preserved.
+Installation is healthy; native production hook/TUI trust and rendered terminal acceptance remain human steps.
 The existing p9 routes and old installations are retained for rollback, and both Treehouse leases remain held.
 The earlier [native acceptance record](implementation/hunk-turn-review-live-acceptance.md) preserves historical joint-workflow results separately.
 [Historical packaging evidence](implementation/hunk-turn-review-packaging-evidence.md) retains earlier red/green checks, host provenance, and safety-maintenance records.
