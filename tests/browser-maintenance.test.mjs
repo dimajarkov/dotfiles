@@ -5,6 +5,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   statSync,
@@ -122,6 +124,69 @@ test("public preparation remains private and launch-free with locally neutralize
     assert.equal(statSync(prepared.profile).mode & 0o777, 0o700);
     assert.equal(statSync(prepared.receipt).mode & 0o777, 0o600);
     assert.equal(result.stdout.includes("/private/test-existing-profile"), false);
+  } finally {
+    f.dispose();
+  }
+});
+
+test("a retained old allocation does not block a fresh task-scoped allocation", () => {
+  const f = fixture();
+  try {
+    const old = prepareProfile(f.home, root, "old-task", []);
+    const oldDirectory = dirname(old.receipt);
+    const marker = join(old.profile, ".cleanup-failed");
+    const lock = join(oldDirectory, "lock");
+    const lockOwner = join(lock, "owner.json");
+    const state = join(oldDirectory, "state.json");
+    writeFileSync(marker, "synthetic retained marker\n", { mode: 0o600 });
+    mkdirSync(lock, { mode: 0o700 });
+    writeFileSync(lockOwner, "synthetic lock owner\n", { mode: 0o600 });
+    writeFileSync(state, "synthetic retained state\n", { mode: 0o600 });
+
+    const oldAllocation = readAllocation(f.home, root, "old-task", old.receipt);
+    assert.equal(oldAllocation.value.task, "old-task");
+    const retained = {
+      receipt: readFileSync(old.receipt),
+      lock: statSync(lock),
+      lockOwner: readFileSync(lockOwner),
+      state: readFileSync(state),
+      marker: readFileSync(marker),
+    };
+    const oldProfile = statSync(old.profile);
+    const fresh = prepareProfile(f.home, root, "new-task", []);
+    const freshProfile = statSync(fresh.profile);
+    const allocation = readAllocation(f.home, root, "new-task", fresh.receipt);
+
+    assert.notEqual(dirname(fresh.receipt), oldDirectory);
+    assert.notEqual(allocation.value.token, oldAllocation.value.token);
+    assert.notEqual(fresh.profile, old.profile);
+    assert.notDeepEqual(
+      { dev: freshProfile.dev, ino: freshProfile.ino },
+      { dev: oldProfile.dev, ino: oldProfile.ino },
+    );
+    assert.deepEqual(
+      readdirSync(fresh.profile),
+      [],
+      "fresh profile is empty, not copied or reused",
+    );
+    assert.equal(freshProfile.mode & 0o777, 0o700);
+    assert.equal(statSync(fresh.receipt).mode & 0o777, 0o600);
+    assert.deepEqual(
+      { repo: allocation.value.repo, task: allocation.value.task, uid: allocation.value.uid },
+      { repo: root, task: "new-task", uid: process.getuid() },
+    );
+    assert.throws(
+      () => readAllocation(f.home, root, "new-task", old.receipt),
+      /does not belong to this repository, task, or UID/,
+    );
+
+    assert.deepEqual(readFileSync(old.receipt), retained.receipt);
+    assert.equal(statSync(lock).ino, retained.lock.ino);
+    assert.equal(statSync(lock).dev, retained.lock.dev);
+    assert.equal(statSync(lock).mode, retained.lock.mode);
+    assert.deepEqual(readFileSync(lockOwner), retained.lockOwner);
+    assert.deepEqual(readFileSync(state), retained.state);
+    assert.deepEqual(readFileSync(marker), retained.marker);
   } finally {
     f.dispose();
   }
