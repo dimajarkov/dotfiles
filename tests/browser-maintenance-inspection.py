@@ -28,6 +28,94 @@ class ProfileInventoryTests(unittest.TestCase):
                 return inspection.main(["profile-users-summary", profile])
             return inspection.profile_users(profile)
 
+    def test_actual_permission_and_setuid_categories_keep_retirement_blocked(self):
+        # Reproduce the approved diagnostic's category counts using synthetic
+        # kernel observations only. No host process inventory or argv is read.
+        same_uid_count, denied_count = 1339, 188
+        synthetic_pids = tuple(range(10000, 10000 + same_uid_count + denied_count))
+        setuid_pid = synthetic_pids[same_uid_count - 1]
+        denied_pids = set(synthetic_pids[same_uid_count:])
+        def list_pids(output, _size):
+            if output is not None:
+                for index, pid in enumerate(synthetic_pids):
+                    output[index] = pid
+            return len(synthetic_pids)
+        def probe(pid, _flavor, _arg, output, size):
+            if pid in denied_pids:
+                ctypes.set_errno(errno.EPERM)
+                return 0
+            info = output._obj
+            info.pid, info.uid, info.ruid, info.status = pid, os.getuid(), os.getuid(), 2
+            if pid == setuid_pid:
+                info.uid += 1000
+            info.start_sec, info.start_usec = 700, pid
+            return size
+        proc = SimpleNamespace(proc_listallpids=list_pids, proc_pidinfo=probe)
+        libc = self.profile_arguments(arguments=())
+        with patch.object(inspection, "kernel", return_value=(libc, proc)):
+            summary = inspection.main(["profile-users-summary", "/private/tmp/owned-profile"])
+            self.assertEqual(summary, {
+                "status": "incomplete",
+                "counts": {"enumerated": 1527, "inspected_same_uid": 1339,
+                           "known_foreign_uid": 0, "confirmed_gone": 0,
+                           "matching_profile": 0, "unknown_live": 189},
+                "failures": [
+                    {"stage": "bsdinfo", "reason": "setuid", "errno": None, "count": 1},
+                    {"stage": "bsdinfo", "reason": "unavailable", "errno": errno.EPERM, "count": 188},
+                    {"stage": "identity_reprobe", "reason": "unavailable", "errno": errno.EPERM, "count": 188},
+                ],
+            })
+            with self.assertRaisesRegex(ValueError, "inventory incomplete"):
+                inspection.profile_users("/private/tmp/owned-profile")
+        self.assertNotIn("/private", str(summary))
+
+    def test_reprobe_denial_preserves_primary_bsdinfo_failure(self):
+        def probe(_pid, _flavor, _arg, _output, _size):
+            ctypes.set_errno(errno.EPERM)
+            return 0
+
+        summary = self.inventory(probe, summary=True)
+        self.assertEqual(summary["counts"], {
+            "enumerated": 1, "inspected_same_uid": 0, "known_foreign_uid": 0,
+            "confirmed_gone": 0, "matching_profile": 0, "unknown_live": 1,
+        })
+        self.assertEqual(summary["failures"], [
+            {"stage": "bsdinfo", "reason": "unavailable", "errno": errno.EPERM, "count": 1},
+            {"stage": "identity_reprobe", "reason": "unavailable", "errno": errno.EPERM, "count": 1},
+        ])
+        with self.assertRaisesRegex(ValueError, "inventory incomplete"):
+            self.inventory(probe)
+
+    def test_reprobe_denial_preserves_primary_procargs_stage_and_errno(self):
+        calls = 0
+
+        def probe(pid, _flavor, _arg, output, size):
+            nonlocal calls
+            calls += 1
+            if calls > 1:
+                ctypes.set_errno(errno.EPERM)
+                return 0
+            info = output._obj
+            info.pid, info.uid, info.ruid, info.status = pid, os.getuid(), os.getuid(), 2
+            info.start_sec, info.start_usec = 700, 3
+            return size
+
+        def denied_sysctl(*_args):
+            ctypes.set_errno(errno.EACCES)
+            return -1
+
+        summary = self.inventory(probe, SimpleNamespace(sysctl=denied_sysctl), summary=True)
+        self.assertEqual(summary["counts"], {
+            "enumerated": 1, "inspected_same_uid": 1, "known_foreign_uid": 0,
+            "confirmed_gone": 0, "matching_profile": 0, "unknown_live": 1,
+        })
+        self.assertEqual(summary["failures"], [
+            {"stage": "procargs_size", "reason": "unavailable", "errno": errno.EACCES, "count": 1},
+            {"stage": "identity_reprobe", "reason": "unavailable", "errno": errno.EPERM, "count": 1},
+        ])
+        with self.assertRaisesRegex(ValueError, "inventory incomplete"):
+            self.inventory(probe, SimpleNamespace(sysctl=denied_sysctl))
+
     def test_diagnostic_live_procargs_permission_denied_is_categorical_and_incomplete(self):
         def probe(pid, _flavor, _arg, output, size):
             info = output._obj

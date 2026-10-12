@@ -714,7 +714,10 @@ class BrowserPolicyContractTests(unittest.TestCase):
         expected = {"status": "incomplete", "counts": {
             "enumerated": 2, "inspected_same_uid": 2, "known_foreign_uid": 0,
             "confirmed_gone": 0, "matching_profile": 1, "unknown_live": 1},
-            "failures": [{"stage": "procargs_size", "reason": "unavailable", "errno": 1, "count": 1}]}
+            "failures": [
+                {"stage": "procargs_size", "reason": "unavailable", "errno": 1, "count": 1},
+                {"stage": "identity_reprobe", "reason": "unavailable", "errno": 1, "count": 1},
+            ]}
         self.mock["profile_summary"] = {**expected, "argv": ["private-argv-marker"], "env": {"SECRET": "private-env-marker"}}
         self.mock_path.write_text(json.dumps(self.mock))
         result = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
@@ -1274,6 +1277,8 @@ class BrowserPolicyContractTests(unittest.TestCase):
         self.assertRegex(result.stdout, r"not (?:cleanup or )?proof readiness")
         self.assertIn("No owned bridge", result.stdout)
         self.assertIn("independent of target", result.stdout)
+        self.assertIn("Permission-denied and mixed-UID entries stay UNKNOWN", result.stdout)
+        self.assertIn("primary/reprobe observations and may overlap", result.stdout)
 
     def test_browser_commands_require_explicit_repository_qa_intent(self):
         self.install_fake_packages()

@@ -192,6 +192,9 @@ class InventoryObservationError(ValueError):
 
 def live_info(proc, pid):
     """Fresh kernel observation; unreadable identity is never absence."""
+    # Flavor 3 is PROC_PIDTBSDINFO, subject to MAC/effective-UID access checks.
+    # EPERM proves neither foreign UID nor exit. Short BSD info lacks start time
+    # and cannot replace this identity contract merely to bypass that refusal.
     info = BsdInfo()
     ctypes.set_errno(0)
     size = proc.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info))
@@ -339,19 +342,24 @@ def profile_inventory(profile):
         except Exception as error:
             # A PID can exit during inspection. Re-probe before accepting that
             # explanation; a live unreadable/reused PID keeps ownership unknown.
+            if not isinstance(error, InventoryObservationError):
+                error = InventoryObservationError(stage,
+                    "malformed" if stage == "procargs_parse" else "unclassified")
+            primary_error = error
+            reprobe_failure = None
             try:
                 gone = live_info(proc, pid) is None
             except Exception as reprobe_error:
                 gone = False
-                error = InventoryObservationError("identity_reprobe", "unavailable",
+                reprobe_failure = InventoryObservationError("identity_reprobe", "unavailable",
                     reprobe_error.error_number if isinstance(reprobe_error, InventoryObservationError) else None)
             if gone:
                 counts["confirmed_gone"] += 1
                 continue
             counts["unknown_live"] += 1
-            if not isinstance(error, InventoryObservationError):
-                error = InventoryObservationError(stage, "malformed" if stage == "procargs_parse" else "unclassified")
-            failed(error)
+            failed(primary_error)
+            if reprobe_failure is not None:
+                failed(reprobe_failure)
             continue
         if matches_profile:
             users.append(pid)
