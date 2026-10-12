@@ -546,6 +546,18 @@ function assertCallerCurrent(inspect, repo, caller) {
     refuse("Herdr caller context changed during diagnosis; resources retained");
 }
 
+function assertCallerWorkspace(allocation, caller) {
+  const binding = allocation.value.binding;
+  const workspace = binding?.owner?.workspace;
+  if (
+    binding === undefined ||
+    (binding !== null && (!/^w[A-Za-z0-9]+$/.test(workspace || "") || !binding.owner))
+  )
+    refuse("allocation foreground bridge owner workspace is invalid");
+  if (binding !== null && caller.workspace !== workspace)
+    refuse("caller is outside the foreground bridge's owned Herdr workspace");
+}
+
 function assertRequestedProcessAbsent(inspect, request) {
   if (inspect("record", request.pid) !== null)
     refuse("requested process is live or its PID was reused; inventory not reported");
@@ -1238,7 +1250,8 @@ async function runAttachmentLocked(home, repo, request, api) {
   const inspect = inspector();
   if (request.command === "cleanup") {
     // Expired allocations identify retained resources, not stale caller authority.
-    callerContext(inspect, repo, false);
+    const caller = callerContext(inspect, repo, false);
+    assertCallerWorkspace(allocation, caller);
     return cleanup(inspect, allocation, request);
   }
   if (
@@ -1251,11 +1264,13 @@ async function runAttachmentLocked(home, repo, request, api) {
     refuse("navigation is outside this allocation's exact synthetic loopback target");
   if (request.command === "diagnose") {
     const caller = callerContext(inspect, repo, false);
+    assertCallerWorkspace(allocation, caller);
     return diagnose(home, inspect, allocation, request, caller);
   }
   if (typeof nodeModule.registerHooks !== "function")
     refuse("this Node runtime cannot guard the pinned backend lifecycle");
   const owner = callerContext(inspect, repo, request.command === "bridge");
+  assertCallerWorkspace(allocation, owner);
   const identity = api.makeIdentity(home, repo, request.task);
   if (request.command === "stop" && !allocation.value.binding) {
     const { before } = chromeOwnership(inspect, allocation, request);

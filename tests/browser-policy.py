@@ -784,6 +784,52 @@ class BrowserPolicyContractTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("process changed", result.stderr)
 
+    def test_attachment_wrong_workspace_refuses_before_chrome_metadata_or_backend(self):
+        self.install_attachment_fixture()
+        owner = {
+            "session": "qa", "workspace": "wA", "tab": "wA:t1", "pane": "wA:p1",
+            "guard": {"pid": self.mock["shell_pid"], "start": "1:1"},
+            "shell": {"pid": self.mock["shell_pid"], "start": "1:1"},
+        }
+        self.rewrite_signed_receipt(lambda value: value.update(binding={
+            "pid": self.mock["browser_pid"], "port": self.mock["port"],
+            "start": self.mock["browser_start"], "owner": owner,
+            "bridge": {"pid": self.mock["shell_pid"], "start": "1:1"},
+        }))
+        receipt = pathlib.Path(self.allocation["receipt"])
+        before = receipt.read_bytes()
+        env = self.attach_env("wB:p2")
+        env.update({"HERDR_WORKSPACE_ID": "wB", "HERDR_TAB_ID": "wB:t1"})
+
+        for command in ("snapshot", "diagnose"):
+            with self.subTest(command=command):
+                self.probes.clear()
+                result = self.invoke(*self.attach_args(command), env=env)
+
+                self.assertEqual(result.returncode, 78)
+                self.assertIn("workspace", result.stderr)
+                self.assertEqual(self.probes, [], "wrong-workspace caller must not read Chrome endpoints")
+                self.assertFalse((self.home / "backend-calls.jsonl").exists())
+                self.assertFalse((self.home / "detached-fallback").exists())
+                self.assertFalse(self.session_state_dir(self.attachment_task).exists())
+                self.assertEqual(receipt.read_bytes(), before)
+
+        malformed_owner = {key: value for key, value in owner.items() if key != "workspace"}
+        self.rewrite_signed_receipt(lambda value: value.update(binding={
+            "pid": self.mock["browser_pid"], "port": self.mock["port"],
+            "start": self.mock["browser_start"], "owner": malformed_owner,
+            "bridge": {"pid": self.mock["shell_pid"], "start": "1:1"},
+        }))
+        before = receipt.read_bytes()
+        self.probes.clear()
+        result = self.invoke(*self.attach_args("snapshot"), env=self.attach_env("wA:p2"))
+
+        self.assertEqual(result.returncode, 78)
+        self.assertIn("owner workspace is invalid", result.stderr)
+        self.assertEqual(self.probes, [])
+        self.assertFalse((self.home / "backend-calls.jsonl").exists())
+        self.assertEqual(receipt.read_bytes(), before)
+
     def test_attachment_requires_foreground_bridge_and_exact_herdr_placement(self):
         self.install_attachment_fixture()
         result = self.invoke(*self.attach_args(), env=self.attach_env())
@@ -814,11 +860,15 @@ class BrowserPolicyContractTests(unittest.TestCase):
         result = self.invoke(*self.attach_args("bridge"), env=self.attach_env())
         self.assertEqual(result.returncode, 78)
         self.assertEqual(self.probes, [])
+        owner = {"session": "qa", "workspace": "wA", "tab": "wA:t1", "pane": "wA:p1",
+                 "guard": {"pid": self.mock["shell_pid"], "start": "1:1"},
+                 "shell": {"pid": self.mock["shell_pid"], "start": "1:1"}}
         self.rewrite_signed_receipt(lambda value: value.update(binding={"pid": self.mock["browser_pid"],
-            "port": self.mock["port"], "start": "1:1"}))
+            "port": self.mock["port"], "start": "1:1", "owner": owner,
+            "bridge": {"pid": self.mock["shell_pid"], "start": "1:1"}}))
         self.mock["browser_start"] = f"{int(time.time())}:{int(time.time() % 1 * 1000000)}"
         self.mock_path.write_text(json.dumps(self.mock))
-        result = self.invoke(*self.attach_args(), env=self.attach_env())
+        result = self.invoke(*self.attach_args(), env=self.attach_env("wA:p2"))
         self.assertEqual(result.returncode, 78)
         self.assertIn("reused PID", result.stderr)
         self.assertFalse((self.home / "backend-calls.jsonl").exists())
