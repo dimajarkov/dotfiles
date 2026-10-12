@@ -1,21 +1,40 @@
 ---
 name: web-debug
-description: "Debug or verify frontend behavior in a live page using chrome-devtools-axi. Use for broken login/auth, failed or 401/403/CORS requests, JWT/session issues, forms or buttons doing nothing, blank screens, hydration mismatches, stale data, local/production differences, and end-to-end verification of frontend changes."
+description: "Diagnose live frontend auth, requests, forms, rendering, or stale-state failures through the approved browser route. Use guarded isolated Chrome diagnostics for synthetic QA and Codex Computer Use for rendered/native behavior; preserve Zen-specific routing."
 ---
 
 # Web debugging via the live page
 
-First read `~/.agents/skills/browser-routing/SKILL.md` for browser selection and tool routing.
-Use the globally configured `chrome-devtools-axi` command for the browser backend, invocation, session ownership, and fallback policy.
-Reproduce the user's failing flow in Axi before theorizing from source or asking the user to inspect devtools.
+First read `~/.agents/skills/browser-routing/SKILL.md` for browser selection, task/profile ownership, and evidence scope.
+For approved synthetic Chrome QA, use the guarded public `chrome-devtools-axi` command and the repository's supported runtime/authentication commands.
+A guard refusal is a stop condition, not permission to call the installed backend directly, attach to personal Chrome, or enable a persistent Pi browser profile.
+For a Zen-specific failure, reproduce in Zen through Codex Computer Use and inspect Zen's own Developer Tools; Chrome results do not establish Zen behavior.
+Use Codex Computer Use for rendered end-user behavior and visual/native checks, with any narrower repository proof mechanism applied through its owner.
+
+## Guarded session invocation
+
+Read `chrome-devtools-axi --help`, prepare a fresh task profile with the exact loopback origins, and let the repository runtime owner launch Chrome and the foreground bridge through their supported proof commands.
+Bind the values returned by that allocation and the verified owned process, then use this shell-local helper for every diagnostic invocation:
+
+```sh
+qa() {
+  chrome-devtools-axi --repo-qa "$QA_TASK" attach "$QA_RECEIPT" \
+    --pid "$QA_CHROME_PID" --port "$QA_CDP_PORT" "$@"
+}
+```
+
+`QA_TASK`, `QA_RECEIPT`, `QA_CHROME_PID`, and `QA_CDP_PORT` identify that one verified proof, not a default browser or arbitrary endpoint.
+The helper delegates to the guard; it neither launches a bridge nor bypasses ownership, authentication, or approval checks.
 
 ## Core loop
 
-1. `chrome-devtools-axi open <url>` and inspect the snapshot.
-2. Reproduce with `fill @<uid> <text>`, `click @<uid>`, or other commands using refs from the current snapshot.
-3. Inspect `console --type error --limit 20` and `network --limit 50`.
-4. Use `network-get <id>` or `console-get <id>` for relevant details and `eval '<expression>'` for runtime state.
-5. Form a falsifiable hypothesis, change the code, and replay the same flow with an observable pass/fail assertion.
+1. Establish the guarded task-owned Chrome session before `qa open <url>` and inspect the expected synthetic page.
+2. Reproduce interactively through the approved route and verify the rendered state after each action.
+   Where the repository explicitly permits CDP interaction, use fresh snapshot refs for `fill`, `click`, and other commands.
+3. Inspect bounded `console --type error --limit 20` and `network --limit 50` diagnostics.
+4. Inspect only necessary privacy-safe request details or non-secret runtime claims through the supported diagnostic commands.
+5. Form a falsifiable hypothesis, change the code, and replay the real flow with an observable pass/fail assertion.
+   Label the observed browser; do not add an unrelated Zen acceptance gate to a Chrome QA task.
 
 Keep the same cwd and session identity between calls.
 Do not stop the browser between reproduction and verification.
@@ -25,25 +44,25 @@ Use `<command> --help` rather than translating Playwright selectors or buffer fl
 
 ### Login, requests, and storage
 
-Navigate to the login page, fill the fields using current snapshot refs, submit, and inspect the auth request and console.
-Check whether expected storage keys exist without dumping credentials:
+Use the repository-owned authentication flow for its approved synthetic subject and target; preserve normal application authorization.
+For Arena CRM, load the owner `docs/references/tools/browser-tools/auth-and-local-state.md` before authenticating.
+A failed helper is a blocker, not permission for manual QA-password entry, generic cookie signing, or reuse of an existing session.
+Inspect the auth request's safe status and console, then check expected storage keys without dumping credentials:
 
 ```sh
-chrome-devtools-axi eval 'Object.keys(localStorage)'
-chrome-devtools-axi network --type fetch --limit 50
-# Use the actual request ID from the network list:
-chrome-devtools-axi network-get <id>
+qa eval 'Object.keys(localStorage)'
+qa network --type fetch --limit 50
 ```
 
 A 200 auth response without the expected session is evidence to investigate client storage, timing, and SDK state, not proof of one cause.
-For a 400/401/403, inspect the actual response and relevant request headers before attributing it to credentials, authorization, RLS, or server configuration.
+For a 400/401/403, inspect the actual response status and necessary non-secret request/response fields before attributing it to credentials, authorization, RLS, or server configuration.
 For CORS, inspect the preflight and response CORS headers as well as the console error.
 A persistent-profile login from another browser is not automatically present in Axi's isolated browser.
 
 For Supabase, inspect only the needed claims from the expected `sb-<projectref>-auth-token` entry:
 
 ```sh
-chrome-devtools-axi eval '() => {
+qa eval '() => {
   const raw = localStorage.getItem("sb-<projectref>-auth-token");
   if (!raw) return null;
   const token = JSON.parse(raw).access_token;
@@ -61,11 +80,11 @@ Do not print raw tokens, cookie values, or entire storage/session objects.
 ### Forms and buttons doing nothing
 
 ```sh
-chrome-devtools-axi eval '[...document.forms].map(f => ({action: f.action, method: f.method, valid: f.checkValidity()}))'
-chrome-devtools-axi snapshot
+qa eval '[...document.forms].map(f => ({action: f.action, method: f.method, valid: f.checkValidity()}))'
+qa snapshot
 # Click the submit button using its current @<uid>, then:
-chrome-devtools-axi console --type error --limit 20
-chrome-devtools-axi network --limit 50
+qa console --type error --limit 20
+qa network --limit 50
 ```
 
 Inspect validation constraints, disabled state, handler errors, and hydration before deciding why no request fired.
@@ -78,15 +97,16 @@ If the DOM is empty, compare the served HTML with `web_fetch`; if populated, ins
 
 ### Local versus production
 
-Run the same flow in both environments and compare the specific failing request, response, and runtime state.
-Check the active origin and authenticated user without exposing credentials.
-Respect production side effects: prefer read-only or disposable test data and do not submit destructive actions merely to reproduce a bug.
+Compare local synthetic evidence with an explicitly approved read-only production investigation when a supported production session mechanism exists.
+The isolated Chrome QA exception does not authorize production/customer account access or a production browser session.
+Check the active origin and authenticated identity without exposing credentials; stop when the approved environment/session boundary is unavailable.
+Do not submit production mutations merely to reproduce a bug.
 
 ### Verify a frontend change end-to-end
 
-Reload the changed page with `open`, drive the changed behavior, and assert the expected result using `eval` or a fresh snapshot.
-For visual changes, save and read a screenshot and inspect layout, spacing, clipping, and error states.
-Report what you actually exercised and any remaining coverage gaps.
+Reload the changed task page, drive the behavior through the approved interaction route, and assert the observed result with matching UI plus API/database proof where required.
+For visual changes, use permitted task-page capture, open each artifact, and inspect layout, spacing, clipping, error states, and privacy.
+Report what actually ran, the exact source/runtime identity and browser, and every remaining coverage gap.
 
 ## Pitfalls
 

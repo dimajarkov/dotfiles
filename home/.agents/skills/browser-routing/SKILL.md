@@ -1,6 +1,6 @@
 ---
 name: browser-routing
-description: "Route Zen Browser work through Codex Computer Use for end-user visual QA and native macOS flows; identify when Chrome-only CDP, authentication, or PDF tools cannot be used with Zen. Load before browser control or local Arena CRM UI proof."
+description: "Choose Zen for personal/native work and requested Zen compatibility, or isolated Chrome for approved synthetic application QA. Load before browser control, authentication, capture, or launch to verify task ownership and browser-specific proof."
 ---
 
 # Browser tool routing
@@ -16,15 +16,20 @@ Use Computer Use through the Codex harness for:
 - Native macOS dialogs, permissions, menus, other applications, and cross-app workflows.
 - Canvas, video, PDF, and anything whose important state exists only in rendered pixels.
 
-Use Zen Browser for interactive browser work, including Arena CRM localhost and visual QA.
-Select the installed macOS application by its full path `/Applications/Zen.app` through Codex Computer Use (`cua.getApp("/Applications/Zen.app")`); confirm the returned app is Zen before interacting.
+Choose the route from the task, not the system default browser:
+
+- Personal browsing, job applications, native workflows, and explicitly requested Zen compatibility use Zen through Codex Computer Use.
+- Approved application QA, including Arena CRM, may use repository-managed Chrome with a fresh disposable task-owned profile and fabricated synthetic accounts.
+  This is a QA exception, not permission to access personal Chrome sessions or substitute Chrome for a Zen-specific task.
+- Browser-independent API/database checks remain separate from browser evidence.
+  Chrome evidence proves only observed Chrome behavior; add Zen checks when the task requires Zen behavior, not as an automatic second acceptance gate.
+
+For Zen, select `/Applications/Zen.app` through Codex Computer Use (`cua.getApp("/Applications/Zen.app")`) and confirm the returned app before interacting.
 If that installed application is unavailable, report the missing installation before choosing another copy.
-Do not rely on the default browser or select `"chrome"` in a browser API.
-For development automation, browser testing, and localhost work, acquire Zen's existing space named exactly `development` before opening a task tab.
+For localhost work in Zen, acquire the existing space named exactly `development` before opening a task tab.
 Prefer reusing a persistent normal Zen window kept on that space; a dedicated window is a routing target, not a separate workspace or proof of session isolation.
 Zen's [window synchronization](https://docs.zen-browser.app/user-manual/window-sync) can mirror tabs across windows, so keeping a window dedicated does not replace identity checks.
-
-For job applications, use Zen through Codex Computer Use and verify the intended account and task before taking an external action.
+For job applications, verify the intended account and task before taking an external action.
 
 ### Acquire and recover the development window
 
@@ -41,13 +46,32 @@ Routine human foregrounding is a fallback only after supported native acquisitio
 Do not create or rename spaces/profiles, change synchronization preferences, or use an unrelated space as a substitute.
 If the required space or native Zen access genuinely remains unavailable, report the blocker rather than opening Chrome or Arc.
 
-## Chrome-only debugging (disabled)
+## Isolated Chrome application QA
+
+Before launch or attachment, use the repository-owned QA/runtime/authentication commands and their existing safety checks.
+Keep Herdr placement, worktree leases, local routing, provider guards, and approved mutation scope binding; choosing Chrome does not waive them.
+A repository without a supported isolated route needs prerequisite tooling, not a raw browser launch or an arbitrary CDP endpoint.
+
+Require a newly created private disposable profile for the exact task, with no copied or reused profile data, Google sign-in, synchronization, extensions, or personal keychain access.
+Keep the same owned profile for one bounded proof run; create a fresh profile for a new run and retain only privacy-reviewed evidence.
+Before connecting or reusing a bridge, verify the actual live process/profile, loopback endpoint, task/repository identity, and target page.
+A session name, caller flag, profile pathname, or self-reported receipt alone does not establish isolation.
+The supported guard verifies private-profile, task, process, endpoint and observed proof-target ownership; it is not browser-network confinement.
+Declared origins constrain explicit navigation and observed evidence scope, not every request that scripts, redirects or clicks may issue.
+Use the repository's authentication, tenancy, provider and approved-operation boundaries to protect application state; a task needing enforced egress containment requires a separately validated sandbox and is outside this QA exception.
+Fail closed on stale, foreign, missing, or inconclusive ownership; preserve siblings and their sessions.
+Cleanup stops only exact-owned resources and re-probes survivors; do not use kill-all or delete retained app data/worktree leases.
+
+Use Codex Computer Use for end-user visual/native interaction, with the verified private QA window as its target.
+Apply repository-specific authentication, interactive proof, capture, and review rules through their owning commands; CDP diagnostics are not a substitute for observing the rendered state.
+Capture only the verified task page through supported tooling, not unrelated tabs, another profile, or the desktop.
+Use fabricated synthetic accounts and the repository's supported authentication boundary; profile isolation is not authorization.
+Production/customer/provider operations still require their existing separate approvals.
 
 `chrome-devtools-axi` and Chrome DevTools MCP use Chrome's CDP for DOM, CSS, auth, network, storage, console, and performance diagnostics; they cannot control Zen.
-Do not use them as a Zen debugging route or set their executable path to Zen; this is not a supported migration.
-For interactive Zen debugging, use native Computer Use and Zen's own Developer Tools where visible; inspect only task-owned pages.
-When network, storage, performance, or DOM proof needs programmatic access beyond that route, report the gap rather than silently using a different browser.
-
+Use the guarded public `chrome-devtools-axi` command only through its supported isolated QA route.
+Direct MCP, an installed backend executable, or the optional Pi browser extension is not a bypass around its ownership checks.
+For interactive Zen debugging, use native Computer Use and Zen's own Developer Tools on task-owned pages; report unsupported programmatic inspection rather than substituting Chrome.
 Do not print tokens, cookie values, passwords, or complete storage/session objects.
 Inspect only the claims, keys, headers, or fields needed to prove the hypothesis.
 
@@ -55,12 +79,13 @@ Inspect only the claims, keys, headers, or fields needed to prove the hypothesis
 
 The job-application HTML-to-PDF script currently invokes headless Chrome and is not a Zen renderer.
 Do not run it under a Zen-only request; report a rendering blocker until a replacement is validated, or use previously validated unchanged PDFs when their exact-file evidence remains current.
-Do not pass the Zen executable to a Chrome CLI, construct a raw browser command, use a Puppeteer/Playwright workaround, or disable a browser sandbox to bypass macOS launch restrictions.
+Do not pass the Zen executable to a Chrome CLI, construct a raw browser command outside the approved owner, use Puppeteer/Playwright to bypass isolation or task routing, or disable a browser sandbox to bypass macOS launch restrictions.
 For job-application package approval, follow the job-application skill's exact-file text and rendered-page image checks for existing PDFs using an available non-Chrome local PDF-to-image tool and the image-reading tool.
 These checks require no native Computer Use, unlocked desktop, personal browser session, or browser lock.
 For other PDF workflows requiring interactive viewer inspection, use Codex Computer Use in Zen, keeping unrelated windows and profiles untouched.
-Instruction routing is not a hard execution guard.
-Codex pre-execution hooks are supplemental and require host support and hook trust; they cannot intercept every SDK subprocess or dynamically constructed launch.
+Instruction routing and the supported-command guard are not an OS sandbox.
+An unrestricted agent can still invoke another executable or SDK directly; such bypasses remain prohibited, not contained.
+Codex pre-execution hooks are supplemental and require host support and hook trust; SessionStart guidance cannot enforce later calls.
 
 ## Diagnosis in Zen
 

@@ -1,5 +1,5 @@
 /**
- * Browser extension — Playwright-driven headless Chromium pi can drive.
+ * Browser extension - Playwright-driven headless Chromium pi can drive.
  *
  * Exposes a small set of tools the LLM can call to debug a live web app:
  *   - browser_goto         navigate
@@ -10,27 +10,27 @@
  *   - browser_fill         fill an input
  *   - browser_click        click an element
  *   - browser_screenshot   write a PNG to /tmp and return the path
- *   - browser_close        close the persistent browser
+ *   - browser_close        close the current disposable browser context
  *
  * Plus a /browser command for quick status / close from the TUI.
  *
- * Browser state is a singleton kept alive across tool calls so login
- * sessions, cookies, and localStorage survive between turns. It's torn
- * down on `session_shutdown`.
+ * Browser state is a singleton within one disposable profile, shared across
+ * tool calls and removed only after a confirmed context close. No browser
+ * state or login session is carried across browser lifecycles.
  *
  * Home Manager provisions the locked dependencies and Chromium binary.
  *
  * Tweaks:
  *   PI_BROWSER_HEADFUL=1   launch a visible window (useful when debugging
  *                          the extension itself).
- *   PI_BROWSER_PROFILE     override the user-data dir (default ~/.pi/agent/extensions/browser/.profile)
+ *   PI_BROWSER_PROFILE     rejected; profiles are always private and disposable
  */
 
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { mkdtemp, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { sanitizeMetadata, sanitizeOutput } from "../lib/terminal-safety.ts";
 import {
@@ -42,7 +42,19 @@ import {
 import type { BrowserContext, ConsoleMessage, Page, Request } from "playwright-core";
 
 const DEFAULT_BROWSERS_DIR = join(homedir(), ".pi", "agent", "extensions", "browser", ".browsers");
+const BROWSER_ARGS = [
+  "--disable-extensions",
+  "--disable-sync",
+  "--password-store=basic",
+  "--use-mock-keychain",
+];
 process.env.PLAYWRIGHT_BROWSERS_PATH ??= DEFAULT_BROWSERS_DIR;
+
+type NavigationDetails = {
+  status: number | undefined;
+  finalUrl: string;
+  error?: string;
+};
 
 type ConsoleEntry = {
   ts: number;
@@ -62,6 +74,7 @@ const BROWSER_TOOL_NAMES = [
   "browser_screenshot",
   "browser_close",
 ];
+const PAGE_TOOL_NAMES = BROWSER_TOOL_NAMES.filter((name) => name !== "browser_close");
 const ENABLED_ENTRY_TYPE = "browser-enabled";
 const KEEP_HEADERS = new Set([
   "authorization",
@@ -107,25 +120,53 @@ function serialize<T>(fn: () => Promise<T>): Promise<T> {
 export default function browserExtension(pi: ExtensionAPI) {
   let context: BrowserContext | null = null;
   let page: Page | null = null;
+  let profileDir: string | null = null;
+  let contextCloseConfirmed = false;
+  let closeFailed = false;
+  let restoringBranch = false;
   const consoleBuf: ConsoleEntry[] = [];
   const netBuf: NetworkEntry[] = [];
 
-  const profileDir =
-    process.env.PI_BROWSER_PROFILE ??
-    join(homedir(), ".pi", "agent", "extensions", "browser", ".profile");
   const browsersDir = process.env.PLAYWRIGHT_BROWSERS_PATH ?? DEFAULT_BROWSERS_DIR;
   const headless = !process.env.PI_BROWSER_HEADFUL;
 
+  function requirePageOperations(): void {
+    if (closeFailed) {
+      throw new Error("Browser cleanup is pending after a failed close; retry browser_close first");
+    }
+    if (!enabled) {
+      throw new Error("Browser tools are disabled; run /browser on before using them");
+    }
+  }
+
   async function ensurePage(): Promise<Page> {
+    requirePageOperations();
+    if (process.env.PI_BROWSER_PROFILE !== undefined) {
+      throw new Error("PI_BROWSER_PROFILE is unsupported; browser profiles are always disposable");
+    }
     if (page && !page.isClosed()) return page;
 
     if (!context) {
+      if (profileDir && !contextCloseConfirmed) {
+        throw new Error(
+          "Browser context was not confirmed closed; its disposable profile was retained",
+        );
+      }
+      if (contextCloseConfirmed) await removeClosedProfile();
       process.env.PLAYWRIGHT_BROWSERS_PATH = browsersDir;
-      const { chromium } = await import("playwright-core");
-      context = await chromium.launchPersistentContext(profileDir, {
-        headless,
-        viewport: { width: 1280, height: 800 },
-      });
+      profileDir = await mkdtemp(join(tmpdir(), "pi-browser-profile-"));
+      contextCloseConfirmed = false;
+      try {
+        const { chromium } = await import("playwright-core");
+        context = await chromium.launchPersistentContext(profileDir, {
+          headless,
+          chromiumSandbox: true,
+          viewport: { width: 1280, height: 800 },
+          args: BROWSER_ARGS,
+        });
+      } catch {
+        throw new Error("Browser launch failed; its disposable profile was retained");
+      }
     }
 
     page = context.pages()[0] ?? (await context.newPage());
@@ -179,23 +220,58 @@ export default function browserExtension(pi: ExtensionAPI) {
     return page;
   }
 
-  async function teardown(): Promise<void> {
-    try {
-      await context?.close();
-    } catch {
-      // best-effort
+  async function removeClosedProfile(): Promise<void> {
+    if (!contextCloseConfirmed) {
+      throw new Error(
+        "Browser context was not confirmed closed; its disposable profile was retained",
+      );
     }
+    if (profileDir) {
+      try {
+        await rm(profileDir, { recursive: true, force: true });
+      } catch {
+        throw new Error(
+          "Browser context closed, but disposable profile cleanup could not be confirmed",
+        );
+      }
+      profileDir = null;
+    }
+    contextCloseConfirmed = false;
+  }
+
+  async function teardown(): Promise<void> {
+    const closingContext = context;
+    if (!closingContext) {
+      page = null;
+      if (profileDir) await removeClosedProfile();
+      return;
+    }
+
+    try {
+      await closingContext.close();
+    } catch {
+      closeFailed = true;
+      setEnabled(false);
+      pi.appendEntry("browser-lifecycle", { state: "close-failed" });
+      pi.appendEntry(ENABLED_ENTRY_TYPE, { on: false });
+      throw new Error("Browser context close failed; its disposable profile was retained");
+    }
+
     context = null;
     page = null;
+    closeFailed = false;
+    consoleBuf.length = 0;
+    netBuf.length = 0;
+    contextCloseConfirmed = true;
+    await removeClosedProfile();
   }
 
   // Default-off gate. The browser tools collectively cost ~800 system-prompt
   // tokens (snippets + guidelines), but are needed in a small minority of
   // sessions. We keep all 8 tools registered so they appear in
-  // pi.getAllTools() and command discovery stays normal, but we strip them
-  // from the active set so their promptSnippet / promptGuidelines drop out
-  // of the system prompt. They become callable again when /browser on flips
-  // them back into the active set.
+  // pi.getAllTools() and command discovery stays normal. Page tools leave
+  // the active set while disabled; browser_close stays active only while an
+  // open or unconfirmed context/profile still needs cleanup.
   let enabled = false;
 
   function setEnabled(on: boolean): void {
@@ -203,60 +279,75 @@ export default function browserExtension(pi: ExtensionAPI) {
     if (on) {
       for (const name of BROWSER_TOOL_NAMES) active.add(name);
     } else {
-      for (const name of BROWSER_TOOL_NAMES) active.delete(name);
+      for (const name of PAGE_TOOL_NAMES) active.delete(name);
+      if (context || profileDir) active.add("browser_close");
+      else active.delete("browser_close");
     }
     pi.setActiveTools(Array.from(active));
     enabled = on;
   }
 
   async function enable(): Promise<void> {
+    if (closeFailed || restoringBranch) {
+      throw new Error(
+        "Browser cleanup or branch restoration is pending; retry browser_close first",
+      );
+    }
     setEnabled(true);
     pi.appendEntry(ENABLED_ENTRY_TYPE, { on: true });
   }
 
   async function disable(): Promise<void> {
     setEnabled(false);
-    await teardown();
     pi.appendEntry(ENABLED_ENTRY_TYPE, { on: false });
+    await serialize(async () => {
+      await teardown();
+      if (!enabled) setEnabled(false);
+    });
   }
 
-  // Initialize the gate on session_start. We can't call setActiveTools
-  // during the factory — the extension runtime isn't initialized yet and
-  // pi throws "Action methods cannot be called during extension loading".
-  // session_start fires after the runtime is up and after the registerTool
-  // calls below have settled, so it's the first safe point to flip the
-  // browser tools out of the active set.
-  //
-  // This handler also restores the per-session enable bit: the newest
-  // browser-enabled custom entry wins. Survives /reload (the same session
-  // replays its entries when the extension re-inits) but not /new (fresh
-  // session has no entries, so we default to off).
-  pi.on("session_start", async (_event, ctx) => {
+  // Pi 1.1 emits session_tree after changing the active leaf. Close the old
+  // branch's context in the page queue before restoring the new branch's opt-in.
+  // Action methods are unavailable during extension factory initialization.
+  async function restoreBranch(ctx: ExtensionContext): Promise<void> {
     let want = false;
-    for (const entry of ctx.sessionManager.getEntries()) {
+    for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type === "custom" && entry.customType === ENABLED_ENTRY_TYPE) {
         const data = entry.data as { on?: boolean } | undefined;
         if (data && typeof data.on === "boolean") want = data.on;
       }
     }
-    setEnabled(want);
-  });
+    restoringBranch = true;
+    setEnabled(false);
+    try {
+      await serialize(async () => {
+        await teardown();
+        setEnabled(want);
+      });
+    } finally {
+      restoringBranch = false;
+    }
+  }
+  pi.on("session_start", async (_event, ctx) => restoreBranch(ctx));
+  pi.on("session_tree", async (_event, ctx) => restoreBranch(ctx));
 
   pi.on("session_shutdown", async () => {
-    await teardown();
+    setEnabled(false);
+    await serialize(() => teardown());
   });
 
   pi.registerTool({
     name: "browser_goto",
     label: "Browser Goto",
     description:
-      "Navigate the persistent headless Chromium to a URL. Returns final URL and HTTP status. Cookies + localStorage persist across calls.",
+      "Navigate the current disposable headless Chromium context to a URL. Returns final URL and HTTP status. Cookies + localStorage persist only until this context closes.",
     promptSnippet:
-      "Open a URL in a persistent headless browser to inspect a live web app's DOM, storage, network, and console — instead of asking the user to copy from devtools",
+      "Open a URL in a temporary headless browser context to inspect an approved test app's DOM, storage, network, and console instead of asking the user to copy from devtools",
     promptGuidelines: [
-      "When debugging a frontend issue (broken auth, failed requests, missing tokens, JS errors, form not working, blank screen), prefer driving the live app with browser_goto + browser_eval + browser_console + browser_network instead of asking the user to copy-paste from devtools.",
-      "When the user reports 'works in browser, fails here' or 'I tried X and it didn't work', use browser_goto to reproduce the exact flow yourself before forming a hypothesis from source alone.",
-      "After making a frontend change, use browser_goto plus browser_click / browser_fill to actually exercise the fix end-to-end before declaring it done — don't rely on the user to verify.",
+      "Follow repository-owned runtime, authentication, and proof rules. Use this optional Chromium route only when approved for synthetic application QA; never use personal browser profiles or present its evidence as Zen or native-app behavior.",
+      "When repository-owned instructions approve this route for synthetic application QA, use browser_goto + browser_eval + browser_console + browser_network to inspect frontend issues instead of asking the user to copy-paste from devtools.",
+      "When repository-owned instructions approve this route for synthetic application QA, use browser_goto to reproduce the reported flow before forming a hypothesis from source alone.",
+      "After a frontend change, use browser_goto plus browser_click / browser_fill for end-to-end verification only when repository-owned instructions approve this isolated synthetic QA route; do not replace another required proof route.",
     ],
     parameters: Type.Object({
       url: Type.String({ description: "URL to navigate to" }),
@@ -280,9 +371,10 @@ export default function browserExtension(pi: ExtensionAPI) {
           });
           const status = resp?.status();
           const finalUrl = redactBrowserUrl(p.url());
+          const details: NavigationDetails = { status, finalUrl };
           return {
             content: [{ type: "text", text: `${status ?? "?"} ${finalUrl}` }],
-            details: { status, finalUrl },
+            details,
           };
         } catch (error) {
           const message = redactBrowserDiagnostic(
@@ -375,6 +467,7 @@ export default function browserExtension(pi: ExtensionAPI) {
     async execute(_id, params) {
       return serialize(async () => {
         const limit = params.limit ?? 100;
+        requirePageOperations();
         const filter = params.filter;
         const filtered = filter
           ? consoleBuf.filter((e) => e.text.includes(filter) || (e.location ?? "").includes(filter))
@@ -399,7 +492,7 @@ export default function browserExtension(pi: ExtensionAPI) {
     promptSnippet:
       "Inspect the actual HTTP requests the page made - status, method, URL, and (with verbose=true) redacted Authorization / apikey / content-type headers. Use for 401 / 403 / CORS debugging",
     promptGuidelines: [
-      "Use browser_network with verbose=true (and urlFilter to narrow scope) for auth or CORS issues. Sensitive header values are redacted while their presence remains visible.",
+      "For auth or CORS issues, use browser_network with verbose=true (and urlFilter to narrow scope) only on an approved synthetic QA route. Sensitive header values are redacted while their presence remains visible.",
     ],
     description:
       "Drain buffered network requests. Default text output is one terse line per request ('<status> <method> <url>') to keep context small.\n\nOpt-in for headers: set verbose=true to inline a curated set of request/response headers on each returned row (authorization, apikey, content-type, x-client-info, accept-profile, content-profile, prefer, location, www-authenticate, retry-after). Sensitive values are always redacted. Pass includeHeaders=['cookie','cache-control',...] to add more header names for this call only (case-insensitive); sensitive values remain redacted. Best paired with urlFilter / status so headers only appear on the rows you care about.\n\nClear semantics: with clear=true (default) the ENTIRE buffer is wiped after read, not just the returned entries. This is intentional, so subsequent calls observe a fresh activity window rather than re-walking the same subresource noise. Pass clear=false to peek without draining.\n\nCaveat: fetches whose body is never consumed (e.g. `await fetch(url)` without `.text()`/`.json()`) often appear here as 'ERR ... net::ERR_ABORTED' even though the JS side saw a successful response. Chromium cancels the body stream and Playwright reports requestfailed. Consume the body if you want a clean status row.",
@@ -428,6 +521,7 @@ export default function browserExtension(pi: ExtensionAPI) {
     }),
     async execute(_id, params) {
       return serialize(async () => {
+        requirePageOperations();
         let entries = netBuf.slice();
         if (params.urlFilter) {
           const needle = params.urlFilter;
@@ -524,12 +618,15 @@ export default function browserExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "browser_close",
     label: "Browser Close",
-    description: "Close the persistent browser context. Next browser_* call relaunches.",
-    promptSnippet: "Tear down the headless browser (rarely needed; auto-cleans on session end)",
+    description:
+      "Close the current browser context and remove its temporary profile after confirmed closure. The next browser_* call starts with a fresh profile.",
+    promptSnippet:
+      "Close the current headless browser and request removal of its temporary profile.",
     parameters: Type.Object({}),
     async execute() {
       return serialize(async () => {
         await teardown();
+        if (!enabled) setEnabled(false);
         return { content: [{ type: "text", text: "browser closed" }], details: {} };
       });
     },
@@ -559,16 +656,20 @@ export default function browserExtension(pi: ExtensionAPI) {
         return;
       }
       // Bare /browser — status.
-      const toolState = enabled ? "enabled" : "disabled (run /browser on)";
+      const toolState = closeFailed
+        ? "disabled (cleanup pending; retry browser_close)"
+        : enabled
+          ? "enabled"
+          : "disabled (run /browser on)";
       const procState = page && !page.isClosed() ? `, open at ${redactBrowserUrl(page.url())}` : "";
       ctx.ui.notify(`browser tools: ${toolState}${procState}`, "info");
     },
   });
 
-  // Default-off gate: tools stay registered (visible in pi.getAllTools(),
+  // Default-off gate: page tools stay registered (visible in pi.getAllTools(),
   // command discovery normal) but their promptSnippet / promptGuidelines
-  // drop out of the system prompt and they're not callable until
-  // /browser on adds them back. The actual setActiveTools call happens in
-  // the session_start handler above, because pi forbids action methods
-  // during the factory.
+  // drop out of the system prompt and they're not callable until /browser on
+  // adds them back. browser_close remains active only for pending cleanup.
+  // The actual setActiveTools call happens in the session_start handler
+  // above, because pi forbids action methods during the factory.
 }

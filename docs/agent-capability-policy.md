@@ -12,4 +12,5 @@ Successful full-output file-search spills remain in owner-private temporary dire
 Keep GitHub pull-request lookup branch-aware and retryable after lookup failures.
 Keep the Ctrl+M shortcut opening `/mcp` without discarding an unsent editor draft.
 Keep the legacy ask-user extension and built-in MCP exclusions recorded in `home/.pi/agent/settings.json`.
+Use `home/.agents/skills/browser-routing/SKILL.md` as the owner of the Zen-personal/isolated-Chrome-QA split, task/profile ownership checks, and browser-specific evidence scope.
 These capability choices describe available tools and data access, and they do not authorize unrelated external actions.
