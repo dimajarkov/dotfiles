@@ -1,16 +1,15 @@
 import { realpathSync } from "node:fs";
 import type {
   ExtensionChangeset,
-  ExtensionCommandContext,
-  ExtensionEventContext,
   ExtensionReviewSnapshot,
   ExtensionReviewSnapshotNote,
+  ExtensionReviewControls,
   HunkExtensionAPI,
 } from "hunkdiff/extension";
-import { Herdr, agentPrompt } from "./herdr";
-import { digest, run } from "./process";
-import { attempts, deliver, rememberOrigin, stateDirectory, writeBatch } from "./storage";
+import { digest, run, runHunk } from "./process";
+import { rememberOrigin, stateDirectory, writeBatch } from "./storage";
 import type { Origin } from "./storage";
+import { bindingFromEnvironment, registerTurnReview } from "./turn-review";
 
 export function unchanged(
   captured: ExtensionReviewSnapshot,
@@ -25,7 +24,7 @@ export function unchanged(
 
 export function requireUnchanged(
   captured: ExtensionReviewSnapshot,
-  ctx: Pick<ExtensionCommandContext, "review">,
+  ctx: { review: Pick<ExtensionReviewControls, "snapshot"> },
 ): void {
   if (!unchanged(captured, ctx.review.snapshot()))
     throw new Error("Review changed while preparing feedback; reopen review actions");
@@ -39,8 +38,13 @@ export function fence(text: string, language = ""): string {
 }
 
 export default function humanReview(hunk: HunkExtensionAPI): void {
-  if (hunk.apiVersion !== 28)
-    throw new Error("Human review requires the verified Hunk v0.23.0 / API 28");
+  if (![28, 29].includes(Number(hunk.apiVersion)))
+    throw new Error("Human review requires the verified Hunk v0.23.0 / API 28 or patched API 29");
+  const binding = bindingFromEnvironment();
+  if (binding) {
+    registerTurnReview(hunk, binding);
+    return;
+  }
   let changeset: ExtensionChangeset | undefined;
   let busy = false;
   const origins = new Map<string, Origin>();
@@ -62,7 +66,6 @@ export default function humanReview(hunk: HunkExtensionAPI): void {
         launchedAt: string;
       }
     | undefined;
-  let liveContext: ExtensionEventContext | undefined;
 
   function originFor(note: ExtensionReviewSnapshotNote): Origin {
     // fileKey is opaque and event contexts cannot read authoritative snapshots.
@@ -89,8 +92,7 @@ export default function humanReview(hunk: HunkExtensionAPI): void {
     };
   }
 
-  hunk.on("changeset_loaded", async ({ changeset: loaded }, live) => {
-    liveContext = live;
+  hunk.on("changeset_loaded", async ({ changeset: loaded }) => {
     changeset = loaded;
     epoch++;
     const capturedEpoch = epoch;
@@ -98,9 +100,7 @@ export default function humanReview(hunk: HunkExtensionAPI): void {
     // Registration is asynchronous at startup; never retain another process or source.
     for (let attempt = 0; attempt < 5 && capturedEpoch === epoch; attempt++) {
       try {
-        const sessions = JSON.parse(
-          await run(process.execPath, ["session", "list", "--json"]),
-        ).sessions;
+        const sessions = JSON.parse(await runHunk(["session", "list", "--json"])).sessions;
         const own = sessions.filter((session: { pid: number }) => session.pid === process.pid);
         if (
           capturedEpoch === epoch &&
@@ -118,8 +118,7 @@ export default function humanReview(hunk: HunkExtensionAPI): void {
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
   });
-  hunk.on("session_reload", (_event, live) => {
-    liveContext = live;
+  hunk.on("session_reload", () => {
     reloaded = true;
   });
   hunk.on("note_changed", ({ note, kind }) => {
@@ -154,7 +153,6 @@ export default function humanReview(hunk: HunkExtensionAPI): void {
         return;
       }
       busy = true;
-      let deliveryStarted = false;
       try {
         const action = await ctx.dialogs.select({
           title: "Human review actions",
@@ -180,9 +178,7 @@ export default function humanReview(hunk: HunkExtensionAPI): void {
 
         // The public CLI resolves this exact process, even with several windows
         // reviewing the same checkout. It owns local session authentication.
-        const sessions = JSON.parse(
-          await run(process.execPath, ["session", "list", "--json"]),
-        ).sessions;
+        const sessions = JSON.parse(await runHunk(["session", "list", "--json"])).sessions;
         const matches = sessions.filter((session: { pid: number }) => session.pid === process.pid);
         if (matches.length > 1) throw new Error("Ambiguous Hunk process identity");
         const registrationCurrent = matches.length === 1 && !!matches[0].repoRoot;
@@ -321,73 +317,10 @@ export default function humanReview(hunk: HunkExtensionAPI): void {
         const batch = writeBatch(root, payload, fingerprint, markdown);
         ctx.notify(`Exported ${notes.length} human notes: ${batch.json}`);
         if (action === "Export saved human feedback") return;
-        const adapter = Herdr.current();
-        const targets = await adapter.list(checkout);
-        if (targets.length === 0)
-          throw new Error("No compatible idle Codex/Pi agent in this exact checkout");
-        const labels = targets.map(
-          (target) =>
-            `${target.name ?? target.agent} | ${target.pane_id} | ${target.agent_status} | ${adapter.session}`,
+        throw new Error(
+          "Safe Send review requires the original native session binding. Export retained; open its owned turn-review viewer to submit.",
         );
-        if (new Set(labels).size !== labels.length)
-          throw new Error("Ambiguous destination inventory");
-        const label = await ctx.dialogs.select({
-          title: "Choose existing agent in this checkout",
-          options: labels,
-        });
-        if (label === null) {
-          ctx.notify("Send cancelled; exported feedback retained");
-          return;
-        }
-        const target = targets[labels.indexOf(label)];
-        if (!target) throw new Error("Destination no longer exists");
-        const prior = attempts(root, fingerprint);
-        const needsAttention = notes.filter(
-          (note) =>
-            note.resolution !== "active" ||
-            !note.originalContextAvailable ||
-            !note.originalFileAssociationAvailable ||
-            !note.filePresentInReview ||
-            note.patchChangedSinceOriginal,
-        ).length;
-        if (
-          !(await ctx.dialogs.confirm({
-            title: prior.length ? "Explicitly resubmit this feedback?" : "Send human feedback?",
-            body: `${label}\nCheckout: ${checkout}\nBatch: ${batch.id}\n${notes.length} saved human notes; ${needsAttention} need anchor/context inspection.\n${prior.length ? "Prior delivery evidence exists. Inspect the agent before sending a duplicate.\n" : ""}Only saved notes are included. Send does not resolve or remove them.`,
-            confirmLabel: prior.length ? "Resubmit" : "Send",
-            cancelLabel: "Cancel",
-          }))
-        ) {
-          ctx.notify("Send cancelled; exported feedback retained");
-          return;
-        }
-        const prompt = agentPrompt(batch, checkout);
-        await adapter.validate(target, checkout);
-        requireUnchanged(captured, ctx);
-        ctx.statusLine.set({
-          id: "delivery",
-          spans: [{ text: "Sending human feedback..." }],
-          priority: 10,
-        });
-        deliveryStarted = true;
-        await deliver(root, batch, { session: adapter.session, ...target }, async () => {
-          // Do this again after durable attempt creation, immediately before execFile.
-          requireUnchanged(captured, ctx);
-          await adapter.validate(target, checkout);
-          requireUnchanged(captured, ctx);
-          await adapter.prompt(target, prompt);
-        });
-        const message = `Herdr accepted batch ${batch.id}; r to re-review`;
-        const outcomeContext = liveContext ?? ctx;
-        outcomeContext.statusLine.set({ id: "delivery", spans: [{ text: message }], priority: 10 });
-        outcomeContext.notify(message);
       } catch (error) {
-        if (deliveryStarted)
-          (liveContext ?? ctx).statusLine.set({
-            id: "delivery",
-            spans: [{ text: "Delivery not confirmed; inspect receipts and agent before retrying" }],
-            priority: 10,
-          });
         ctx.notify(error instanceof Error ? error.message : "Review action failed", "error");
       } finally {
         busy = false;

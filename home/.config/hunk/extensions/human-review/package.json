@@ -6,6 +6,7 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "generate:host-types": "bun generate-host-types.ts",
     "lint": "oxlint --deny-warnings .",
     "format": "oxfmt .",
     "format:check": "oxfmt --check ."

@@ -42,7 +42,12 @@ class Hunk:
         self.binary = binary
         self.fixture = fixture
         self.evidence = evidence
-        self.env = dict(os.environ, TERM="xterm-256color", HUNK_DISABLE_UPDATE_NOTICE="1",
+        home = evidence / "home"
+        home.mkdir(mode=0o700, exist_ok=True)
+        dotfiles = home / ".dotfiles"
+        if not dotfiles.exists() and not dotfiles.is_symlink():
+            dotfiles.symlink_to(ROOT)
+        self.env = dict(os.environ, HOME=str(home), TERM="xterm-256color", HUNK_DISABLE_UPDATE_NOTICE="1",
                         HUNK_MCP_PORT=str(port), XDG_CONFIG_HOME=str(evidence / "config"),
                         XDG_RUNTIME_DIR=str(evidence / "runtime"),
                         HUNK_HUMAN_REVIEW_STATE_DIRECTORY=str(evidence / "state"))
@@ -255,10 +260,9 @@ def main():
         orphaned = hunk.export()
         assert len(orphaned["notes"]) == 4
         assert all(n["file"] is None and not n["filePresentInReview"] for n in orphaned["notes"])
-        # The actual v0.23.0 host leaves these statuses active. Preserve its value
-        # and record absence separately; do not invent an orphaned resolution.
-        assert all(n["resolution"] == "active" for n in orphaned["notes"])
-        assert not orphaned["session"]["registrationCurrent"]
+        # API 29 marks missing files orphaned while retaining the owning session.
+        assert all(n["resolution"] == "orphaned" for n in orphaned["notes"])
+        assert orphaned["session"]["registrationCurrent"]
         assert all(n["originalContextAvailable"] for n in orphaned["notes"])
         (evidence / "orphaned-batch.json").write_text(json.dumps(orphaned, indent=2) + "\n")
     finally:
@@ -275,50 +279,27 @@ def main():
         (evidence / "staged-batch.json").write_text(json.dumps(batch, indent=2) + "\n")
     finally:
         staged.close("staged")
-    # An argument-level Herdr simulation tests asynchronous UI completion after
-    # a real public-CLI reload. This is separate from the real live-agent proof.
-    fake_binary = evidence / "fake-herdr"
-    agent = {"agent": "codex", "agent_status": "idle", "pane_id": "test:p2", "terminal_id": "test-terminal",
-             "cwd": str(fixture.resolve()), "foreground_cwd": str(fixture.resolve()),
-             "agent_session": {"agent": "codex", "kind": "id", "source": "herdr:codex", "value": "simulated-agent"}}
-    fake_binary.write_text("#!/usr/bin/env python3\nimport json,os,sys\nfrom pathlib import Path\n"
-                           + "agent=" + repr(agent) + "\n"
-                           + "args=sys.argv[1:]\n"
-                           + "if args[:2]==['session','list']: result={'sessions':[{'name':os.environ['HERDR_SESSION'],'running':True,'socket_path':os.environ['HERDR_SOCKET_PATH']}]}\n"
-                           + "elif args[:2]==['agent','list']: result={'result':{'agents':[agent]}}\n"
-                           + "elif args[:2]==['agent','get']: result={'result':{'agent':agent}}\n"
-                           + "elif args[:2]==['agent','prompt']:\n Path(" + repr(str(evidence / "simulated-prompt.txt")) + ").write_text(args[3]); result={'result':{'type':'agent_prompted'}}\n"
-                           + "else: raise SystemExit('unsupported test command')\nprint(json.dumps(result))\n")
-    fake_binary.chmod(0o700)
-    simulated_environment = {
-        "HERDR_BIN_PATH": str(fake_binary),
-        "HERDR_ENV": "1",
-        "HERDR_SESSION": "hunk-review-fixture",
-        "HERDR_SOCKET_PATH": str(evidence / "fake-config/herdr/sessions/hunk-review-fixture/herdr.sock"),
-        "HERDR_PANE_ID": "simulated-sender",
-    }
-    previous_environment = {name: os.environ.get(name) for name in simulated_environment}
-    os.environ.update(simulated_environment)
-    simulated = None
+    # An unbound manual review may export feedback, but cannot choose an
+    # arbitrary Herdr recipient or deliver it through terminal input.
+    manual = None
     try:
-        simulated = Hunk(options.hunk, fixture, evidence, ["diff"], port)
-        simulated.note("other.txt", "new", 1, "Simulated adapter UI acknowledgement test.")
-        simulated.cli("reload", simulated.session_id, "--", "diff")
-        simulated.read(0.5)
-        simulated.actions(1)
-        simulated.wait_text("Choose existing agent")
-        simulated.key("\r", "Send human feedback?")
-        simulated.key("\r", "Herdr accepted batch")
-        assert (evidence / "simulated-prompt.txt").exists()
-        (evidence / "accepted-screen.txt").write_text("\n".join(simulated.screen.display) + "\n")
+        manual = Hunk(options.hunk, fixture, evidence, ["diff"], port)
+        manual.note("other.txt", "new", 1, "Explicit legacy manual feedback.")
+        before = set((evidence / "state/batches").glob("*/feedback.json"))
+        manual.actions(1)
+        manual.wait_text("Safe Send review requires the original native session binding")
+        after = set((evidence / "state/batches").glob("*/feedback.json"))
+        exported_paths = after - before
+        assert len(exported_paths) == 1, (exported_paths, manual.output[-2000:])
+        exported_manual = json.loads(next(iter(exported_paths)).read_text())
+        assert [note["summary"] for note in exported_manual["notes"]] == [
+            "Explicit legacy manual feedback."
+        ]
+        assert not (evidence / "state/deliveries").exists(), "Unbound manual feedback must not be sent"
+        (evidence / "unbound-manual-export.json").write_text(json.dumps(exported_manual, indent=2) + "\n")
     finally:
-        if simulated:
-            simulated.close("simulated-delivery-ui")
-        for name, value in previous_environment.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
+        if manual:
+            manual.close("unbound-manual-refusal")
     # A newly launched window must attest itself before its first export,
     # so a native refresh can retain a missing-file note without inventing identity.
     cold = Hunk(options.hunk, fixture, evidence, ["diff"], port)
@@ -379,10 +360,11 @@ def main():
     print(json.dumps({"result": "passed", "hunk": options.hunk, "evidence": str(evidence),
                       "nativeNotes": 10, "cases": ["empty", "single", "range", "old/deletion", "quotes/multiline",
                       "agent exclusion", "menu cancellation", "same-review refresh", "missing-file note preservation",
-                      "staged", "new", "renamed", "private durable export", "simulated delivery UI after public CLI reload",
+                      "staged", "new", "renamed", "private durable export",
+                      "unbound manual send refusal with durable export and no delivery attempt",
                       "missing-file first export after native refresh", "user config symlink extension loading",
                       "old-side range", "commit scope", "immutable revision comparison", "multiple same-checkout Hunk sessions"],
-                      "upstreamGaps": ["Missing-file notes retain active resolution", "Missing-file reload rejects broker registration"]}, indent=2))
+                      "upstreamGaps": []}, indent=2))
 
 
 if __name__ == "__main__":

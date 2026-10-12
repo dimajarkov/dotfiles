@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { basename } from "node:path";
 
 export type Runner = (
   binary: string,
@@ -32,6 +33,15 @@ export const run: Runner = (binary, args, cwd, env) =>
       },
     );
   });
+
+/** Use the current public Hunk CLI, including an explicitly launched source host. */
+export function runHunk(args: readonly string[]): Promise<string> {
+  const source =
+    basename(process.execPath).startsWith("bun") && process.argv[1]?.endsWith("/main.tsx")
+      ? [process.argv[1]]
+      : [];
+  return run(process.execPath, [...source, ...args]);
+}
 
 export function digest(value: unknown): string {
   return new Bun.CryptoHasher("sha256")

@@ -37,7 +37,11 @@ async function fixture() {
   const consumed = barrier();
   const consumption = barrier();
   const errors = [];
+  const settledHandlerStarted = barrier();
+  const settledHandlerRelease = barrier();
   let api;
+  let session;
+  let holdSettledHandler = false;
   let gateConsumption = false;
   const loader = new sdk.DefaultResourceLoader({
     cwd: directory,
@@ -103,10 +107,18 @@ async function fixture() {
           },
         });
       },
+      (pi) => {
+        pi.on("agent_settled", async () => {
+          if (!holdSettledHandler) return;
+          holdSettledHandler = false;
+          settledHandlerStarted.release();
+          await settledHandlerRelease.promise;
+        });
+      },
     ],
   });
   await loader.reload();
-  const { session } = await sdk.createAgentSession({
+  ({ session } = await sdk.createAgentSession({
     cwd: directory,
     agentDir: directory,
     modelRuntime,
@@ -115,7 +127,7 @@ async function fixture() {
     sessionManager: sdk.SessionManager.create(directory, join(directory, "sessions")),
     noTools: "all",
     thinkingLevel: "off",
-  });
+  }));
   await session.setModel(modelRuntime.getModel("native-admission", "fixture"));
   await session.bindExtensions({ onError: (error) => errors.push(error) });
   return {
@@ -127,12 +139,20 @@ async function fixture() {
     consumed,
     consumption,
     errors,
+    settledHandlerStarted,
+    holdSettlement() {
+      holdSettledHandler = true;
+    },
+    releaseSettledHandler() {
+      settledHandlerRelease.release();
+    },
     gate() {
       gateConsumption = true;
     },
     async close() {
       provider.release();
       consumption.release();
+      settledHandlerRelease.release();
       await session.agent.waitForIdle();
       session.dispose();
     },
@@ -142,6 +162,41 @@ async function fixture() {
 const message = { customType: "admission-test", content: "EXACT_CONTROL", display: false };
 
 for (const mode of ["steer", "followUp"]) {
+  test(
+    `notification-only settlement defers ${mode} admission until all settled handlers finish`,
+    { timeout: 10000 },
+    async () => {
+      const f = await fixture();
+      f.holdSettlement();
+      const run = f.session.prompt("INITIAL");
+      await f.started.promise;
+      f.provider.release();
+      try {
+        await f.settledHandlerStarted.promise;
+        assert.deepEqual(f.api.enqueueMessage(message, { deliverAs: mode }), { status: "queued" });
+        assert.equal(f.session.agent.hasQueuedMessages(), true);
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(
+          f.calls.length,
+          1,
+          "queued feedback must not start another provider run during notification-only settlement",
+        );
+        f.releaseSettledHandler();
+        await run;
+        assert.equal(f.calls.length, 2, "the admitted message runs once after settlement");
+        const nextInput = JSON.stringify(f.calls[1]);
+        assert.equal(nextInput.split("EXACT_CONTROL").length - 1, 1);
+        assert.equal(f.session.agent.hasQueuedMessages(), false);
+        assert.equal(f.session.isIdle, true);
+        assert.deepEqual(f.errors, []);
+      } finally {
+        f.releaseSettledHandler();
+        await f.close();
+        await run;
+      }
+    },
+  );
+
   test(
     `public ${mode} rejection throws before acknowledgment or another provider call`,
     { timeout: 10000 },

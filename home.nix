@@ -1,12 +1,14 @@
-{ config, pkgs, user, ... }:
+args@{ config, pkgs, user, ... }:
 
 let
+  hunkTurnReviewProfile = args.hunkTurnReviewProfile or null;
+  bashDarwinInteractive = args.bashDarwinInteractive or (pkgs.callPackage ./nix/packages/bash-darwin-pipes.nix {});
   dotfiles = "${config.home.homeDirectory}/.dotfiles";
   backpassCli = pkgs.callPackage ./nix/packages/backpass-cli.nix {};
   piUpstream = pkgs.callPackage ./nix/packages/pi-coding-agent.nix {};
   hunkReview = pkgs.callPackage ./nix/packages/hunk.nix {};
   glowReader = pkgs.callPackage ./nix/packages/glow.nix {};
-  hunkCommand = pkgs.writeShellApplication {
+  hunkCommand = if hunkTurnReviewProfile != null then hunkTurnReviewProfile else pkgs.writeShellApplication {
     name = "hunk";
     text = ''
       if (( $# == 0 )); then
@@ -15,13 +17,17 @@ let
       exec ${hunkReview}/bin/hunk "$@"
     '';
   };
+  hunkTurnReviewEnvironment = pkgs.lib.optionalString (hunkTurnReviewProfile != null) ''
+    if [[ -r "$HOME/.config/hunk-turn-review/session-env.sh" ]]; then
+      . "$HOME/.config/hunk-turn-review/session-env.sh"
+    fi
+  '';
 in {
   home.username = user;
   home.homeDirectory = "/Users/${user}";
   home.stateVersion = "24.11";
 
   home.packages = with pkgs; [
-    bash
     backpassCli
     btop
     codebook
@@ -46,7 +52,7 @@ in {
     ty
     uv
     zoxide
-  ];
+  ] ++ pkgs.lib.optional (hunkTurnReviewProfile == null) bashDarwinInteractive;
 
   home.sessionPath = [
     "/opt/homebrew/bin"
@@ -81,7 +87,7 @@ in {
     enableCompletion = false;
     envExtra = ''
       export NOSYSZSHRC=1
-    '';
+    '' + hunkTurnReviewEnvironment;
     autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
     history = {
@@ -137,7 +143,7 @@ in {
       awstatus() {
         bun run supabase:worktree status
       }
-    '';
+    '' + hunkTurnReviewEnvironment;
     shellAliases = {
       ".." = "cd ..";
       add = "git add .";
@@ -156,7 +162,7 @@ in {
       rebuild = "darwin-rebuild switch --flake ~/dotfiles#mac";
       reset = "git reset --soft HEAD^";
       cc = "claude --dangerously-skip-permissions";
-      co = "codex --full-auto";
+      co = "codex --sandbox workspace-write --ask-for-approval on-request";
     };
   };
 

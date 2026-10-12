@@ -4,6 +4,8 @@
     "module": "Preserve",
     "moduleResolution": "Bundler",
     "strict": true,
+    "allowJs": true,
+    "paths": { "hunkdiff/extension": ["./.host-types/types.d.ts"] },
     "noEmit": true,
     "types": ["bun"],
     "skipLibCheck": true

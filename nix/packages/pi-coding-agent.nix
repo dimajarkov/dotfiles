@@ -13,8 +13,11 @@ pkgs.buildNpmPackage rec {
 
   npmDepsHash = "sha256-GOh5WG+rRgzoy/yVHY5PoEKJZGQcEGhISrDDJxkP8W4=";
 
-  # Native queue admission must be observable before acknowledging child control.
-  patches = [ ../patches/pi-native-message-admission.patch ];
+  # Native admission and per-request provenance must match the deployed adapters.
+  patches = [
+    ../patches/pi-native-message-admission.patch
+    ../patches/pi-user-request-lifecycle.patch
+  ];
 
   postPatch = let
     modelData = pkgs.fetchurl {
@@ -47,6 +50,8 @@ pkgs.buildNpmPackage rec {
     runHook preInstallCheck
     "$out/bin/pi" --version
     PI_OFFLINE=1 ${nodejs}/bin/node ${../tests/pi-message-admission.mjs} \
+      "$out/lib/pi-coding-agent/packages"
+    PI_OFFLINE=1 ${nodejs}/bin/node ${../tests}/pi-user-request-lifecycle.mjs \
       "$out/lib/pi-coding-agent/packages"
     echo "Checking Node worker file descriptor tracking"
     cat > "$TMPDIR/fd-worker.cjs" <<'EOF'

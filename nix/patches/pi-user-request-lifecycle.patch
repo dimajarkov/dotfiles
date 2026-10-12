@@ -1,0 +1,1177 @@
+diff --git a/packages/agent/src/types.ts b/packages/agent/src/types.ts
+--- a/packages/agent/src/types.ts
++++ b/packages/agent/src/types.ts
+@@ -269,6 +269,10 @@
+ 	 * replace the runtime values for this and later requests in the run. This hook does not poll queues.
+ 	 */
+ 	prepareRequest?: PrepareRequest;
++	/** Leave follow-ups queued for the owning runtime to settle/recover the current response. */
++	deferFollowUp?: boolean;
++	/** Awaited before selected input owns any preparation or provider work. */
++	beforeInput?: (messages: readonly AgentMessage[], signal?: AbortSignal) => Promise<void> | void;
+ 
+ 	/**
+ 	 * Called after `turn_end` when the loop will continue, immediately before the next turn starts.
+@@ -371,7 +375,28 @@
+  * This abstraction allows apps to add custom message types while maintaining
+  * type safety and compatibility with the base LLM messages.
+  */
+-export type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessages];
++/** Provenance of one admitted request; metadata never changes model-facing content. */
++export interface UserRequest {
++	readonly id: string;
++	/** Optional caller-owned submission identity, independent of this fresh native request UUID. */
++	readonly correlationId?: string;
++	readonly source: string;
++	readonly delivery: "prompt" | "steer" | "followUp";
++}
++
++/** One actual response to an explicitly selected all-mode batch of admitted requests. */
++export interface UserRequestGroup {
++	/** Fresh response-scope UUID, independent of every original input UUID. */
++	readonly id: string;
++	readonly mode: "all";
++	readonly requests: readonly UserRequest[];
++}
++
++export type UserRequestScope = UserRequest | UserRequestGroup;
++
++export type AgentMessage = (Message | CustomAgentMessages[keyof CustomAgentMessages]) & {
++	userRequest?: UserRequest;
++};
+ 
+ /**
+  * Public agent state.
+diff --git a/packages/agent/src/agent.ts b/packages/agent/src/agent.ts
+--- a/packages/agent/src/agent.ts
++++ b/packages/agent/src/agent.ts
+@@ -36,13 +36,15 @@
+ export type { QueueMode } from "./types.ts";
+ 
+ function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
+-	return messages.filter(
+-		(message) =>
+-			message.role === "system" ||
+-			message.role === "user" ||
+-			message.role === "assistant" ||
+-			message.role === "toolResult",
+-	);
++	return messages
++		.filter(
++			(message) =>
++				message.role === "system" ||
++				message.role === "user" ||
++				message.role === "assistant" ||
++				message.role === "toolResult",
++		)
++		.map(({ userRequest: _request, ...message }) => message);
+ }
+ 
+ const EMPTY_USAGE = {
+@@ -124,6 +126,8 @@
+ 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+ 	finishTurn?: FinishTurn;
+ 	prepareRequest?: PrepareRequest;
++	deferFollowUp?: boolean;
++	beforeInput?: AgentLoopConfig["beforeInput"];
+ 	prepareNextTurn?: (
+ 		signal?: AbortSignal,
+ 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+@@ -157,7 +161,9 @@
+ 	}
+ 
+ 	peek(): AgentMessage[] {
+-		if (this.mode === "all") return this.messages.slice();
++		if (this.mode === "all") {
++			return this.messages.slice();
++		}
+ 		const first = this.messages[0];
+ 		return first ? [first] : [];
+ 	}
+@@ -208,6 +214,8 @@
+ 	) => Promise<AfterToolCallResult | undefined>;
+ 	public finishTurn?: FinishTurn;
+ 	public prepareRequest?: PrepareRequest;
++	public deferFollowUp: boolean;
++	public beforeInput?: AgentLoopConfig["beforeInput"];
+ 	public prepareNextTurn?: (
+ 		signal?: AbortSignal,
+ 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+@@ -242,6 +250,8 @@
+ 		this.afterToolCall = runtimeOptions.afterToolCall;
+ 		this.finishTurn = runtimeOptions.finishTurn;
+ 		this.prepareRequest = runtimeOptions.prepareRequest;
++		this.deferFollowUp = runtimeOptions.deferFollowUp ?? false;
++		this.beforeInput = runtimeOptions.beforeInput;
+ 		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
+ 		this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
+ 		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
+@@ -481,6 +491,8 @@
+ 			afterToolCall: this.afterToolCall,
+ 			finishTurn: this.finishTurn,
+ 			prepareRequest: this.prepareRequest,
++			deferFollowUp: this.deferFollowUp,
++			beforeInput: this.beforeInput,
+ 			prepareNextTurn:
+ 				this.prepareNextTurnWithContext || this.prepareNextTurn
+ 					? async (context) => {
+diff --git a/packages/agent/src/agent-loop.ts b/packages/agent/src/agent-loop.ts
+--- a/packages/agent/src/agent-loop.ts
++++ b/packages/agent/src/agent-loop.ts
+@@ -107,6 +107,7 @@
+ 	signal: AbortSignal | undefined,
+ 	streamFn: StreamFn,
+ ): Promise<AgentMessage[]> {
++	await config.beforeInput?.(prompts, signal);
+ 	const initialMessages = declareToolChanges(context, prompts);
+ 	const newMessages: AgentMessage[] = [...initialMessages];
+ 	const currentContext: AgentContext = {
+@@ -181,6 +182,7 @@
+ 
+ 		// Inner loop: process tool calls and steering messages
+ 		while (hasMoreToolCalls || pendingMessages.length > 0) {
++			if (pendingMessages.length > 0) await config.beforeInput?.(pendingMessages, signal);
+ 			let preparedMessages: AgentMessage[] = [];
+ 			if (lastCompletedTurn) {
+ 				const nextTurnSnapshot = await config.prepareNextTurn?.(lastCompletedTurn);
+@@ -203,6 +205,7 @@
+ 				// otherwise one-at-a-time mode would deliver two messages in this turn.
+ 				if (pendingMessages.length === 0) {
+ 					pendingMessages = (await config.getSteeringMessages?.()) || [];
++					if (pendingMessages.length > 0) await config.beforeInput?.(pendingMessages, signal);
+ 				}
+ 				await emit({ type: "turn_start" });
+ 			}
+@@ -296,6 +299,15 @@
+ 			if (hasMoreToolCalls || pendingMessages.length > 0) {
+ 				explicitContinuation = false;
+ 			}
++		}
++
++		// Owning runtimes may need recovery and actionable settlement before the next request.
++		if (config.deferFollowUp) {
++			if (explicitContinuation) {
++				explicitContinuation = false;
++				continue;
++			}
++			break;
+ 		}
+ 
+ 		// Agent would stop here. Check for follow-up messages.
+diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
+--- a/packages/coding-agent/src/core/agent-session.ts
++++ b/packages/coding-agent/src/core/agent-session.ts
+@@ -13,6 +13,7 @@
+  * Modes use this class and add their own I/O layer on top.
+  */
+ 
++import { randomUUID } from "node:crypto";
+ import { readFileSync } from "node:fs";
+ import { basename, dirname } from "node:path";
+ import {
+@@ -30,6 +31,8 @@
+ 	type PrepareNextTurnContext,
+ 	runToolCall,
+ 	type ThinkingLevel,
++	type UserRequest,
++	type UserRequestScope,
+ } from "@earendil-works/pi-agent-core";
+ import { contentText, getCurrentSystemMessage, retryDelayMs } from "@earendil-works/pi-ai";
+ import type {
+@@ -110,6 +113,10 @@
+ 	type ToolLoadout,
+ 	type TreePreparation,
+ 	type TurnStartEvent,
++	type UserRequestEndEvent,
++	type UserRequestPrepareEndEvent,
++	type UserRequestPrepareEvent,
++	type UserRequestStartEvent,
+ 	wrapRegisteredTools,
+ } from "./extensions/index.ts";
+ import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+@@ -201,6 +208,10 @@
+ 			willRetry: boolean;
+ 	  }
+ 	| { type: "agent_settled"; aborted: boolean }
++	| UserRequestPrepareEvent
++	| UserRequestPrepareEndEvent
++	| UserRequestStartEvent
++	| UserRequestEndEvent
+ 	| {
+ 			type: "queue_update";
+ 			steering: readonly string[];
+@@ -394,6 +405,8 @@
+ 	private _steeringMessages: string[] = [];
+ 	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
+ 	private _followUpMessages: string[] = [];
++	private _steeringRequestIds: string[] = [];
++	private _followUpRequestIds: string[] = [];
+ 	/** Messages queued to be included with the next user prompt as context ("asides"). */
+ 	private _pendingNextTurnMessages: CustomMessage[] = [];
+ 	/** Context-only custom messages queued during a run, flushed once the current turn's tool results are in. */
+@@ -428,6 +441,8 @@
+ 	private _lastAssistantMessage: AssistantMessage | undefined;
+ 	private _lastAssistantToolResults: AgentMessage[] = [];
+ 	private _lastActivityOutcome: AgentActivityOutcome = "completed";
++	private _userRequest: UserRequestScope | undefined;
++	private _userRequestPreparation: { request: UserRequest; controller: AbortController } | undefined;
+ 	private _isBeforeSettle = false;
+ 	private _abortDuringBeforeSettle = false;
+ 	private _isEmittingAgentSettled = false;
+@@ -515,6 +530,22 @@
+ 		this._installAgentNextTurnRefresh();
+ 		this._installAgentRequestProjection();
+ 		this._installAgentBoundaryHooks();
++		this.agent.deferFollowUp = true;
++		const previousBeforeInput = this.agent.beforeInput;
++		this.agent.beforeInput = async (messages, signal) => {
++			const requests = new Map<string, UserRequest>();
++			for (const message of messages) {
++				if (message.userRequest) requests.set(message.userRequest.id, message.userRequest);
++			}
++			const members = [...requests.values()];
++			if (members.length > 0)
++				await this._startUserRequest(
++					members.length === 1
++						? members[0]
++						: Object.freeze({ id: randomUUID(), mode: "all", requests: Object.freeze(members) }),
++				);
++			await previousBeforeInput?.(messages, signal);
++		};
+ 		this._installHiddenDeclarationsProjection();
+ 		this._installAgentForcedPromptProjection();
+ 
+@@ -1075,11 +1106,61 @@
+ 		resolve();
+ 	}
+ 
++	get userRequest(): UserRequestScope | undefined {
++		return this._userRequest;
++	}
++
++	private _newUserRequest(source: string, delivery: UserRequest["delivery"], correlationId?: string): UserRequest {
++		return Object.freeze({ id: randomUUID(), source, delivery, ...(correlationId ? { correlationId } : {}) });
++	}
++
++	private _admitUserRequest(request: UserRequest): void {
++		this.sessionManager.appendCustomEntry("pi.user-request", { phase: "admitted", request });
++	}
++
++	private async _startUserRequest(request: UserRequestScope): Promise<void> {
++		if (this._userRequest?.id === request.id) return;
++		const first = "requests" in request ? request.requests[0] : request;
++		if (this._userRequest)
++			await this._endUserRequest(first.delivery === "steer" ? "interrupted" : this._requestOutcome());
++		this._userRequest = request;
++		this._lastActivityOutcome = "completed";
++		const preparation = this._userRequestPreparation;
++		this._userRequestPreparation = undefined;
++		const event: UserRequestStartEvent = {
++			type: "user_request_start",
++			request,
++			...(preparation && preparation.request.id !== request.id ? { preparationId: preparation.request.id } : {}),
++		};
++		this.sessionManager.appendCustomEntry("pi.user-request", { phase: "start", request });
++		await this._extensionRunner.emit(event);
++		this._emit(event);
++	}
++
++	private _requestOutcome(): UserRequestEndEvent["outcome"] {
++		return this._agentRunAbortRequested || this._lastActivityOutcome === "aborted"
++			? "interrupted"
++			: this._lastActivityOutcome === "error"
++				? "failed"
++				: "completed";
++	}
++
++	private async _endUserRequest(outcome: UserRequestEndEvent["outcome"]): Promise<void> {
++		const request = this._userRequest;
++		if (!request) return;
++		const event: UserRequestEndEvent = { type: "user_request_end", request, outcome };
++		this.sessionManager.appendCustomEntry("pi.user-request", { phase: "end", request, outcome });
++		await this._extensionRunner.emit(event);
++		this._emit(event);
++		this._userRequest = undefined;
++	}
++
+ 	private async _emitAgentSettled(): Promise<void> {
+ 		this._cacheWarmer?.onAgentSettled();
+ 		this._isAgentRunActive = false;
+ 		this._isEmittingAgentSettled = true;
+ 		try {
++			await this._endUserRequest(this._requestOutcome());
+ 			const aborted = this._agentRunAbortRequested;
+ 			await this._extensionRunner.emit({ type: "agent_settled", aborted });
+ 			this._emit({ type: "agent_settled", aborted });
+@@ -1114,24 +1195,18 @@
+ 				this._nestedToolCalls.clear();
+ 			}
+ 		}
+-		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
+-		// This ensures the UI sees the updated queue state
++		// Queue identity is independent of repeated/transformed prompt text.
+ 		if (event.type === "message_start" && event.message.role === "user") {
+ 			this._overflowRecoveryAttempted = false;
+-			const messageText = contentText(event.message.content, "");
+-			if (messageText) {
+-				// Check steering queue first
+-				const steeringIndex = this._steeringMessages.indexOf(messageText);
+-				if (steeringIndex !== -1) {
+-					this._steeringMessages.splice(steeringIndex, 1);
++			const request = event.message.userRequest;
++			if (request) {
++				const ids = request.delivery === "steer" ? this._steeringRequestIds : this._followUpRequestIds;
++				const messages = request.delivery === "steer" ? this._steeringMessages : this._followUpMessages;
++				const index = ids.indexOf(request.id);
++				if (index >= 0) {
++					ids.splice(index, 1);
++					messages.splice(index, 1);
+ 					this._emitQueueUpdate();
+-				} else {
+-					// Check follow-up queue
+-					const followUpIndex = this._followUpMessages.indexOf(messageText);
+-					if (followUpIndex !== -1) {
+-						this._followUpMessages.splice(followUpIndex, 1);
+-						this._emitQueueUpdate();
+-					}
+ 				}
+ 			}
+ 		}
+@@ -1820,7 +1895,7 @@
+ 	// =========================================================================
+ 
+ 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+-		this._agentRunAbortRequested = false;
++		if (!this._userRequest) this._agentRunAbortRequested = false;
+ 		// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
+ 		this._failedResponse = undefined;
+ 		this._recordSelection();
+@@ -1840,6 +1915,9 @@
+ 				if (this._agentRunAbortRequested) break;
+ 				await this.agent.continue();
+ 			}
++		} catch (error) {
++			this._lastActivityOutcome = "error";
++			throw error;
+ 		} finally {
+ 			if (this._agentRunAbortRequested) this._finishCancelledRetry();
+ 			this._failedResponse = undefined;
+@@ -1885,9 +1963,9 @@
+ 			return !this._agentRunAbortRequested;
+ 		}
+ 
+-		// The low-level loop drains both queues before agent_end. Messages queued by
+-		// agent_end handlers require a fresh run before pre-settlement handlers fire.
+-		return !this._agentRunAbortRequested && this.agent.hasQueuedMessages();
++		// Follow-ups remain queued until recovery and actionable settlement finish.
++		// Steering consumed inside the loop still supersedes at its normal tool-safe boundary.
++		return false;
+ 	}
+ 
+ 	private async _runBeforeSettleBoundary(): Promise<boolean> {
+@@ -1918,13 +1996,14 @@
+ 		text: string,
+ 		images: ImageContent[] | undefined,
+ 		source: InputSource,
+-		streamingBehavior?: "steer" | "followUp",
++		streamingBehavior: "steer" | "followUp" | undefined,
++		request: UserRequest,
+ 	): Promise<{ text: string; images: ImageContent[] | undefined } | undefined> {
+ 		if (!this._extensionRunner.hasHandlers("input")) {
+ 			return { text, images };
+ 		}
+ 
+-		const inputResult = await this._extensionRunner.emitInput(text, images, source, streamingBehavior);
++		const inputResult = await this._extensionRunner.emitInput(text, images, source, streamingBehavior, request);
+ 		if (inputResult.action === "handled") {
+ 			return undefined;
+ 		}
+@@ -1989,17 +2068,71 @@
+ 			);
+ 		}
+ 
++		const request = this._newUserRequest(
++			options?.source ?? "interactive",
++			this.isStreaming ? (options?.streamingBehavior ?? "prompt") : "prompt",
++		);
++		// Observation is independent of streaming/queue routing. An asynchronous transform can
++		// still change that route; the first actual response explicitly inherits this interval.
++		const preparation =
++			!this.isStreaming && !this._userRequest && !this._userRequestPreparation
++				? { request, controller: new AbortController() }
++				: undefined;
++		if (preparation) this._userRequestPreparation = preparation;
++		let outcome: UserRequestPrepareEndEvent["outcome"] = "completed";
++		try {
++			if (preparation) {
++				const event: UserRequestPrepareEvent = { type: "user_request_prepare", request };
++				await this._extensionRunner.emit(event);
++				this._emit(event);
++				if (preparation.controller.signal.aborted) return;
++			}
++			await this._promptRequest(
++				text,
++				options,
++				request,
++				expandPromptTemplates,
++				preflightResult,
++				preparation?.controller.signal,
++			);
++		} catch (error) {
++			outcome = "failed";
++			throw error;
++		} finally {
++			if (preparation && this._userRequestPreparation === preparation) {
++				this._userRequestPreparation = undefined;
++				const event: UserRequestPrepareEndEvent = {
++					type: "user_request_prepare_end",
++					request: preparation.request,
++					outcome: preparation.controller.signal.aborted ? "interrupted" : outcome,
++				};
++				await this._extensionRunner.emit(event);
++				this._emit(event);
++			}
++		}
++	}
++
++	private async _promptRequest(
++		text: string,
++		options: PromptOptions | undefined,
++		request: UserRequest,
++		expandPromptTemplates: boolean,
++		preflightResult: PromptOptions["preflightResult"],
++		preparationSignal?: AbortSignal,
++	): Promise<void> {
+ 		// Emit input event for extension interception (before skill/template expansion)
+ 		const processedInput = await this._runInputHandlers(
+ 			text,
+ 			options?.images,
+ 			options?.source ?? "interactive",
+ 			this.isStreaming ? options?.streamingBehavior : undefined,
++			request,
+ 		);
+ 		if (!processedInput) {
+ 			preflightResult?.("handled");
+ 			return;
+ 		}
++		if (preparationSignal?.aborted) return;
+ 		const { text: currentText, images: currentImages } = processedInput;
+ 
+ 		// Expand skill commands (/skill:name args) and prompt templates (/template args)
+@@ -2017,9 +2150,9 @@
+ 				);
+ 			}
+ 			if (options.streamingBehavior === "followUp") {
+-				await this._queueFollowUp(expandedText, currentImages);
++				await this._queueFollowUp(expandedText, currentImages, request);
+ 			} else {
+-				await this._queueSteer(expandedText, currentImages);
++				await this._queueSteer(expandedText, currentImages, request);
+ 			}
+ 			preflightResult?.("queued");
+ 			return;
+@@ -2049,65 +2182,83 @@
+ 			throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
+ 		}
+ 
+-		// Check if we need to compact before sending (catches aborted responses).
+-		// The user's new prompt is sent below, so do not call agent.continue() here.
+-		const lastAssistant = this._findLastAssistantMessage();
+-		if (lastAssistant) {
+-			await this._checkCompaction(lastAssistant, false);
+-		}
+-
+-		// Emit before_agent_start before normalizing images so extension-driven model
+-		// selection determines the resize profile used for the request and history.
+-		const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
+-		const result = await this._extensionRunner.emitBeforeAgentStart(
+-			expandedText,
+-			currentImages,
+-			this._baseSystemPromptOptions,
+-		);
+-		// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
+-		// which updates the live loadout instead. An explicit edit wins; otherwise the live
+-		// loadout is authoritative, so a setActiveTools() call is not undone here.
+-		const handlerEditedTools =
+-			result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
+-			result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
+-		if (!handlerEditedTools) result.systemPromptOptions.selectedTools = this.getActiveToolNames();
+-
+-		const normalized = await this._normalizePromptImages(currentImages);
+-		const userText = normalized.hints.length > 0 ? `${expandedText}\n\n${normalized.hints.join("\n")}` : expandedText;
+-
+-		// Build messages only after hooks and image normalization have completed.
+-		const messages: AgentMessage[] = [];
+-		const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: userText }];
+-		userContent.push(...normalized.images);
+-		messages.push({
+-			role: "user",
+-			content: userContent,
+-			timestamp: Date.now(),
+-		});
+-
+-		// Inject any pending "nextTurn" messages as context alongside the user message
+-		for (const msg of this._pendingNextTurnMessages) {
+-			messages.push(msg);
+-		}
+-		this._pendingNextTurnMessages = [];
+-
+-		for (const msg of result.messages) {
++		if (preparationSignal?.aborted) return;
++		if (request.delivery !== "prompt") request = Object.freeze({ ...request, delivery: "prompt" });
++		this._admitUserRequest(request);
++		// Reserve the scope before awaiting its baseline, so newly arriving input queues normally.
++		this._isAgentRunActive = true;
++		this._agentRunAbortRequested = false;
++		try {
++			await this._startUserRequest(request);
++			if (this._agentRunAbortRequested) return;
++			// Check if we need to compact before sending (catches aborted responses).
++			// The user's new prompt is sent below, so do not call agent.continue() here.
++			const lastAssistant = this._findLastAssistantMessage();
++			if (lastAssistant) {
++				await this._checkCompaction(lastAssistant, false);
++			}
++
++			// Emit before_agent_start before normalizing images so extension-driven model
++			// selection determines the resize profile used for the request and history.
++			const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
++			const result = await this._extensionRunner.emitBeforeAgentStart(
++				expandedText,
++				currentImages,
++				this._baseSystemPromptOptions,
++			);
++			// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
++			// which updates the live loadout instead. An explicit edit wins; otherwise the live
++			// loadout is authoritative, so a setActiveTools() call is not undone here.
++			const handlerEditedTools =
++				result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
++				result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
++			if (!handlerEditedTools) result.systemPromptOptions.selectedTools = this.getActiveToolNames();
++
++			const normalized = await this._normalizePromptImages(currentImages);
++			const userText =
++				normalized.hints.length > 0 ? `${expandedText}\n\n${normalized.hints.join("\n")}` : expandedText;
++
++			// Build messages only after hooks and image normalization have completed.
++			const messages: AgentMessage[] = [];
++			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: userText }];
++			userContent.push(...normalized.images);
+ 			messages.push({
+-				role: "custom",
+-				customType: msg.customType,
+-				// Untyped extensions can pass null/missing content; normalize at ingestion.
+-				content: msg.content ?? [],
+-				display: msg.display,
+-				details: msg.details,
++				role: "user",
++				content: userContent,
++				userRequest: request,
+ 				timestamp: Date.now(),
+ 			});
+-		}
+-		const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
+-		this._runSystemPromptOptions = result.systemPromptOptions;
+-		if (updateMessage) messages.unshift(updateMessage);
+-
+-		preflightResult?.("started");
+-		await this._runAgentPrompt(messages);
++
++			// Inject any pending "nextTurn" messages as context alongside the user message
++			for (const msg of this._pendingNextTurnMessages) {
++				messages.push(msg);
++			}
++			this._pendingNextTurnMessages = [];
++
++			for (const msg of result.messages) {
++				messages.push({
++					role: "custom",
++					customType: msg.customType,
++					// Untyped extensions can pass null/missing content; normalize at ingestion.
++					content: msg.content ?? [],
++					display: msg.display,
++					details: msg.details,
++					timestamp: Date.now(),
++				});
++			}
++			const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
++			this._runSystemPromptOptions = result.systemPromptOptions;
++			if (updateMessage) messages.unshift(updateMessage);
++
++			preflightResult?.("started");
++			await this._runAgentPrompt(messages);
++		} catch (error) {
++			this._lastActivityOutcome = "error";
++			throw error;
++		} finally {
++			// _runAgentPrompt normally settles; preparation can fail or be aborted before it starts.
++			if (this._userRequest?.id === request.id) await this._emitAgentSettled();
++		}
+ 	}
+ 
+ 	/**
+@@ -2180,11 +2331,13 @@
+ 			this._throwIfExtensionCommand(text);
+ 		}
+ 
++		const request = this._newUserRequest(source, behavior);
+ 		const processedInput = await this._runInputHandlers(
+ 			text,
+ 			images,
+ 			source,
+ 			this.isStreaming ? behavior : undefined,
++			request,
+ 		);
+ 		if (!processedInput) return "handled";
+ 
+@@ -2192,9 +2345,9 @@
+ 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+ 
+ 		if (behavior === "steer") {
+-			await this._queueSteer(expandedText, processedInput.images);
++			await this._queueSteer(expandedText, processedInput.images, request);
+ 		} else {
+-			await this._queueFollowUp(expandedText, processedInput.images);
++			await this._queueFollowUp(expandedText, processedInput.images, request);
+ 		}
+ 		return "queued";
+ 	}
+@@ -2235,31 +2388,38 @@
+ 	/**
+ 	 * Internal: Queue a steering message (already expanded, no extension command check).
+ 	 */
+-	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
+-		this._steeringMessages.push(text);
+-		this._emitQueueUpdate();
++	private async _queueSteer(text: string, images: ImageContent[] | undefined, request: UserRequest): Promise<void> {
++		if (request.delivery !== "steer") request = Object.freeze({ ...request, delivery: "steer" });
+ 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
+ 		if (images) {
+ 			content.push(...images);
+ 		}
+ 		this.agent.steer({
++			userRequest: request,
+ 			role: "user",
+ 			content,
+ 			timestamp: Date.now(),
+ 		});
++		this._steeringMessages.push(text);
++		this._steeringRequestIds.push(request.id);
++		this._admitUserRequest(request);
++		this._emitQueueUpdate();
+ 	}
+ 
+ 	/**
+ 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
+ 	 */
+-	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
+-		this._followUpMessages.push(text);
+-		this._emitQueueUpdate();
++	private async _queueFollowUp(text: string, images: ImageContent[] | undefined, request: UserRequest): Promise<void> {
++		if (request.delivery !== "followUp") request = Object.freeze({ ...request, delivery: "followUp" });
+ 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
+ 		if (images) {
+ 			content.push(...images);
+ 		}
+-		this.agent.followUp({ role: "user", content, timestamp: Date.now() });
++		this.agent.followUp({ role: "user", content, timestamp: Date.now(), userRequest: request });
++		this._followUpMessages.push(text);
++		this._followUpRequestIds.push(request.id);
++		this._admitUserRequest(request);
++		this._emitQueueUpdate();
+ 	}
+ 
+ 	/**
+@@ -2283,7 +2443,7 @@
+ 	 */
+ 	enqueueCustomMessage<T = unknown>(
+ 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+-		options?: { deliverAs?: "steer" | "followUp" },
++		options?: { deliverAs?: "steer" | "followUp"; correlationId?: string },
+ 	): { status: "queued" } {
+ 		if (this.isCompacting && !this.isStreaming) {
+ 			throw new Error("Cannot enqueue a custom message during idle compaction");
+@@ -2295,7 +2455,8 @@
+ 			display: message.display,
+ 			details: message.details,
+ 			timestamp: Date.now(),
+-		} satisfies CustomMessage<T>;
++			userRequest: this._newUserRequest("extension", options?.deliverAs ?? "steer", options?.correlationId),
++		} satisfies CustomMessage<T> & { userRequest: UserRequest };
+ 		const running = this.isStreaming;
+ 		if (running && options?.deliverAs === "followUp") {
+ 			this.agent.followUp(appMessage);
+@@ -2304,8 +2465,10 @@
+ 			// starts the lifecycle and drains this steering queue before that call.
+ 			this.agent.steer(appMessage);
+ 		}
++		this._admitUserRequest(appMessage.userRequest);
+ 		if (!running) {
+ 			const startRun = async () => {
++				if (this.isStreaming || !this.agent.hasQueuedMessages()) return;
+ 				try {
+ 					await this._runAgentPrompt([]);
+ 				} catch (err) {
+@@ -2350,7 +2513,14 @@
+ 			display: message.display,
+ 			details: message.details,
+ 			timestamp: Date.now(),
+-		} satisfies CustomMessage<T>;
++			userRequest:
++				options?.deliverAs !== "nextTurn" &&
++				options?.triggerTurn !== false &&
++				(this.isStreaming || options?.triggerTurn)
++					? this._newUserRequest("extension", this.isStreaming ? (options?.deliverAs ?? "steer") : "prompt")
++					: undefined,
++		} satisfies CustomMessage<T> & { userRequest?: UserRequest };
++		if (appMessage.userRequest) this._admitUserRequest(appMessage.userRequest);
+ 		if (options?.deliverAs === "nextTurn") {
+ 			this._pendingNextTurnMessages.push(appMessage);
+ 		} else if (this.isStreaming && options?.triggerTurn !== false) {
+@@ -2452,6 +2622,8 @@
+ 		const followUp = [...this._followUpMessages];
+ 		this._steeringMessages = [];
+ 		this._followUpMessages = [];
++		this._steeringRequestIds = [];
++		this._followUpRequestIds = [];
+ 		this.agent.clearAllQueues();
+ 		this._emitQueueUpdate();
+ 		return { steering, followUp };
+@@ -2480,6 +2652,7 @@
+ 	 * Abort current operation and wait for agent to become idle.
+ 	 */
+ 	async abort(): Promise<void> {
++		this._userRequestPreparation?.controller.abort();
+ 		if (this._isAgentRunActive) {
+ 			this._agentRunAbortRequested = true;
+ 		}
+@@ -3488,6 +3661,8 @@
+ 				isIdle: () => this.isIdle,
+ 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
+ 				getSignal: () => this.agent.signal,
++				getUserRequest: () => this._userRequest,
++				getUserRequestPreparation: () => this._userRequestPreparation?.request,
+ 				abort: () => {
+ 					if (this._extensionAbortHandler) {
+ 						this._extensionAbortHandler();
+@@ -3495,7 +3670,7 @@
+ 					}
+ 					void this.abort();
+ 				},
+-				hasPendingMessages: () => this.pendingMessageCount > 0,
++				hasPendingMessages: () => this.pendingMessageCount > 0 || this.agent.hasQueuedMessages(),
+ 				shutdown: () => {
+ 					this._extensionShutdownHandler?.();
+ 				},
+diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
+--- a/packages/coding-agent/src/core/extensions/types.ts
++++ b/packages/coding-agent/src/core/extensions/types.ts
+@@ -16,6 +16,8 @@
+ 	AgentToolUpdateCallback,
+ 	ThinkingLevel,
+ 	ToolExecutionMode,
++	UserRequest,
++	UserRequestScope,
+ } from "@earendil-works/pi-agent-core";
+ import type {
+ 	AnyModel,
+@@ -344,6 +346,10 @@
+ 	scopedModels: readonly ScopedModel[];
+ 	/** Current thinking level, when provided by the session runtime. */
+ 	thinkingLevel?: ThinkingLevel;
++	/** Active admitted request, including its automatic continuations, or undefined outside a response. */
++	getUserRequest?(): UserRequestScope | undefined;
++	/** Idle input observation, before transformation/expansion; present only on preparation-capable hosts. */
++	getUserRequestPreparation?(): UserRequest | undefined;
+ 	/** Whether the agent is idle (not streaming) */
+ 	isIdle(): boolean;
+ 	/** Whether project-local trust is active for this context. */
+@@ -1002,6 +1008,34 @@
+ }
+ 
+ /** Fired after an agent run has fully settled and no automatic retry, compaction, or queued continuation will run. */
++/** Awaited observation barrier before idle prompt input handlers and expansion. Does not start a response. */
++export interface UserRequestPrepareEvent {
++	type: "user_request_prepare";
++	request: UserRequest;
++}
++
++/** Preparation ended without starting a response, for example handled input or rejected preflight. */
++export interface UserRequestPrepareEndEvent {
++	type: "user_request_prepare_end";
++	request: UserRequest;
++	outcome: "completed" | "interrupted" | "failed";
++}
++
++/** Awaited notification before preparation/model work for the actual selected response. */
++export interface UserRequestStartEvent {
++	type: "user_request_start";
++	request: UserRequestScope;
++	/** Explicit transfer of an earlier idle preparation interval when asynchronous input changed routing. */
++	preparationId?: string;
++}
++
++/** Awaited final notification before the next distinct request can start work. */
++export interface UserRequestEndEvent {
++	type: "user_request_end";
++	request: UserRequestScope;
++	outcome: "completed" | "interrupted" | "failed";
++}
++
+ export interface AgentSettledEvent {
+ 	type: "agent_settled";
+ 	/** Whether the run ended because it was aborted, for example with Escape. */
+@@ -1141,6 +1175,8 @@
+ 
+ /** Fired when user input is received, before agent processing */
+ export interface InputEvent {
++	/** Supplied by the native session; optional for extensions constructing their own input events. */
++	request?: UserRequest;
+ 	type: "input";
+ 	/** The input text */
+ 	text: string;
+@@ -1391,6 +1427,10 @@
+ 	| AgentEndEvent
+ 	| AgentBeforeSettleEvent
+ 	| AgentSettledEvent
++	| UserRequestPrepareEvent
++	| UserRequestPrepareEndEvent
++	| UserRequestStartEvent
++	| UserRequestEndEvent
+ 	| UIPromptStartEvent
+ 	| UIPromptEndEvent
+ 	| TurnStartEvent
+@@ -1618,6 +1658,10 @@
+ 		handler: ExtensionHandler<AgentBeforeSettleEvent, AgentBeforeSettleEventResult>,
+ 	): () => void;
+ 	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): () => void;
++	on(event: "user_request_prepare", handler: ExtensionHandler<UserRequestPrepareEvent>): () => void;
++	on(event: "user_request_prepare_end", handler: ExtensionHandler<UserRequestPrepareEndEvent>): () => void;
++	on(event: "user_request_start", handler: ExtensionHandler<UserRequestStartEvent>): () => void;
++	on(event: "user_request_end", handler: ExtensionHandler<UserRequestEndEvent>): () => void;
+ 	on(event: "ui_prompt_start", handler: ExtensionHandler<UIPromptStartEvent>): () => void;
+ 	on(event: "ui_prompt_end", handler: ExtensionHandler<UIPromptEndEvent>): () => void;
+ 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): () => void;
+@@ -2081,7 +2125,7 @@
+ 
+ export type EnqueueMessageHandler = <T = unknown>(
+ 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+-	options?: { deliverAs?: "steer" | "followUp" },
++	options?: { deliverAs?: "steer" | "followUp"; correlationId?: string },
+ ) => { status: "queued" };
+ 
+ export type SendMessageHandler = <T = unknown>(
+@@ -2196,6 +2240,8 @@
+ 	isIdle: () => boolean;
+ 	isProjectTrusted: () => boolean;
+ 	getSignal: () => AbortSignal | undefined;
++	getUserRequest?: () => UserRequestScope | undefined;
++	getUserRequestPreparation?: () => UserRequest | undefined;
+ 	abort: () => void;
+ 	hasPendingMessages: () => boolean;
+ 	shutdown: () => void;
+diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
+--- a/packages/coding-agent/src/core/extensions/runner.ts
++++ b/packages/coding-agent/src/core/extensions/runner.ts
+@@ -2,6 +2,7 @@
+  * Extension runner - executes extensions and manages their lifecycle.
+  */
+ 
++import { randomUUID } from "node:crypto";
+ import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+ import {
+ 	getCurrentSystemMessage,
+@@ -367,6 +368,8 @@
+ 	private getScopedModels: () => readonly ScopedModel[] = () => [];
+ 	private isIdleFn: () => boolean = () => true;
+ 	private isProjectTrustedFn: () => boolean = () => true;
++	private getUserRequestFn: NonNullable<ExtensionContext["getUserRequest"]> = () => undefined;
++	private getUserRequestPreparationFn: ExtensionContext["getUserRequestPreparation"];
+ 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
+ 	private waitForIdleFn: () => Promise<void> = async () => {};
+ 	private abortFn: () => void = () => {};
+@@ -443,6 +446,8 @@
+ 		this.isIdleFn = contextActions.isIdle;
+ 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
+ 		this.getSignalFn = contextActions.getSignal;
++		this.getUserRequestFn = contextActions.getUserRequest ?? (() => undefined);
++		this.getUserRequestPreparationFn = contextActions.getUserRequestPreparation;
+ 		this.abortFn = contextActions.abort;
+ 		this.hasPendingMessagesFn = contextActions.hasPendingMessages;
+ 		this.shutdownHandler = contextActions.shutdown;
+@@ -915,6 +920,19 @@
+ 			get thinkingLevel() {
+ 				runner.assertActive();
+ 				return runner.runtime.getThinkingLevel();
++			},
++			get getUserRequestPreparation() {
++				runner.assertActive();
++				return runner.getUserRequestPreparationFn
++					? () => {
++							runner.assertActive();
++							return runner.getUserRequestPreparationFn?.();
++						}
++					: undefined;
++			},
++			getUserRequest: () => {
++				runner.assertActive();
++				return runner.getUserRequestFn();
+ 			},
+ 			isIdle: () => {
+ 				runner.assertActive();
+@@ -1523,6 +1541,11 @@
+ 		images: ImageContent[] | undefined,
+ 		source: InputSource,
+ 		streamingBehavior?: "steer" | "followUp",
++		request: NonNullable<InputEvent["request"]> = Object.freeze({
++			id: randomUUID(),
++			source,
++			delivery: streamingBehavior ?? "prompt",
++		}),
+ 	): Promise<InputEventResult> {
+ 		const ctx = this.createContext();
+ 		let currentText = text;
+@@ -1537,6 +1560,7 @@
+ 						images: currentImages,
+ 						source,
+ 						streamingBehavior,
++						request,
+ 					};
+ 					const result = (await handler(event, ctx)) as InputEventResult | undefined;
+ 					if (result?.action === "handled") return result;
+diff --git a/packages/coding-agent/src/core/extensions/index.ts b/packages/coding-agent/src/core/extensions/index.ts
+--- a/packages/coding-agent/src/core/extensions/index.ts
++++ b/packages/coding-agent/src/core/extensions/index.ts
+@@ -202,6 +202,10 @@
+ 	// Events - User Bash
+ 	UserBashEvent,
+ 	UserBashEventResult,
++	UserRequestEndEvent,
++	UserRequestPrepareEndEvent,
++	UserRequestPrepareEvent,
++	UserRequestStartEvent,
+ 	WidgetPlacement,
+ 	WorkingIndicatorOptions,
+ 	WriteToolCallEvent,
+diff --git a/packages/coding-agent/src/core/messages.ts b/packages/coding-agent/src/core/messages.ts
+--- a/packages/coding-agent/src/core/messages.ts
++++ b/packages/coding-agent/src/core/messages.ts
+@@ -185,6 +185,10 @@
+ 				case "user":
+ 				case "assistant":
+ 				case "toolResult":
++					if (m.userRequest) {
++						const { userRequest: _request, ...message } = m;
++						return message;
++					}
+ 					return m;
+ 				default:
+ 					// biome-ignore lint/correctness/noSwitchDeclarations: fine
+diff --git a/packages/coding-agent/src/index.ts b/packages/coding-agent/src/index.ts
+--- a/packages/coding-agent/src/index.ts
++++ b/packages/coding-agent/src/index.ts
+@@ -1,5 +1,6 @@
+ // Core session management
+ 
++export type { UserRequest, UserRequestGroup, UserRequestScope } from "@earendil-works/pi-agent-core";
+ export { type Args, parseArgs } from "./cli/args.ts";
+ 
+ // Config paths
+@@ -192,6 +193,10 @@
+ 	UIPromptStartEvent,
+ 	UserBashEvent,
+ 	UserBashEventResult,
++	UserRequestEndEvent,
++	UserRequestPrepareEndEvent,
++	UserRequestPrepareEvent,
++	UserRequestStartEvent,
+ 	WidgetPlacement,
+ 	WorkingIndicatorOptions,
+ 	WriteToolCallEvent,
+diff --git a/packages/coding-agent/docs/extensions.md b/packages/coding-agent/docs/extensions.md
+--- a/packages/coding-agent/docs/extensions.md
++++ b/packages/coding-agent/docs/extensions.md
+@@ -65,6 +65,10 @@
+ 
+ `agent_before_settle` is the final actionable boundary: it can append entries and request one continuation.
+ `agent_settled` is final and notification-only; use it when an integration needs to know Pi will not continue automatically.
++
++For an awaited boundary around one actual response, including an intentional `all` queue group, use `user_request_start` and `user_request_end` with `ctx.getUserRequest()`.
++Observe `user_request_prepare` and `user_request_prepare_end` with `ctx.getUserRequestPreparation()` when the baseline must precede idle input transforms or expansion.
++See [User-request lifecycle](user-request-lifecycle.md) for provenance, outcomes, steering, correlation, and continuation semantics.
+ 
+ <a id="extensionapi-methods"></a>
+ 
+diff --git a/packages/coding-agent/docs/user-request-lifecycle.md b/packages/coding-agent/docs/user-request-lifecycle.md
+new file mode 100644
+--- /dev/null
++++ b/packages/coding-agent/docs/user-request-lifecycle.md
+@@ -0,0 +1,67 @@
++# User-request lifecycle
++
++A native run can process several admitted requests.
++Use request boundaries when observation must cover exactly one request response, including its tools, retries, recovery, and automatic continuations.
++An explicitly selected `all` queue batch has one response scope containing every admitted request in that selection.
++
++`UserRequest`, `UserRequestGroup`, and `UserRequestScope` are exported by agent-core and coding-agent.
++It has readonly `{id:string,source:string,delivery:"prompt"|"steer"|"followUp",correlationId?:string}` fields.
++Native IDs are fresh UUIDs allocated before input transforms and retained through queue admission and consumption.
++They are independent of prompt text and timestamps.
++Native `InputEvent.request` supplies the same provenance to every chained input handler.
++The declaration permits extension-constructed input events without provenance; native session input always supplies it.
++The ID and source remain stable if asynchronous input transformation changes the session busy state.
++Input delivery describes planned routing; admission and start records describe the actual route without creating another ID.
++Before an idle `prompt()` executes input transforms, expansion, or hooks, Pi awaits `user_request_prepare` with `{type:"user_request_prepare",request:UserRequest}`.
++This is an observation interval, not queue admission or a started model response.
++`ctx.getUserRequestPreparation()` returns its original request until it transfers to an actual response or ends.
++Its optional declaration preserves externally constructed legacy contexts; native preparation-capable contexts always supply it.
++Integrations needing first-edit coverage must check this capability as well as `getUserRequest()`.
++Busy input does not create another preparation interval or change the active response scope.
++The first actual response inherits any outstanding idle preparation interval without resampling its baseline.
++If asynchronous input changes which request starts first, `UserRequestStartEvent.preparationId` explicitly identifies that original interval for binding to the selected native scope.
++Normal same-ID start is idempotent, and an intentional `all` selection still starts exactly one group response.
++Handled input or rejected preflight ends an unconsumed interval through awaited `user_request_prepare_end` with `{request,outcome:"completed"|"interrupted"|"failed"}`.
++Handled extension work is completed, abort is interrupted, and rejected preflight is failed; these notifications do not manufacture model responses.
++Observation notifications cannot transform input or request continuation, and input handlers retain their ordinary ordering and error policy.
++Extension commands still execute before ordinary prompt interception, and queue-only `steer()`/`followUp()` calls retain their upstream admission semantics.
++
++`user_request_start` and `user_request_end` are awaited extension notifications.
++Payloads are `{type:"user_request_start",request}` and `{type:"user_request_end",request,outcome}`.
++Outcomes are `completed`, `interrupted`, and `failed`.
++Start finishes before selected-response preparation, provider work, and tools.
++For idle prompt input work, observe the earlier preparation barrier too.
++End finishes after tools, retries, recovery, and automatic continuations, before the next distinct request starts work.
++A terminal unrecovered provider or runtime failure is failed; abort or interactive steering superseding an active scope is interrupted.
++Already executing tools finish at their ordinary steering boundary.
++Notification handlers cannot return continuation decisions; ordinary handler errors are reported and coding can continue.
++
++`UserRequestScope` is `UserRequest | UserRequestGroup`.
++A group has readonly `{id:string,mode:"all",requests:readonly UserRequest[]}` fields.
++Its fresh response-scope UUID is independent of every member UUID; the ordered members retain their original source, delivery, and optional correlation reference.
++A group represents one actual response addressing an intentional batch, rather than separate completed responses for its members.
++The lifecycle event `request` and `ctx.getUserRequest()` and `session.userRequest` use this scope union.
++The context getter and session property return undefined outside a response.
++The context method is optional for extension-created contexts; the native runtime supplies it.
++Session subscribers observe both events using their existing notification-only contract.
++
++`enqueueMessage()` retains synchronous native queue admission and the exact `{status:"queued"}` receipt.
++It creates a fresh extension-origin request even when idle and no input event occurs.
++Its optional `correlationId` admission option retains a submitter-owned reference without replacing the native ID or guaranteeing deduplication.
++Repeated correlation references still create distinct requests.
++Custom messages triggering work create requests; context-only custom messages, nextTurn messages, boundary entries, retries, and internal continuations stay in their owning response.
++
++General `AgentMessage.userRequest` metadata and session-owned `pi.user-request` custom entries carry provenance.
++Custom entries record admitted/start/end phases, exclude prompt text, and do not participate in model context.
++User-message metadata survives ordinary persistence; custom-message admission and lifecycle provenance live in custom entries without changing caller details.
++Queues remain memory-only, and admission records do not prove consumption or successful completion.
++
++Queue selection, order, and model-facing batching follow the configured SDK modes unchanged.
++Ordinary one-at-a-time selection starts one scope per admitted request.
++Explicit `all` selection with two or more distinct tagged requests starts one group scope and publishes one actual group outcome.
++Selection with one tagged request uses its individual scope; untagged context contributions do not create group members.
++Start finishes before preparation for the entire selection, and its baseline remains active throughout tools, retries, recovery, and automatic continuation.
++A new selected group interrupts a superseded steering scope in the same way as a single steering request.
++AgentSession uses the general agent-core `beforeInput` barrier for selected input and `deferFollowUp` scheduling option to perform recovery and settlement before consuming follow-ups.
++Direct agent-core consumers keep default scheduling unless they select these options.
++Steering remains tool-safe and supersedes an active scope rather than becoming an independent completed follow-up.
+diff --git a/packages/coding-agent/test/suite/agent-session-boundaries.test.ts b/packages/coding-agent/test/suite/agent-session-boundaries.test.ts
+--- a/packages/coding-agent/test/suite/agent-session-boundaries.test.ts
++++ b/packages/coding-agent/test/suite/agent-session-boundaries.test.ts
+@@ -114,8 +114,16 @@
+ 				expect(requests[0]).toContain("queued steering");
+ 				expect(requests[0]).not.toContain("queued follow-up");
+ 			} else if (queueKind === "follow-up") {
+-				expect(harness.faux.state.callCount).toBe(2);
+-				expect(requests[0]).toContain("queued follow-up");
++				// Automatic continuation belongs to the original response before the next external request.
++				expect(harness.faux.state.callCount).toBe(3);
++				expect(requests[0]).not.toContain("queued follow-up");
++				expect(requests[1]).toContain("queued follow-up");
++				const starts = harness.eventsOfType("user_request_start");
++				expect(starts).toHaveLength(2);
++				expect(harness.eventsOfType("user_request_end")).toEqual([
++					{ type: "user_request_end", request: starts[0].request, outcome: "completed" },
++					{ type: "user_request_end", request: starts[1].request, outcome: "completed" },
++				]);
+ 			} else {
+ 				expect(harness.faux.state.callCount).toBe(3);
+ 				expect(requests[0]).toContain("queued steering");
+diff --git a/packages/coding-agent/test/suite/agent-session-retry-events.test.ts b/packages/coding-agent/test/suite/agent-session-retry-events.test.ts
+--- a/packages/coding-agent/test/suite/agent-session-retry-events.test.ts
++++ b/packages/coding-agent/test/suite/agent-session-retry-events.test.ts
+@@ -274,6 +274,8 @@
+ 		await harness.session.prompt("hi");
+ 
+ 		expect(normalizeEventOrder(harness.events)).toEqual([
++			"user_request_prepare",
++			"user_request_start",
+ 			"agent_start",
+ 			"turn_start",
+ 			"message_start:system",
+@@ -285,6 +287,7 @@
+ 			"message_end:assistant",
+ 			"turn_end",
+ 			"agent_end",
++			"user_request_end",
+ 			"agent_settled",
+ 		]);
+ 	});
+@@ -313,6 +316,8 @@
+ 
+ 		expect(toolRuns).toEqual(["hello"]);
+ 		expect(normalizeEventOrder(harness.events)).toEqual([
++			"user_request_prepare",
++			"user_request_start",
+ 			"agent_start",
+ 			"turn_start",
+ 			"message_start:system",
+@@ -333,6 +338,7 @@
+ 			"message_end:assistant",
+ 			"turn_end",
+ 			"agent_end",
++			"user_request_end",
+ 			"agent_settled",
+ 		]);
+ 	});
+diff --git a/packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts b/packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts
+--- a/packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts
++++ b/packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts
+@@ -226,11 +226,23 @@
+ 		// The prompt is declared by the first request, after the queued custom message.
+ 		expect(entries.map((entry) => entry.type)).toEqual([
+ 			"custom_message",
++			"custom",
++			"custom",
+ 			"message",
+ 			"message",
+ 			"message",
+ 			"message",
+ 			"message",
++			"custom",
++		]);
++		const lifecycle = entries.flatMap((entry) =>
++			entry.type === "custom" && entry.customType === "pi.user-request" ? [entry.data] : [],
++		);
++		const request = harness.eventsOfType("user_request_start")[0].request;
++		expect(lifecycle).toEqual([
++			{ phase: "admitted", request },
++			{ phase: "start", request },
++			{ phase: "end", request, outcome: "completed" },
+ 		]);
+ 		expect(harness.session.messages.map((message) => message.role)).toEqual([
+ 			"custom",
+@@ -281,7 +293,13 @@
+ 		await harness.session.abort();
+ 		await promptPromise;
+ 
+-		const lastEntry = harness.sessionManager.getEntries()[harness.sessionManager.getEntries().length - 1];
++		const entries = harness.sessionManager.getEntries();
++		expect(entries.at(-1)).toMatchObject({
++			type: "custom",
++			customType: "pi.user-request",
++			data: { phase: "end", outcome: "interrupted" },
++		});
++		const lastEntry = entries.at(-2);
+ 		expect(lastEntry?.type).toBe("message");
+ 		if (lastEntry?.type === "message") {
+ 			expect(lastEntry.message.role).toBe("assistant");

@@ -116,8 +116,17 @@ If you don't use it, just remove it from `brews` in your copy.
 
 - `home/AGENTS.md` is my personal agent policy, and `home.nix` installs it for Claude, Codex, and opencode.
   If you clone this repo, you'd silently inherit my agent instructions - edit or delete `home/AGENTS.md` if you don't want that.
-- The `cc` and `co` shell aliases in `home.nix` are high-agency shortcuts: `claude --dangerously-skip-permissions` and `codex --full-auto`.
+- The `cc` and `co` shell aliases in `home.nix` are high-agency shortcuts: `claude --dangerously-skip-permissions` and `codex --sandbox workspace-write --ask-for-approval on-request`.
   They're convenient for me, but know what they do before you use them.
+  The feature-only Codex launcher translates a stale `--full-auto` option to those supported flags only when it is an option, not after `--` or as another option's value; it preserves the user's other arguments.
+
+## Automatic Hunk review
+
+Fresh interactive Pi and Codex sessions in Git checkouts inside compatible Herdr 0.9.3 or newer can open one persistent Hunk review beside the coding session when its first change is observed.
+The default review shows the latest completed response; cumulative review, saved comments, and explicit feedback to the original native session remain available separately.
+See the [review workflow](docs/hunk-turn-review-workflow.md) and [feature-only installation](docs/hunk-turn-review-installation.md).
+Install this profile through its dedicated installer rather than a broader system rebuild.
+Native Codex hook approval and direct human confirmation of terminal appearance remain separate acceptance steps.
 
 ## Repo tour
 

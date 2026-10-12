@@ -50,6 +50,20 @@ describe("authoritative revision guard", () => {
 });
 
 describe("private durable storage", () => {
+  test("explicit feedback preserves clarification and handoff intent without authorizing automatic edits", () => {
+    const root = mkdtempSync(join(tmpdir(), "hunk-intent."));
+    const batch = writeBatch(
+      root,
+      { notes: [{ summary: "Explain this and write a handoff" }] },
+      "intent",
+      "Review",
+    );
+    const prompt = agentPrompt(batch, checkout);
+    expect(prompt).toContain("code changes, clarification, handoff documents");
+    expect(prompt).toContain("inspect current files");
+    expect(prompt).toContain("ask the user");
+    expect(prompt).not.toContain("authorize only changes");
+  });
   test("exclusive immutable JSON, Markdown, complete multiline text and checksum", () => {
     const root = mkdtempSync(join(tmpdir(), "hunk-storage."));
     const text = "Quotes \" and '\n```danger```\nsecond line";
@@ -137,6 +151,17 @@ describe("private durable storage", () => {
 });
 
 describe("validated Herdr adapter", () => {
+  test("unbound manual reviews refuse terminal delivery even to a currently compatible agent", async () => {
+    let invoked = false;
+    const adapter = new Herdr("review", "/herdr", async () => {
+      invoked = true;
+      return JSON.stringify({ result: { type: "agent_prompted" } });
+    });
+    await expect(adapter.prompt(target, "Explicit human request")).rejects.toThrow(
+      "native session binding",
+    );
+    expect(invoked).toBe(false);
+  });
   test("same canonical checkout, recognized session and settled agent required", () => {
     expect(compatible(target, checkout)).toBe(true);
     for (const agent of [
@@ -191,23 +216,5 @@ describe("validated Herdr adapter", () => {
         throw new Error("missing");
       }).validate(target, checkout),
     ).rejects.toThrow("missing");
-  });
-  test("quote, newline and shell syntax remain one argument in the explicit named session", async () => {
-    const mutableCalls: string[][] = [];
-    const adapter = new Herdr("review", "/herdr", async (_binary, args) => {
-      mutableCalls.push([...args]);
-      return JSON.stringify({ result: { type: "agent_prompted" } });
-    });
-    const text = "Quotes \" '\n$(touch /never) `not-shell`; end";
-    await adapter.prompt(target, text);
-    expect(mutableCalls).toEqual([
-      ["agent", "prompt", target.pane_id, text, "--session", "review"],
-    ]);
-  });
-  test("unacknowledged delivery is an error, not success", async () => {
-    for (const response of [{ error: { code: "agent_blocked" } }, { result: { type: "wrong" } }])
-      await expect(
-        new Herdr("review", "/herdr", async () => JSON.stringify(response)).prompt(target, "text"),
-      ).rejects.toThrow("did not acknowledge");
   });
 });
