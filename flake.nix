@@ -70,8 +70,8 @@
         in
           assert builtins.elem bashDarwinInteractive standalone.config.home.packages;
           assert !(builtins.elem pkgs.bash standalone.config.home.packages);
-          assert builtins.elem hunkTurnReviewProfile featurePackages;
-          assert !(builtins.elem bashDarwinInteractive featurePackages);
+          assert !(builtins.elem hunkTurnReviewProfile featurePackages);
+          assert builtins.elem bashDarwinInteractive featurePackages;
           assert !(builtins.elem pkgs.bash featurePackages);
           pkgs.runCommand "bash-home-wiring-check" {} ''touch "$out"'';
         bash-heredoc = pkgs.runCommand "bash-darwin-heredoc-check" {} ''
@@ -127,7 +127,7 @@
             home-manager.useGlobalPkgs = true;
             home-manager.useUserPackages = true;
             home-manager.backupFileExtension = "hm-backup";
-            home-manager.extraSpecialArgs = { inherit user hunkTurnReviewProfile bashDarwinInteractive; };
+            home-manager.extraSpecialArgs = { inherit user bashDarwinInteractive; };
             home-manager.users.${user} = import ./home.nix;
           }
         ];
