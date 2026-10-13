@@ -7,14 +7,22 @@ disable-model-invocation: true
 # To Tickets
 
 Break a plan, spec, or conversation into a set of **tickets**: tracer-bullet vertical slices, each declaring the tickets that **block** it.
+A ticket kind means an implementation slice derived from a spec or plan and is independent of triage state and readiness.
 
-The issue tracker and triage label vocabulary should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`.
+The issue tracker should have been configured.
+Read issue-kind mappings and tracker publishing rules from `docs/agents/issue-tracker.md`, plus triage-role mappings from `docs/agents/triage-labels.md` when present.
+If the tracker is not configured, tell the user to run `/setup-matt-pocock-skills`.
+When no issue-kind mapping is recorded, use literal defaults `spec` and `ticket` without rerunning setup.
+When no triage-role mapping is present, use the default `ready-for-agent` role.
 
 ## Process
 
 ### 1. Gather context
 
-Work from whatever is already in the conversation context. If the user passes a reference (a spec path, an issue number or URL) as an argument, fetch it and read its full body and comments.
+Work from whatever is already in the conversation context.
+If the user passes a reference (a spec path, an issue number or URL) as an argument, fetch it and read its full body and comments.
+Treat an issue as the source spec only when that specific spec issue is explicitly identified.
+Do not infer it from a blocker, title, or generic parent or map.
 
 ### 2. Explore the codebase (optional)
 
@@ -57,14 +65,31 @@ Iterate until the user approves the breakdown.
 
 ### 5. Publish the tickets to the configured tracker
 
-Publish the approved tickets. **How** depends on the tracker `/setup-matt-pocock-skills` configured; the tickets are the same either way, only the shape of the blocking edges changes:
+Use the issue-kind mapping read from `docs/agents/issue-tracker.md`, or the literal defaults `spec` and `ticket` when no mapping is recorded.
+For each published ticket, apply exactly one configured `ticket` kind additively alongside the configured `ready-for-agent` triage role (default `ready-for-agent`).
+Preserve all existing labels on label-based trackers.
+If a target issue has a conflicting kind, leave its kind labels unchanged, defer that issue's classification, and report the conflict for maintainer decision.
+On label-based trackers, ensure the selected configured or default kind-label definition exists before publishing.
+If it is missing, create only that definition with tracker-supported tools when authorized in the publishing scope; otherwise report the exact permission or capability blocker and defer publishing rather than omit kind classification.
 
-- **Local files** → write one file per ticket under `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01` in dependency order (blockers first). Each file's "Blocked by" lists the numbers/titles it depends on. Use the per-ticket file template below: one ticket per file, never a single combined file.
-- **A real issue tracker (GitHub, Linear, …)** → publish one issue per ticket in dependency order (blockers first) so each ticket's blocking edges can reference real identifiers. Use the platform's native blocking / sub-issue relationship where it has one; otherwise set each ticket's "Blocked by" to the blocking issues. Apply the `ready-for-agent` triage label unless instructed otherwise; the tickets are agent-grabbable by construction.
+Publish the approved tickets.
+**How** depends on the tracker `/setup-matt-pocock-skills` configured; the tickets are the same either way, only the shape of the blocking edges changes:
 
-Work the **frontier**: any ticket whose blockers are all done. For a purely linear chain that means top to bottom.
+- **Local files** → write one file per ticket under `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01` in dependency order (blockers first).
+  Each file's "Blocked by" lists the numbers/titles it depends on.
+  Use the per-ticket file template below: one ticket per file, never a single combined file.
+  Include the configured `Kind: ticket` value and preserve the separate configured `Status: ready-for-agent` value, along with existing numbering and dependency conventions.
+- **A real issue tracker (GitHub, Linear, …)** → publish one issue per ticket in dependency order (blockers first) so each ticket's blocking edges can reference real identifiers.
+  Use native blocking relationships where supported; otherwise set each ticket's "Blocked by" to its blocking issues.
 
-Do NOT close or modify any parent issue.
+Work the **frontier**: any ticket whose blockers are all done.
+For a purely linear chain that means top to bottom.
+
+When an explicitly identified source spec issue exists, attach each ticket as its native child where the tracker supports that hierarchy, independently of blocking edges.
+Do not infer the source spec from a blocker, title, or generic parent or map.
+Leave the source spec's body, state, and labels unchanged, and do not close it.
+Native child attachment is the sole permitted parent-side relationship change.
+If issue creation succeeds but native child attachment fails, report partial publication with the issue ID and retain it for an attachment-only retry instead of claiming success or recreating the issue.
 
 <local-ticket-template>
 
@@ -73,6 +98,8 @@ Do NOT close or modify any parent issue.
 **What to build:** the end-to-end behaviour this ticket makes work, from the user's perspective, not a layer-by-layer implementation list.
 
 **Blocked by:** the numbers/titles of the tickets that gate this one, or "None (can start immediately)".
+
+Kind: ticket
 
 **Status:** ready-for-agent
 
@@ -85,7 +112,9 @@ Do NOT close or modify any parent issue.
 
 ## Parent
 
-A reference to the parent issue on the tracker (if the source was an existing issue, otherwise omit this section).
+A reference to the explicitly identified source spec issue, if one exists.
+Do not use a blocker or generic parent or map.
+This reference does not replace a native parent/child relationship where supported.
 
 ## What to build
 

@@ -6,7 +6,11 @@ disable-model-invocation: true
 
 This skill takes the current conversation context and codebase understanding and produces a spec. Do NOT interview the user; just synthesize what you already know.
 
-The issue tracker and triage label vocabulary should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`.
+The issue tracker should have been configured.
+Read issue-kind mappings and tracker publishing rules from `docs/agents/issue-tracker.md`, plus triage-role mappings from `docs/agents/triage-labels.md` when present.
+If the tracker is not configured, tell the user to run `/setup-matt-pocock-skills`.
+When no issue-kind mapping is recorded, use literal defaults `spec` and `ticket` without rerunning setup.
+When no triage-role mapping is present, use the default `ready-for-agent` role.
 
 ## Process
 
@@ -16,7 +20,13 @@ The issue tracker and triage label vocabulary should have been provided to you. 
 
 Check with the user that these seams match their expectations.
 
-3. Write the spec using the template below, then publish it to the project issue tracker. Apply the `ready-for-agent` triage label - no need for additional triage.
+3. Write the spec using the template below, then publish it to the configured issue tracker.
+Apply the configured `spec` kind (default `spec`) additively alongside the configured `ready-for-agent` triage role (default `ready-for-agent`).
+On local Markdown, write separate `Kind: spec` and `Status: ready-for-agent` lines, using configured values when present.
+Preserve all existing labels when adding labels.
+Leave any conflicting existing kind unchanged, defer that issue's classification, and report it for maintainer decision.
+On label-based trackers, ensure the selected configured or default kind-label definition exists before publishing.
+If it is missing, create only that definition with tracker-supported tools when authorized in the publishing scope; otherwise report the exact permission or capability blocker and defer publishing rather than omit kind classification.
 
 <spec-template>
 

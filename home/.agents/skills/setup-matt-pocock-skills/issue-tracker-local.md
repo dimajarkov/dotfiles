@@ -2,13 +2,28 @@
 
 Issues and specs for this repo live as markdown files in `.scratch/`.
 
+## Issue kinds
+
+| Kind | Default `Kind:` value | Meaning |
+| --- | --- | --- |
+| spec | spec | Specification describing desired outcomes, requirements, and acceptance |
+| ticket | ticket | Implementation slice derived from a spec or plan |
+
+Use configured values in place of the defaults when present; otherwise use `Kind: spec` and `Kind: ticket`.
+Local Markdown uses `Kind:` fields and does not create tracker-label definitions.
+Kind is independent of `Status`, readiness, file state, dependencies, and acceptance.
+
 ## Conventions
 
 - One feature per directory: `.scratch/<feature-slug>/`
-- The spec is `.scratch/<feature-slug>/spec.md`
-- Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`, never a single combined tickets file
-- Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
-- Comments and conversation history append to the bottom of the file under a `## Comments` heading
+- The spec is `.scratch/<feature-slug>/spec.md`.
+- Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`, never a single combined tickets file.
+- Each new spec or ticket has a `Kind:` line using the configured value.
+- Do not silently change the kind or status of existing files.
+- Triage state is recorded separately as a `Status:` line near the top of each spec or ticket file (see `triage-labels.md` for the role strings).
+- Preserve existing status and numbered dependency conventions when adding a kind.
+- If a file already has a conflicting kind, leave it unchanged and report the conflict for maintainer decision.
+- Comments and conversation history append to the bottom of the file under a `## Comments` heading.
 
 ## When a skill says "publish to the issue tracker"
 

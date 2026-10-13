@@ -14,6 +14,26 @@ Issues and specs for this repo live as GitLab issues. Use the [`glab`](https://g
 
 Infer the repo from `git remote -v`; `glab` does this automatically when run inside a clone.
 
+## Issue kinds and spec children
+
+| Kind | Default label | Meaning |
+| --- | --- | --- |
+| spec | spec | Specification describing desired outcomes, requirements, and acceptance |
+| ticket | ticket | Implementation slice derived from a spec or plan |
+
+- Use repo-specific mapped labels in place of the defaults when configured; otherwise use literal labels `spec` and `ticket`.
+- Add exactly one applicable kind label alongside existing labels, preserving category, triage, readiness, and all other labels.
+- Before applying a configured or default kind label, ensure its label definition exists.
+- If missing, create only that kind definition through tracker-supported tools when authorized in the publishing scope; otherwise report the exact permission or capability blocker and defer publishing rather than omit kind classification.
+- Classify new issues; do not silently retag or retriage existing issues.
+- Kind is independent of triage state, readiness, issue state, blocking dependencies, and acceptance.
+- If an issue already has a conflicting kind, leave its kind labels unchanged, defer that issue's classification, and report the conflict for maintainer decision.
+
+When a ticket derives from an explicitly identified source spec issue, use GitLab's native parent/child hierarchy where the configured instance supports it, independently of blocking links.
+Do not infer the source spec from a blocker, title, or generic map or parent.
+Leave the source spec's description, state, and labels unchanged, and do not close it.
+Native child attachment is the sole permitted parent-side relationship change.
+
 ## Merge requests as a triage surface
 
 **MRs as a request surface: no.** _(Set to `yes` if this repo treats external merge requests as feature requests; `/triage` reads this flag.)_
