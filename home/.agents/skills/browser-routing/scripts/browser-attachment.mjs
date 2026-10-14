@@ -516,6 +516,12 @@ const DIAGNOSTIC_TARGET_TYPES = [
   "iframe",
   "background_page",
   "shared_worker",
+  "browser_ui",
+  "worklet",
+  "webview",
+  "auction_worklet",
+  "assistive_technology",
+  "app",
   "unknown",
 ];
 

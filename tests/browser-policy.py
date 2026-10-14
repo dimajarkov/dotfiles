@@ -731,13 +731,43 @@ class BrowserPolicyContractTests(unittest.TestCase):
         self.assertEqual(targets["rejected_type_counts"], {
             "unsupported_type": {"page": 0, "service_worker": 0, "worker": 0,
                 "other": 0, "browser": 0, "tab": 1, "iframe": 1,
-                "background_page": 0, "shared_worker": 0, "unknown": 0},
+                "background_page": 0, "shared_worker": 0, "browser_ui": 0, "worklet": 0,
+                "webview": 0, "auction_worklet": 0, "assistive_technology": 0, "app": 0, "unknown": 0},
             "foreign_target": {"page": 0, "service_worker": 0, "worker": 1,
                 "other": 0, "browser": 0, "tab": 0, "iframe": 0,
-                "background_page": 0, "shared_worker": 0, "unknown": 0},
+                "background_page": 0, "shared_worker": 0, "browser_ui": 0, "worklet": 0,
+                "webview": 0, "auction_worklet": 0, "assistive_technology": 0, "app": 0, "unknown": 0},
         })
         for marker in ["private-url-marker", "private-id-marker"]:
             self.assertNotIn(marker, result.stdout + result.stderr)
+        self.assertEqual(pathlib.Path(self.allocation["receipt"]).read_bytes(), before)
+        self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
+    def test_attachment_diagnose_names_chromium_types_without_admitting_them(self):
+        self.install_attachment_fixture()
+        types = ["browser_ui", "worklet", "webview", "auction_worklet", "assistive_technology", "app"]
+        self.endpoint_override = lambda path, value: [
+            {"type": "page", "url": "about:blank"},
+            *[{"type": kind, "url": "chrome://private-url-marker/",
+               "id": "private-id-marker", "title": "private-title-marker"} for kind in types],
+        ] if path == "/json/list" else value
+        before = pathlib.Path(self.allocation["receipt"]).read_bytes()
+        result = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        targets = json.loads(result.stdout)["targets"]
+        self.assertEqual(targets["status"], "blocked")
+        self.assertEqual(targets["reason"], "scope_refused")
+        self.assertEqual(targets["counts"]["unsupported_type"], 6)
+        histogram = targets["rejected_type_counts"]
+        for kind in types:
+            self.assertEqual(histogram["unsupported_type"][kind], 1)
+        self.assertEqual(histogram["unsupported_type"]["unknown"], 0)
+        self.assertEqual(sum(histogram["unsupported_type"].values()), 6)
+        self.assertEqual(sum(histogram["foreign_target"].values()), 0)
+        for marker in ["private-url-marker", "private-id-marker", "private-title-marker"]:
+            self.assertNotIn(marker, result.stdout + result.stderr)
+        denied = self.invoke(*self.attach_args("bridge"), env=self.attach_env())
+        self.assertNotEqual(denied.returncode, 0)
         self.assertEqual(pathlib.Path(self.allocation["receipt"]).read_bytes(), before)
         self.assertFalse((self.home / "backend-calls.jsonl").exists())
 
@@ -761,7 +791,8 @@ class BrowserPolicyContractTests(unittest.TestCase):
         self.assertEqual(sum(histogram["unsupported_type"].values()), 7)
         self.assertEqual(sum(histogram["foreign_target"].values()), 0)
         expected_keys = {"page", "service_worker", "worker", "other", "browser", "tab",
-                         "iframe", "background_page", "shared_worker", "unknown"}
+                         "iframe", "background_page", "shared_worker", "browser_ui", "worklet",
+                         "webview", "auction_worklet", "assistive_technology", "app", "unknown"}
         for category in histogram.values():
             self.assertEqual(set(category), expected_keys)
         for marker in [*markers, "private-url-marker", "private-title-marker", "private-id-marker"]:
