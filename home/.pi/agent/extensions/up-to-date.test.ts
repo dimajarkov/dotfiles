@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import registerCodexModelPolicy, { isAllowedModel } from "./gpt-5-6-only.ts";
+import registerCodexModelPolicy, { isAllowedModel } from "./up-to-date.ts";
 
 type Handler = (event: any, context: any) => Promise<void> | void;
 type Model = { id: string; provider: string; name?: string };
