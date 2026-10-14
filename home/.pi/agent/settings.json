@@ -54,10 +54,11 @@
   "extensions": [
     "-builtin:mcp",
     "-extensions/ask-user/index.ts",
-    "+extensions/subagents/index.ts"
+    "-extensions/subagents/index.ts"
   ],
   "skills": [
-    "~/.agents/skills"
+    "~/.agents/skills",
+    "-skills/subagents/SKILL.md"
   ],
   "recentModels": [
     "openai-codex/gpt-6.1-sol"

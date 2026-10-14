@@ -336,8 +336,6 @@ in {
     fi
 
     install_pi_extension_dependencies "${config.home.homeDirectory}/.pi/agent/extensions/web-fetch"
-    subagents_path="${config.home.homeDirectory}/.pi/agent/extensions/subagents"
-    install_pi_extension_dependencies "$subagents_path" all effect-tsgo
     for extension in git-info model-info ui-customization; do
       extension_path="${config.home.homeDirectory}/.pi/agent/extensions/$extension"
       install_pi_extension_dependencies "$extension_path" all effect-tsgo
@@ -382,14 +380,10 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/mcp.json";
   home.file.".pi/agent/skills/web-debug".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/skills/web-debug";
-  home.file.".pi/agent/skills/subagents".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/skills/subagents";
   home.file.".pi/agent/themes/catppuccin-latte.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/catppuccin-latte.json";
   home.file.".pi/agent/themes/catppuccin-mocha.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/themes/catppuccin-mocha.json";
-  home.file.".pi/agent/extensions/subagents".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/subagents";
   home.file.".pi/agent/extensions/shared/tool-call-timeout.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/shared/tool-call-timeout.ts";
   home.file.".pi/agent/extensions/shared/dashboard-state.ts".source =
