@@ -82,6 +82,8 @@ const HELP =
   "metadata-free profile inventory; CDP is not queried and targets remain unobserved.\n" +
   "Permission-denied and mixed-UID entries stay UNKNOWN. Failure counts describe\n" +
   "primary/reprobe observations and may overlap; unknown_live counts process entries.\n" +
+  "Rejected types are counted only with fixed generic labels; arbitrary type strings\n" +
+  "collapse to unknown. These diagnostics never expand target admission.\n" +
   "No URLs, titles, target IDs, argv or environment values are emitted; the receipt\n" +
   "is never bound or updated. Exit 0 means a report, not cleanup or proof readiness.\n" +
   "Expiry blocks new proof/control, not read-only diagnosis or exact-owner\n" +

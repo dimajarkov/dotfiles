@@ -697,6 +697,11 @@ class BrowserPolicyContractTests(unittest.TestCase):
         result = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
+        histogram = report["targets"].pop("rejected_type_counts")
+        self.assertEqual(histogram["unsupported_type"]["unknown"], 1)
+        self.assertEqual(sum(histogram["unsupported_type"].values()), 1)
+        self.assertEqual(histogram["foreign_target"]["page"], 1)
+        self.assertEqual(sum(histogram["foreign_target"].values()), 1)
         self.assertEqual(report["targets"], {
             "status": "blocked", "reason": "scope_refused", "counts": {
                 "permitted_page": 1, "permitted_worker": 0,
@@ -707,6 +712,80 @@ class BrowserPolicyContractTests(unittest.TestCase):
             self.assertNotIn(marker, result.stdout + result.stderr)
         self.assertEqual(pathlib.Path(self.allocation["receipt"]).read_bytes(), before)
         self.assertFalse(self.session_state_dir(self.attachment_task).exists())
+        self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
+    def test_attachment_diagnose_rejected_types_are_bounded_categories_only(self):
+        self.install_attachment_fixture()
+        self.endpoint_override = lambda path, value: [
+            {"type": "page", "url": "about:blank"},
+            {"type": "tab", "url": "https://private-url-marker/", "id": "private-id-marker"},
+            {"type": "iframe", "url": "https://private-url-marker/"},
+            {"type": "worker", "url": "https://private-url-marker/"},
+        ] if path == "/json/list" else value
+        before = pathlib.Path(self.allocation["receipt"]).read_bytes()
+        result = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        targets = json.loads(result.stdout)["targets"]
+        self.assertEqual(targets["status"], "blocked")
+        self.assertEqual(targets["reason"], "scope_refused")
+        self.assertEqual(targets["rejected_type_counts"], {
+            "unsupported_type": {"page": 0, "service_worker": 0, "worker": 0,
+                "other": 0, "browser": 0, "tab": 1, "iframe": 1,
+                "background_page": 0, "shared_worker": 0, "unknown": 0},
+            "foreign_target": {"page": 0, "service_worker": 0, "worker": 1,
+                "other": 0, "browser": 0, "tab": 0, "iframe": 0,
+                "background_page": 0, "shared_worker": 0, "unknown": 0},
+        })
+        for marker in ["private-url-marker", "private-id-marker"]:
+            self.assertNotIn(marker, result.stdout + result.stderr)
+        self.assertEqual(pathlib.Path(self.allocation["receipt"]).read_bytes(), before)
+        self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
+    def test_attachment_diagnose_collapses_arbitrary_type_strings_without_leaks(self):
+        self.install_attachment_fixture()
+        markers = ["private-type-marker", "https://private-host-marker/", "__proto__",
+                   "constructor", 'private-quote-marker"', "private-control-marker\n\x01",
+                   "private-long-marker" + "x" * 10000]
+        self.endpoint_override = lambda path, value: [
+            {"type": "page", "url": "about:blank"},
+            *[{"type": marker, "url": "https://private-url-marker/",
+               "title": "private-title-marker", "id": "private-id-marker"} for marker in markers],
+        ] if path == "/json/list" else value
+        result = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        targets = json.loads(result.stdout)["targets"]
+        self.assertEqual(targets["status"], "blocked")
+        self.assertEqual(targets["counts"]["unsupported_type"], 7)
+        histogram = targets["rejected_type_counts"]
+        self.assertEqual(histogram["unsupported_type"]["unknown"], 7)
+        self.assertEqual(sum(histogram["unsupported_type"].values()), 7)
+        self.assertEqual(sum(histogram["foreign_target"].values()), 0)
+        expected_keys = {"page", "service_worker", "worker", "other", "browser", "tab",
+                         "iframe", "background_page", "shared_worker", "unknown"}
+        for category in histogram.values():
+            self.assertEqual(set(category), expected_keys)
+        for marker in [*markers, "private-url-marker", "private-title-marker", "private-id-marker"]:
+            self.assertNotIn(marker, result.stdout + result.stderr)
+        self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
+    def test_attachment_diagnose_ready_scope_and_malformed_targets_keep_admission(self):
+        self.install_attachment_fixture()
+        for pages, status, reason, malformed in [
+            ([{"type": "page", "url": "about:blank"}], "ready", "ready", 0),
+            ([None, {"type": 3, "url": "private-marker"}], "blocked", "scope_refused", 2),
+            ({"private-list-marker": True}, "blocked", "invalid_list", 0),
+        ]:
+            with self.subTest(reason=reason):
+                self.endpoint_override = lambda path, value: pages if path == "/json/list" else value
+                result = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                targets = json.loads(result.stdout)["targets"]
+                self.assertEqual(targets["status"], status)
+                self.assertEqual(targets["reason"], reason)
+                self.assertEqual(targets["counts"]["malformed_target"], malformed)
+                self.assertEqual(sum(sum(category.values()) for category in targets["rejected_type_counts"].values()), 0)
+                self.assertNotIn("private-marker", result.stdout + result.stderr)
+                self.assertNotIn("private-list-marker", result.stdout + result.stderr)
         self.assertFalse((self.home / "backend-calls.jsonl").exists())
 
     def test_attachment_diagnose_reports_inventory_unknown_without_claiming_absence(self):

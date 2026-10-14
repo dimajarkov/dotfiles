@@ -505,6 +505,39 @@ function targetSummary(pages, origins) {
   return { status: reason === "ready" ? "ready" : "blocked", reason, counts };
 }
 
+// Diagnostic vocabulary only. Raw target types never become output keys.
+const DIAGNOSTIC_TARGET_TYPES = [
+  "page",
+  "service_worker",
+  "worker",
+  "other",
+  "browser",
+  "tab",
+  "iframe",
+  "background_page",
+  "shared_worker",
+  "unknown",
+];
+
+function rejectedTypeCounts(pages, origins) {
+  const empty = () => Object.fromEntries(DIAGNOSTIC_TARGET_TYPES.map((type) => [type, 0]));
+  const output = { unsupported_type: empty(), foreign_target: empty() };
+  if (!Array.isArray(pages)) return output;
+  for (const page of pages) {
+    // Reuse the unchanged classifier; diagnostics cannot expand admission.
+    const counts = targetSummary([page], origins).counts;
+    const category = counts.unsupported_type
+      ? "unsupported_type"
+      : counts.foreign_target
+        ? "foreign_target"
+        : undefined;
+    if (!category) continue;
+    const type = DIAGNOSTIC_TARGET_TYPES.includes(page.type) ? page.type : "unknown";
+    output[category][type]++;
+  }
+  return output;
+}
+
 function chromeOwnership(inspect, allocation, request, observed) {
   const before = observed ?? inspect("record", request.pid);
   const binding = validateChromeRecord(before, allocation.value, request.pid, request.cdpPort);
@@ -632,7 +665,15 @@ async function diagnose(home, inspect, allocation, request, caller) {
   assertCallerCurrent(inspect, allocation.value.repo, caller);
   assertAllocationCurrent(home, allocation, request);
   process.stdout.write(
-    `${JSON.stringify({ version: 1, ownership: "verified", targets, inventory })}\n`,
+    `${JSON.stringify({
+      version: 1,
+      ownership: "verified",
+      targets: {
+        ...targets,
+        rejected_type_counts: rejectedTypeCounts(pages, allocation.value.origins),
+      },
+      inventory,
+    })}\n`,
   );
   return 0;
 }
