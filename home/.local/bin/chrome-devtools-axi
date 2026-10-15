@@ -1,8 +1,5 @@
 #!/bin/sh
 set -eu
 
-# Node consumes loader controls before JavaScript can validate them. Neutralize
-# them only in this wrapper process, including inert SessionStart/help calls.
-unset NODE_OPTIONS NODE_PATH
-
-exec node "$HOME/.agents/skills/browser-routing/scripts/browser-policy.mjs" "$@"
+# Keep Home Manager's public entry point while using the npm-owned upstream CLI.
+exec "$HOME/.npm-global/bin/chrome-devtools-axi" "$@"
