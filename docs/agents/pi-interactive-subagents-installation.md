@@ -40,7 +40,12 @@ node tests/fixtures/pi-herdr-installation.mjs
 
 Each source checkout must contain the exact declared commit.
 The fixture seeds detached private Git caches at those commits and uses normal Pi package filtering with network disabled; no global install or package-manager migration occurs.
-This is an installed-resource reload proof, not a fresh network-install, model-execution or GUI proof.
+The resource fixture establishes installed-resource reload and rollback, not model execution or GUI behavior.
+A separate fresh network-install proof on 2026-10-15 ran the existing Pi CLI's `install` command for each published immutable package in a new owner-private agent directory.
+Both commands succeeded, and the resulting Git cache heads matched the exact fork and HazAT commits declared above.
+The reviewed filtered settings and matching subagents skill were applied there before any resource loading.
+That fresh proof created no auth file, copied no credentials, started no model or resource hooks and left active settings unchanged.
+It establishes the declared package-fetch/install path independently of the offline-seeded resource fixture.
 Review the emitted private report for every load error, command conflict and shortcut warning, including pre-existing diagnostics, before rollout.
 A new duplicate tool name or shadowed workflow command must be resolved explicitly, not hidden by registration order.
 The inspected installed resources emit eight pre-existing Infisical skill description-length warnings; the candidate preserves and reports them.
