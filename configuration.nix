@@ -40,6 +40,7 @@
     taps = [{
       name = "dimajarkov/dotfiles";
       clone_target = "https://github.com/dimajarkov/dotfiles.git";
+      trusted = true;
     }];
     brews = [
       "autoconf"
@@ -48,7 +49,8 @@
       "rjyo/moshi/moshi-hook"
       {
         name = "dimajarkov/dotfiles/herdr";
-        trusted = true;
+        # Custom-remote taps require trust at the tap level.
+        trusted = false;
       }
     ];
     casks = [

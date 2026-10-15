@@ -8,6 +8,10 @@
     home-manager.url = "github:nix-community/home-manager/release-26.05";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
+    homebrew-runtime = {
+      url = "github:Homebrew/brew/7.0.9";
+      flake = false;
+    };
     # Keep the review host and its Bun dependency recipe on the installed release.
     hunk-upstream.url = "github:modem-dev/hunk/7991d3034af1d2116e9c77db31265e409a73bd9f";
   };
@@ -36,6 +40,25 @@
       };
     in {
       packages.${system} = {
+        homebrew-runtime-activation = pkgs.writeShellScriptBin "activate-homebrew-runtime" ''
+          if [ "$(/usr/bin/id -u)" -ne 0 ]; then
+            echo "Run this Nix-owned Homebrew setup with sudo." >&2
+            exit 1
+          fi
+          ${self.darwinConfigurations.mac.config.system.activationScripts.setup-homebrew.text}
+        '';
+        herdr-package-test = pkgs.writeShellScriptBin "herdr-package-test" ''
+          export HOMEBREW_DEVELOPER=1 HOMEBREW_TESTS=1 HOMEBREW_NO_AUTO_UPDATE=1
+          exec /opt/homebrew/bin/brew ruby -e '
+            $LOAD_PATH.unshift(ARGV.shift)
+            require "formulary"
+            require "formula_assertions"
+            formula = Formulary.factory("dimajarkov/dotfiles/herdr")
+            formula.extend(Homebrew::Assertions)
+            formula.run_test
+            puts "Installed formula assertions passed: #{formula.assertions}"
+          ' ${pkgs.rubyPackages.minitest}/${pkgs.ruby.gemPath}/gems/minitest-${pkgs.rubyPackages.minitest.version}/lib
+        '';
         bash-darwin-pipes = bashDarwin;
         bash-darwin-pipes-interactive = bashDarwinInteractive;
         hunk-review-host = hunkReviewHost;
@@ -124,6 +147,15 @@
           nix-homebrew.darwinModules.nix-homebrew
           home-manager.darwinModules.home-manager
           {
+            nix-homebrew.package = pkgs.runCommand "brew-7.0.9" {
+              version = "7.0.9";
+            } ''
+              cp -R ${inputs.homebrew-runtime} "$out"
+              chmod u+w "$out/Library/Homebrew" "$out/Library/Homebrew/brew.sh"
+              # Homebrew 7 moved version discovery into a helper that needs Git.
+              substituteInPlace "$out/Library/Homebrew/brew.sh" \
+                --replace-fail 'set-homebrew-version-from-git' 'HOMEBREW_VERSION="7.0.9"'
+            '';
             home-manager.useGlobalPkgs = true;
             home-manager.useUserPackages = true;
             home-manager.backupFileExtension = "hm-backup";

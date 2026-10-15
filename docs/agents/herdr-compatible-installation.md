@@ -8,13 +8,16 @@ Homebrew remains the sole installation owner.
 ## Declaration and maintenance
 
 `configuration.nix` declares the `dimajarkov/dotfiles` tap with this repository's explicit clone URL and selects `dimajarkov/dotfiles/herdr`.
-Only that formula is trusted; the whole tap is not trusted.
+Homebrew requires trust at the tap level for this custom clone URL; the declaration trusts this owned repository and disables unsupported individual-formula trust.
+`flake.nix` pins the Nix-owned Homebrew runtime to 7.0.9 so current dependency install steps are supported.
 `Formula/herdr.rb` pins full source commit `c8d5b8f0d1b0ab9c7e98d05b1ed5b9606f87599f` and archive SHA-256 `593fe63aa223f7a64e92cfda6f6fec99cf7c60e5c045d6095a436446db9ddc9e`.
 Its package version is `0.9.4_1`; its binary identifies itself as `0.9.4-pi.c8d5b8f0`.
 The source is fixed while Homebrew build dependencies remain managed by Homebrew.
 Cargo uses the source's lockfile, and Zig 0.16 matches the vendored terminal library.
 Installation builds from source and needs network access to fetch the locked Cargo and Zig dependencies.
 The formula test checks the build identity and three required methods in the bundled schema without starting a server.
+Run it through `nix run .#herdr-package-test`: this executes the installed formula's real test block with an isolated Nix minitest dependency.
+The ordinary Homebrew developer test command tries to install gems into its read-only Nix store, so the runner disables that gem installation and explicitly supplies the test dependency.
 
 This is a maintained fork pin, not an automatic subscription to upstream releases.
 A normal Homebrew update can update this tap, but the Herdr source changes only when this formula's pin changes.
@@ -36,10 +39,23 @@ Preserve `~/.config/herdr`, session history and all original pane processes.
 Do not use `--zap`, delete state or kill servers to replace the executable.
 Check that other users of Herdr, including Hunk review, remain compatible.
 
+If the installed Nix-owned Homebrew predates the pinned runtime, update only its runtime before installing dependencies:
+
+```sh
+nix build .#homebrew-runtime-activation --out-link /private/tmp/homebrew-runtime-activation
+sudo /private/tmp/homebrew-runtime-activation/bin/activate-homebrew-runtime
+brew --version
+```
+
+This invokes nix-homebrew's generated setup directly and avoids broad Brewfile cleanup.
+It requires administrator authentication to change the root-owned runtime links.
+The regular rebuild installs the same runtime declaratively.
+
 After the formula is published, inspect and fetch it before retiring the existing keg:
 
 ```sh
 brew tap dimajarkov/dotfiles https://github.com/dimajarkov/dotfiles.git
+brew trust dimajarkov/dotfiles
 brew info dimajarkov/dotfiles/herdr
 brew fetch --build-from-source --deps dimajarkov/dotfiles/herdr
 ```
@@ -49,7 +65,7 @@ Within the approved maintenance window, replace the core package with the qualif
 ```sh
 brew uninstall --formula herdr
 brew install --build-from-source dimajarkov/dotfiles/herdr
-brew test dimajarkov/dotfiles/herdr
+nix run .#herdr-package-test
 ```
 
 If installation fails, restore the recorded core keg through Homebrew before continuing.
@@ -58,7 +74,7 @@ Once the reviewed declaration is in the primary dotfiles checkout, apply it thro
 Read the README cleanup warning first: activation intentionally removes undeclared Homebrew packages and casks.
 The formula and tap declarations make subsequent rebuilds retain this compatible package.
 
-In a fresh shell, run `one-bin audit exe herdr`, check that `command -v herdr` resolves through the Homebrew prefix, and verify `herdr --version` and `brew test dimajarkov/dotfiles/herdr`.
+In a fresh shell, run `one-bin audit exe herdr`, check that `command -v herdr` resolves through the Homebrew prefix, and verify `herdr --version` and `nix run .#herdr-package-test`.
 The installed receipt must identify `dimajarkov/dotfiles`, not homebrew-core.
 Installing a CLI does not replace already-running Herdr servers.
 Restart only explicitly approved sessions after their work is safely stopped or handed over, using the new binary.
@@ -77,3 +93,29 @@ In an approved maintenance window, uninstall the qualified fork formula and rest
 Core Herdr will not satisfy this Pi adapter until it includes the required APIs.
 Remove the custom tap only after no installed package uses it.
 Leave the canonical Pi and Herdr repositories, their histories, native session storage and credentials intact.
+
+## Installation acceptance, 2026-10-15
+
+The actual Homebrew source installation succeeded into `/opt/homebrew/Cellar/herdr/0.9.4_1`, and its receipt identifies `dimajarkov/dotfiles`.
+A fresh shell resolves `/opt/homebrew/bin/herdr` to that keg and reports `0.9.4-pi.c8d5b8f0`.
+The installed formula's real test block passes all ten assertions through the isolated Nix test runner.
+The ordinary Homebrew developer test command remains incompatible with the read-only runtime's gem installation; use the declared runner instead.
+
+Only the explicitly authorized `arena` session was reset.
+Its new server reports the pinned build, compatible protocol 22 and managed job/control v1 with cooperative control, ownership and required native SDK features.
+The unchanged `handovers` server still reports 0.9.1; installing a new CLI did not restart it.
+
+Native Pi acceptance used the active global resource configuration and synthetic files in a private temporary directory:
+
+- The bundled scout executed on `openai-codex/gpt-6.1-sol` with medium thinking.
+- The bundled interactive planner executed on `openai-codex/gpt-6-astra` with medium thinking, returned its plan and closed through `subagent_done` after explicit acceptance.
+- The parent continued before the scout completed and received both independent completion messages.
+- `subagent_resume` continued the scout's identical native session file and returned a second successful result.
+- All three results had exit code zero, completed child panes closed, parent focus remained intact and the synthetic fixture was unchanged.
+
+A final normal interactive Pi session in the canonical Arena checkout also launched a bundled scout against the synthetic fixture and received its actual completion.
+That parent used only `subagent`, the child used only `read`, and the parent displayed its expected final acknowledgement.
+The completed test child closed, leaving one focused interactive Pi pane ready for use.
+
+This establishes runtime delegation, model selection, completion, native resume and owned cleanup.
+It does not repeat the earlier human-confirmed rendered keyboard/display acceptance or claim new browser visual evidence.

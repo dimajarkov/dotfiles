@@ -84,6 +84,23 @@
         "type": "github"
       }
     },
+    "homebrew-runtime": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791455121,
+        "narHash": "sha256-+7waf1/I5YZPPZOwGDGqhrw9k3lDdXhdk4nglsQcqyA=",
+        "owner": "Homebrew",
+        "repo": "brew",
+        "rev": "cdc1ca503231b9a96da64526774915d913c3ec9f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Homebrew",
+        "ref": "7.0.9",
+        "repo": "brew",
+        "type": "github"
+      }
+    },
     "hunk-upstream": {
       "inputs": {
         "bun2nix": "bun2nix",
@@ -209,6 +226,7 @@
     "root": {
       "inputs": {
         "home-manager": "home-manager",
+        "homebrew-runtime": "homebrew-runtime",
         "hunk-upstream": "hunk-upstream",
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",
