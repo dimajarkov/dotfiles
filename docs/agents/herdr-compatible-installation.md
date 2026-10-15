@@ -113,5 +113,9 @@ Native Pi acceptance used the active global resource configuration and synthetic
 - `subagent_resume` continued the scout's identical native session file and returned a second successful result.
 - All three results had exit code zero, completed child panes closed, parent focus remained intact and the synthetic fixture was unchanged.
 
+A final normal interactive Pi session in the canonical Arena checkout also launched a bundled scout against the synthetic fixture and received its actual completion.
+That parent used only `subagent`, the child used only `read`, and the parent displayed its expected final acknowledgement.
+The completed test child closed, leaving one focused interactive Pi pane ready for use.
+
 This establishes runtime delegation, model selection, completion, native resume and owned cleanup.
 It does not repeat the earlier human-confirmed rendered keyboard/display acceptance or claim new browser visual evidence.
