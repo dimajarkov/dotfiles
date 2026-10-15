@@ -108,6 +108,12 @@ in {
       share = true;
     };
     initContent = ''
+      # Herdr may inherit NO_COLOR from an agent-launched server.
+      # Interactive panes should use normal terminal colours by default.
+      if [[ "''${HERDR_ENV:-}" == 1 ]]; then
+        unset NO_COLOR
+      fi
+
       mkdir -p "''${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
       autoload -U compinit
       compinit -d "''${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump"
