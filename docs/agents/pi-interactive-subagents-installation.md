@@ -79,7 +79,8 @@ Do not use `pi update` as a substitute for changing the reviewed immutable pin.
 The Herdr deployment prerequisite is the managed conditional API implementation at exact source revision `c8d5b8f0d1b0ab9c7e98d05b1ed5b9606f87599f`.
 Its tested candidate binary SHA-256 is `e3b917d4f939162b5ce8473716ea43872f35ff9d8399bdccda4f3f37ad083918`.
 A public `0.9.3` or `0.9.4` version string alone does not establish those APIs; verify the actual managed capability preflight against the intended server.
-Building or activating that binary and restarting affected servers require separately approved deployment work.
+The reproducible Homebrew declaration and one-time transition are documented in [compatible Herdr installation](herdr-compatible-installation.md).
+Activating that package and restarting affected servers require separately approved deployment work.
 This installation candidate does not replace the installed Homebrew owner or live Herdr servers.
 
 Before active rollout, ticket #45 must verify all release gates against the final installation revision, including actual requested Astra execution and the approved visual route.

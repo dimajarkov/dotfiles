@@ -108,9 +108,10 @@ That means every time you switch, Homebrew removes any package or cask on your m
 If you already have Homebrew stuff installed that isn't in that list, the first switch will uninstall it.
 Read through `brews` and `casks` before you run `bootstrap.sh` or `rebuild.sh` for the first time, and add anything you want to keep.
 
-**About `herdr`:** it's in the `brews` list.
-It's a real public Homebrew formula (`brew info herdr` finds it in homebrew-core, no tap needed), so it will install fine.
-If you don't use it, just remove it from `brews` in your copy.
+**About `herdr`:** Homebrew installs the pinned `dimajarkov/dotfiles/herdr` formula from this repository.
+The reviewed fork supplies the managed job and native Pi control APIs required by interactive subagents.
+See [compatible Herdr installation](docs/agents/herdr-compatible-installation.md) for the one-time transition from homebrew-core, verification and rollback.
+If you do not use it, remove its formula and tap declarations in your copy.
 
 **Heads-up:**
 

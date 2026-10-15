@@ -37,12 +37,19 @@
     onActivation.cleanup = "zap";
     onActivation.autoUpdate = true;
     onActivation.extraFlags = [ "--force" ];
+    taps = [{
+      name = "dimajarkov/dotfiles";
+      clone_target = "https://github.com/dimajarkov/dotfiles.git";
+    }];
     brews = [
       "autoconf"
       "gh"
       "mosh"
       "rjyo/moshi/moshi-hook"
-      "herdr"
+      {
+        name = "dimajarkov/dotfiles/herdr";
+        trusted = true;
+      }
     ];
     casks = [
       "amethyst"
