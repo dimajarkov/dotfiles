@@ -75,6 +75,15 @@ in {
       user.email = "dmitri@arenacrm.com";
       color.ui = true;
       core.editor = "nvim";
+      # Share GitHub CLI's login across Git clients, including LazyGit.
+      credential."https://github.com".helper = [
+        ""
+        "!/opt/homebrew/bin/gh auth git-credential"
+      ];
+      credential."https://gist.github.com".helper = [
+        ""
+        "!/opt/homebrew/bin/gh auth git-credential"
+      ];
       pull.rebase = true;
       push.autoSetupRemote = true;
       rebase.updateRefs = true;
