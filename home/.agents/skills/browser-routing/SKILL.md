@@ -56,8 +56,9 @@ Require a newly created private disposable profile for the exact task, with no c
 Keep the same owned profile for one bounded proof run; create a fresh profile for a new run and retain only privacy-reviewed evidence.
 Before connecting or reusing a bridge, verify the actual live process/profile, loopback endpoint, task/repository identity, and target page.
 A session name, caller flag, profile pathname, or self-reported receipt alone does not establish isolation.
-The supported guard verifies private-profile, task, process, endpoint and observed proof-target ownership; it is not browser-network confinement.
-Declared origins constrain explicit navigation and observed evidence scope, not every request that scripts, redirects or clicks may issue.
+The repository runtime owner is responsible for verifying the private profile, process, endpoint and target page.
+The upstream CLI does not enforce dotfiles-specific task receipts, Herdr caller binding or a browser-target allowlist.
+An isolated profile is not browser-network confinement.
 Use the repository's authentication, tenancy, provider and approved-operation boundaries to protect application state; a task needing enforced egress containment requires a separately validated sandbox and is outside this QA exception.
 Fail closed on stale, foreign, missing, or inconclusive ownership; preserve siblings and their sessions.
 Cleanup stops only exact-owned resources and re-probes survivors; do not use kill-all or delete retained app data/worktree leases.
@@ -69,8 +70,9 @@ Use fabricated synthetic accounts and the repository's supported authentication 
 Production/customer/provider operations still require their existing separate approvals.
 
 `chrome-devtools-axi` and Chrome DevTools MCP use Chrome's CDP for DOM, CSS, auth, network, storage, console, and performance diagnostics; they cannot control Zen.
-Use the guarded public `chrome-devtools-axi` command only through its supported isolated QA route.
-Direct MCP, an installed backend executable, or the optional Pi browser extension is not a bypass around its ownership checks.
+`chrome-devtools-axi` forwards directly to the existing npm-owned upstream CLI.
+Read its `--help` for supported isolated launch, named-session and explicit endpoint options.
+Use the repository-approved disposable profile and verify the target before commands; browser connection alone does not establish task ownership.
 For interactive Zen debugging, use native Computer Use and Zen's own Developer Tools on task-owned pages; report unsupported programmatic inspection rather than substituting Chrome.
 Do not print tokens, cookie values, passwords, or complete storage/session objects.
 Inspect only the claims, keys, headers, or fields needed to prove the hypothesis.
@@ -83,8 +85,8 @@ Do not pass the Zen executable to a Chrome CLI, construct a raw browser command 
 For job-application package approval, follow the job-application skill's exact-file text and rendered-page image checks for existing PDFs using an available non-Chrome local PDF-to-image tool and the image-reading tool.
 These checks require no native Computer Use, unlocked desktop, personal browser session, or browser lock.
 For other PDF workflows requiring interactive viewer inspection, use Codex Computer Use in Zen, keeping unrelated windows and profiles untouched.
-Instruction routing and the supported-command guard are not an OS sandbox.
-An unrestricted agent can still invoke another executable or SDK directly; such bypasses remain prohibited, not contained.
+Instruction routing and the upstream CLI are not an OS sandbox.
+Repository ownership and authorization boundaries apply to every executable or SDK used for the task.
 Codex pre-execution hooks are supplemental and require host support and hook trust; SessionStart guidance cannot enforce later calls.
 
 ## Diagnosis in Zen

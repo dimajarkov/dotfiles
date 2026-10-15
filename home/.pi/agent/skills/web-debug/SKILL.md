@@ -1,34 +1,32 @@
 ---
 name: web-debug
-description: "Diagnose live frontend auth, requests, forms, rendering, or stale-state failures through the approved browser route. Use guarded isolated Chrome diagnostics for synthetic QA and Codex Computer Use for rendered/native behavior; preserve Zen-specific routing."
+description: "Diagnose live frontend auth, requests, forms, rendering, or stale-state failures through the approved browser route. Use isolated Chrome diagnostics for synthetic QA and Codex Computer Use for rendered/native behavior; preserve Zen-specific routing."
 ---
 
 # Web debugging via the live page
 
 First read `~/.agents/skills/browser-routing/SKILL.md` for browser selection, task/profile ownership, and evidence scope.
-For approved synthetic Chrome QA, use the guarded public `chrome-devtools-axi` command and the repository's supported runtime/authentication commands.
-A guard refusal is a stop condition, not permission to call the installed backend directly, attach to personal Chrome, or enable a persistent Pi browser profile.
+For approved synthetic Chrome QA, use the upstream `chrome-devtools-axi` CLI and the repository's supported runtime/authentication commands.
+Verify the disposable profile and target page before diagnostics; use fabricated accounts and preserve repository authorization boundaries.
 For a Zen-specific failure, reproduce in Zen through Codex Computer Use and inspect Zen's own Developer Tools; Chrome results do not establish Zen behavior.
 Use Codex Computer Use for rendered end-user behavior and visual/native checks, with any narrower repository proof mechanism applied through its owner.
 
-## Guarded session invocation
+## Upstream session invocation
 
-Read `chrome-devtools-axi --help`, prepare a fresh task profile with the exact loopback origins, and let the repository runtime owner launch Chrome and the foreground bridge through their supported proof commands.
-Bind the values returned by that allocation and the verified owned process, then use this shell-local helper for every diagnostic invocation:
+Read `chrome-devtools-axi --help` and use the repository's approved isolated launch or explicit task-owned endpoint.
+Keep the same shell-local `CHROME_DEVTOOLS_AXI_SESSION` value for the bounded proof, with repository-approved connection settings.
+A named session identifies the bridge, not browser ownership or authentication.
+The public launcher delegates to the installed upstream CLI; there are no dotfiles `--repo-qa`, receipt or target-type admission commands.
 
 ```sh
 qa() {
-  chrome-devtools-axi --repo-qa "$QA_TASK" attach "$QA_RECEIPT" \
-    --pid "$QA_CHROME_PID" --port "$QA_CDP_PORT" "$@"
+  chrome-devtools-axi "$@"
 }
 ```
 
-`QA_TASK`, `QA_RECEIPT`, `QA_CHROME_PID`, and `QA_CDP_PORT` identify that one verified proof, not a default browser or arbitrary endpoint.
-The helper delegates to the guard; it neither launches a bridge nor bypasses ownership, authentication, or approval checks.
-
 ## Core loop
 
-1. Establish the guarded task-owned Chrome session before `qa open <url>` and inspect the expected synthetic page.
+1. Establish the isolated task-owned Chrome session before `qa open <url>` and inspect the expected synthetic page.
 2. Reproduce interactively through the approved route and verify the rendered state after each action.
    Where the repository explicitly permits CDP interaction, use fresh snapshot refs for `fill`, `click`, and other commands.
 3. Inspect bounded `console --type error --limit 20` and `network --limit 50` diagnostics.

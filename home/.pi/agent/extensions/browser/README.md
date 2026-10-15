@@ -126,9 +126,9 @@ Pass `clear: false` to peek without draining.
   If the required route is unavailable, do not substitute this extension.
 - Report observations as headless Chromium evidence only.
   They do not prove branded Chrome, Zen, native-app, or other browser behavior, and must not be described as Zen compatibility.
-- The separate public `chrome-devtools-axi` guard supports private profile preparation, a verified foreground Herdr bridge, and attached QA commands.
-  Read its `--help` for the complete allocation, attachment and cleanup invocation; standalone launch/reuse/stop remain disabled.
-  Its ownership and observed-origin checks are not network confinement, and this optional Pi extension adds no egress-containment guarantee.
+- The separate public `chrome-devtools-axi` launcher delegates to the installed upstream CLI.
+  Read its `--help` for isolated launch, named sessions and explicit endpoint attachment.
+  Repository runtime and authentication instructions establish task ownership; neither CLI nor this optional extension provides an egress-containment guarantee.
   Neither route authorizes substituting for an unavailable repository-required authentication or proof mechanism.
 
 ## Caveats and known limits
