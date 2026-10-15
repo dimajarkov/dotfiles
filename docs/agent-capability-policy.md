@@ -2,7 +2,7 @@
 
 Use `/goal` only for Codex subagent feature implementation, and use plain prompts for planning, research, reviews, debugging, testing, maintenance, and all other non-feature work regardless of duration.
 Route small changes through Pi with `openai-codex/gpt-6-luna` at `xhigh`, and route planning and long-running work through Codex `gpt-6.1-sol` at `xhigh`.
-Keep Claude compatibility-only unless it is explicitly requested, and keep Pi's default provider and model at `openai-codex/gpt-6.1-sol` with `xhigh` reasoning.
+Keep Claude compatibility-only unless it is explicitly requested, and keep Pi's default provider and model at `openai-codex/gpt-6.1-sol` with `medium` reasoning.
 Use `openai-codex/*` for Pi's enabled-model filter so newly published Codex model IDs remain selectable while provider enforcement remains Codex-only.
 Keep the submitted `OPINIONS.md` byte-unchanged even where its older viewpoints differ from current operational routing guidance.
 Keep the generic Composio route enabled for connected-app reads and writes, connection management, Gmail operations, and remote sandbox tools.
