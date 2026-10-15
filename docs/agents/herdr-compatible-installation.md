@@ -8,7 +8,8 @@ Homebrew remains the sole installation owner.
 ## Declaration and maintenance
 
 `configuration.nix` declares the `dimajarkov/dotfiles` tap with this repository's explicit clone URL and selects `dimajarkov/dotfiles/herdr`.
-Only that formula is trusted; the whole tap is not trusted.
+Homebrew requires trust at the tap level for this custom clone URL; the declaration trusts this owned repository and disables unsupported individual-formula trust.
+`flake.nix` pins the Nix-owned Homebrew runtime to 7.0.9 so current dependency install steps are supported.
 `Formula/herdr.rb` pins full source commit `c8d5b8f0d1b0ab9c7e98d05b1ed5b9606f87599f` and archive SHA-256 `593fe63aa223f7a64e92cfda6f6fec99cf7c60e5c045d6095a436446db9ddc9e`.
 Its package version is `0.9.4_1`; its binary identifies itself as `0.9.4-pi.c8d5b8f0`.
 The source is fixed while Homebrew build dependencies remain managed by Homebrew.
@@ -36,10 +37,23 @@ Preserve `~/.config/herdr`, session history and all original pane processes.
 Do not use `--zap`, delete state or kill servers to replace the executable.
 Check that other users of Herdr, including Hunk review, remain compatible.
 
+If the installed Nix-owned Homebrew predates the pinned runtime, update only its runtime before installing dependencies:
+
+```sh
+nix build .#homebrew-runtime-activation --out-link /private/tmp/homebrew-runtime-activation
+sudo /private/tmp/homebrew-runtime-activation/bin/activate-homebrew-runtime
+brew --version
+```
+
+This invokes nix-homebrew's generated setup directly and avoids broad Brewfile cleanup.
+It requires administrator authentication to change the root-owned runtime links.
+The regular rebuild installs the same runtime declaratively.
+
 After the formula is published, inspect and fetch it before retiring the existing keg:
 
 ```sh
 brew tap dimajarkov/dotfiles https://github.com/dimajarkov/dotfiles.git
+brew trust dimajarkov/dotfiles
 brew info dimajarkov/dotfiles/herdr
 brew fetch --build-from-source --deps dimajarkov/dotfiles/herdr
 ```

@@ -8,6 +8,10 @@
     home-manager.url = "github:nix-community/home-manager/release-26.05";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
+    homebrew-runtime = {
+      url = "github:Homebrew/brew/7.0.9";
+      flake = false;
+    };
     # Keep the review host and its Bun dependency recipe on the installed release.
     hunk-upstream.url = "github:modem-dev/hunk/7991d3034af1d2116e9c77db31265e409a73bd9f";
   };
@@ -36,6 +40,13 @@
       };
     in {
       packages.${system} = {
+        homebrew-runtime-activation = pkgs.writeShellScriptBin "activate-homebrew-runtime" ''
+          if [ "$(/usr/bin/id -u)" -ne 0 ]; then
+            echo "Run this Nix-owned Homebrew setup with sudo." >&2
+            exit 1
+          fi
+          ${self.darwinConfigurations.mac.config.system.activationScripts.setup-homebrew.text}
+        '';
         bash-darwin-pipes = bashDarwin;
         bash-darwin-pipes-interactive = bashDarwinInteractive;
         hunk-review-host = hunkReviewHost;
@@ -124,6 +135,10 @@
           nix-homebrew.darwinModules.nix-homebrew
           home-manager.darwinModules.home-manager
           {
+            nix-homebrew.package = inputs.homebrew-runtime // {
+              name = "brew-7.0.9";
+              version = "7.0.9";
+            };
             home-manager.useGlobalPkgs = true;
             home-manager.useUserPackages = true;
             home-manager.backupFileExtension = "hm-backup";
