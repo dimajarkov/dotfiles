@@ -66,7 +66,10 @@ const HELP =
   "  --remote-debugging-address=127.0.0.1 --disable-sync --disable-extensions\n" +
   "  --use-mock-keychain --password-store=basic --no-first-run\n" +
   "  --no-default-browser-check about:blank\n" +
-  "Optional: --headless=new. No other Chrome launch flags are supported.\n" +
+  "Optional: --headless=new and one exact QA startup setting:\n" +
+  "  --disable-features=PreloadTopChromeWebUI\n" +
+  "This suppresses background TopChrome preloading only; target refusals remain.\n" +
+  "No other feature values, combinations or Chrome launch flags are supported.\n" +
   "Chrome must start within 10 minutes of preparation; the allocation expires\n" +
   "after 2 hours and supports one foreground bridge and one live Chrome PID/start.\n" +
   "Endpoint identity accepts about:blank and allocated HTTP loopback origins.\n" +

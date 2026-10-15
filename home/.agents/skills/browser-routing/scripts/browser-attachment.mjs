@@ -355,6 +355,11 @@ export function validateChromeRecord(record, value, pid, port) {
   let targets = 0;
   for (const arg of record.argv.slice(1)) {
     if (required.delete(arg)) continue;
+    // Fixed QA startup setting only; arbitrary feature overrides stay refused.
+    if (arg === "--disable-features=PreloadTopChromeWebUI" && !flags.includes(arg)) {
+      flags.push(arg);
+      continue;
+    }
     if (arg === "--headless=new" && !flags.includes(arg)) {
       flags.push(arg);
       continue;

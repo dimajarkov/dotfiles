@@ -518,6 +518,50 @@ class BrowserPolicyContractTests(unittest.TestCase):
         self.assertTrue(receipt.exists())
         self.assertTrue(profile.is_dir())
 
+    def test_attachment_fixed_preload_override_preserves_target_refusal(self):
+        self.install_attachment_fixture()
+        self.mock["extra_args"] = ["--disable-features=PreloadTopChromeWebUI"]
+        self.mock_path.write_text(json.dumps(self.mock))
+        result = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        targets = json.loads(result.stdout)["targets"]
+        self.assertEqual(targets["status"], "ready")
+        self.endpoint_override = lambda path, value: [
+            {"type": "page", "url": "about:blank"},
+            {"type": "browser_ui", "url": "chrome://private-marker/"},
+        ] if path == "/json/list" else value
+        blocked = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
+        self.assertEqual(blocked.returncode, 0, blocked.stderr)
+        self.assertEqual(json.loads(blocked.stdout)["targets"]["status"], "blocked")
+        denied = self.invoke(*self.attach_args("bridge"), env=self.attach_env())
+        self.assertEqual(denied.returncode, 78)
+        self.assertNotIn("private-marker", denied.stdout + denied.stderr)
+        self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
+    def test_attachment_refuses_nonfixed_duplicate_and_conflicting_feature_overrides(self):
+        self.install_attachment_fixture()
+        fixed = "--disable-features=PreloadTopChromeWebUI"
+        for arguments in [
+            ["--disable-features=private-marker"],
+            [fixed + ",private-marker"],
+            ["--disable-features=PreloadTopChromeWebUI<private-marker"],
+            [fixed, fixed],
+            [fixed, "--enable-features=PreloadTopChromeWebUI"],
+            [fixed, "--disable-features=private-marker"],
+            ["--disable-features", "PreloadTopChromeWebUI"],
+            ["--disable-features="],
+        ]:
+            with self.subTest(arguments=arguments):
+                self.mock["extra_args"] = arguments
+                self.mock_path.write_text(json.dumps(self.mock))
+                before = pathlib.Path(self.allocation["receipt"]).read_bytes()
+                denied = self.invoke(*self.attach_args("diagnose"), env=self.attach_env())
+                self.assertEqual(denied.returncode, 78)
+                self.assertEqual(self.probes, [])
+                self.assertNotIn("private-marker", denied.stdout + denied.stderr)
+                self.assertEqual(pathlib.Path(self.allocation["receipt"]).read_bytes(), before)
+        self.assertFalse((self.home / "backend-calls.jsonl").exists())
+
     def test_attachment_refuses_unsafe_actual_argv_and_listener_before_http(self):
         self.install_attachment_fixture()
         for extra in ["--no-sandbox", "--disable-setuid-sandbox", "--proxy-server=private-marker",
