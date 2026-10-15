@@ -22,6 +22,9 @@ The call acknowledges launch immediately.
 Continue independent parent work or end the turn; the native asynchronous result wakes the parent when ready.
 Use only delivered results when reporting completion.
 The parent status widget supplies ongoing supervision; `subagents_list` discovers available definitions, not running-task completion.
+If launches fail immediately with the same infrastructure or lifecycle error, stop automatic retries and report delegated work as blocked with no findings.
+Preserve the original error, native session paths and lifecycle receipt paths, then diagnose before retrying.
+Do not replace requested delegated findings with local investigation unless the user approves that change of workflow.
 Use `subagent_interrupt` with the exact running `id` or `name` to interrupt a turn while keeping its Pi session available.
 Use `subagent_resume` with the delivered native `sessionPath` and optional follow-up `message` to continue an existing conversation.
 Its `autoExit` option defaults to true; false keeps the resumed child interactive.
