@@ -48,6 +48,10 @@ If the required space or native Zen access genuinely remains unavailable, report
 
 ## Isolated Chrome application QA
 
+For native Chrome QA, use the Nix-owned `~/Applications/Google Chrome for Testing.app` with a fresh disposable profile.
+Select that exact app path through Computer Use; bundle ID `com.google.chrome.for.testing` alone can be ambiguous when cached testing builds are also installed.
+Run one native Computer Use task against this testing app at a time and verify the expected task URL and rendered page before input.
+
 Before launch or attachment, use the repository-owned QA/runtime/authentication commands and their existing safety checks.
 Keep Herdr placement, worktree leases, local routing, provider guards, and approved mutation scope binding; choosing Chrome does not waive them.
 A repository without a supported isolated route needs prerequisite tooling, not a raw browser launch or an arbitrary CDP endpoint.
