@@ -23,6 +23,8 @@ let
     fi
   '';
 in {
+  imports = [ ./nix/modules/chrome-for-testing.nix ];
+
   home.username = user;
   home.homeDirectory = "/Users/${user}";
   home.stateVersion = "24.11";
