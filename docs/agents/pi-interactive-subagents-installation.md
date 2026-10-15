@@ -7,7 +7,7 @@ This document describes a candidate and its validation procedure, not an active 
 
 ## Declared resources
 
-`home/.pi/agent/settings.json` declares the fork at `3e19238850aaf467d671957c7315c875ecf6b6e6` through Pi's existing `packages` mechanism.
+`home/.pi/agent/settings.json` declares the fork at `116f5a611a879e99c65ddd61d527823e277c4d47` through Pi's existing `packages` mechanism.
 The package's own manifest loads its extension once.
 The same settings select only `extensions/todos/index.ts`, `skills/write-todos` and `skills/commit` from `HazAT/pi-config@34829ad8053667e16b1288f9c1d24d8a300ec077`.
 Those are paths relative to that repository's root; a private proof's `config/` destination is not a package resource prefix.
@@ -67,7 +67,7 @@ For a fresh isolated network-install check after the fork SHA is published, use 
 
 ```sh
 candidate_agent_dir="$(mktemp -d "${TMPDIR:-/tmp}/pi-herdr-network-install.XXXXXX")"
-PI_CODING_AGENT_DIR="$candidate_agent_dir" pi install git:github.com/dimajarkov/pi-interactive-subagents@3e19238850aaf467d671957c7315c875ecf6b6e6
+PI_CODING_AGENT_DIR="$candidate_agent_dir" pi install git:github.com/dimajarkov/pi-interactive-subagents@116f5a611a879e99c65ddd61d527823e277c4d47
 PI_CODING_AGENT_DIR="$candidate_agent_dir" pi install git:github.com/HazAT/pi-config@34829ad8053667e16b1288f9c1d24d8a300ec077
 ```
 
@@ -106,3 +106,15 @@ Rollback changes resource selection, not native session storage.
 Leave `~/.pi/agent/sessions`, credentials, project files, canonical source repositories, ticket worktrees and private evidence in place.
 Retained immutable package caches may stay on disk while their settings entries are absent.
 Do not uninstall a shared package, delete a cache, rewrite history or prune worktrees as part of this rollback.
+
+## Watcher lifecycle correction
+
+The installed package pin above includes instance-owned observer state and cancellation provenance receipts.
+A native Pi session replacement previously left a module-level observer signal aborted, so later launches acknowledged and immediately cancelled before creating child history.
+The fix gives each registration independent watcher, timer and registry state and starts a fresh observer after session shutdown/start.
+Observer shutdown retains its exact child job rather than treating it as an intentional stop request; the launch acknowledgement exposes a private lifecycle receipt path for recovery.
+
+The package's `docs/watcher-lifecycle.md` describes ownership and recovery, and its opt-in `test/integration/herdr-session-boundary.test.ts` verifies one and four parallel real scouts after native session replacements.
+The private native acceptance retained the active global resource selection, installed an immutable Git package through Pi, and verified five real Sol/medium findings, four simultaneously observed panes, result delivery, cleanup and preserved focus.
+The matching delegation skill now requires agents to stop retries after shared immediate infrastructure failures and report delegation blocked instead of substituting local findings.
+Deployment must reload the affected idle Pi conversation without clearing its native history; restarting the compatible Herdr server is unnecessary.
