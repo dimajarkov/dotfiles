@@ -23,6 +23,8 @@ let
     fi
   '';
 in {
+  imports = [ ./nix/modules/chrome-for-testing.nix ];
+
   home.username = user;
   home.homeDirectory = "/Users/${user}";
   home.stateVersion = "24.11";
@@ -378,6 +380,8 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/models.json";
   home.file.".pi/agent/mcp.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/mcp.json";
+  home.file.".pi/agent/skills/subagents".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/skills/subagents";
   home.file.".pi/agent/skills/web-debug".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/skills/web-debug";
   home.file.".pi/agent/themes/catppuccin-latte.json".source =
