@@ -118,3 +118,11 @@ The package's `docs/watcher-lifecycle.md` describes ownership and recovery, and 
 The private native acceptance retained the active global resource selection, installed an immutable Git package through Pi, and verified five real Sol/medium findings, four simultaneously observed panes, result delivery, cleanup and preserved focus.
 The matching delegation skill now requires agents to stop retries after shared immediate infrastructure failures and report delegation blocked instead of substituting local findings.
 Deployment must reload the affected idle Pi conversation without clearing its native history; restarting the compatible Herdr server is unnecessary.
+
+The final pin was also installed into the active global Pi package cache and loaded through `/reload` in the original affected Arena conversation.
+Its existing native session path and complete pre-rollout history prefix remained unchanged.
+That original conversation then received one scout finding and four parallel scout findings, all successful on Sol/medium, with completed child panes closed and unrelated original panes preserved.
+An initially zoomed parent correctly reported `managed_parent_zoomed` and stopped without retry or local fallback; only that parent was explicitly unzoomed for the subsequent acceptance.
+The extension does not bypass this zoom guard.
+Only task-owned reproduction and acceptance workspaces were closed afterward.
+The active primary checkout carries the matching pin and recovery skill as local deployment changes pending this installation PR's merge.
