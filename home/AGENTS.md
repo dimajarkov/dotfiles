@@ -30,7 +30,6 @@ These are common instructions for Dmitri's agents across all scenarios.
 ## Browser tool routing
 
 - Use Computer Use through the Codex harness for end-user testing, visual QA, native macOS or cross-app workflows, and pixel-only surfaces such as canvas, video, and PDFs.
-  Job-application PDF package approval follows the job-application skill's exact-file text and rendered-page image checks without requiring native Computer Use or personal Chrome access.
 - Keep Zen at `/Applications/Zen.app` for personal browsing, native workflows, and requested Zen compatibility checks; use its existing `development` space for localhost work in Zen.
   Approved application QA may use repository-managed Chrome with a fresh disposable task-owned profile and synthetic accounts, without personal profiles, Google sign-in, sync, or extensions.
   Read `~/.agents/skills/browser-routing/SKILL.md` before browser control or launch; it owns route selection and isolation checks.
