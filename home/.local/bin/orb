@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+bin_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+# Allow only non-starting commands while migration is blocked.
+case "${1-}" in
+  stop|status|version|help|--help|-h) ;;
+  *) "$bin_dir/owc-container-ready" ;;
+esac
+exec /Applications/OrbStack.app/Contents/MacOS/bin/orb "$@"

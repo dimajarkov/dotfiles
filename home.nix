@@ -380,6 +380,10 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/docker-start";
   home.file.".local/bin/docker-stop".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/docker-stop";
+  home.file.".local/bin/orb".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/orb";
+  home.file.".local/bin/orbctl".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/orbctl";
 
   home.file.".pi/agent/settings.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/settings.json";

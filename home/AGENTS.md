@@ -45,10 +45,11 @@ These are common instructions for Dmitri's agents across all scenarios.
 
 ## Container runtime policy
 
-- The OWC Envoy Ultra is the authoritative live store for OrbStack and local Docker data.
-- Use `docker-start` to start OrbStack and `docker-stop` before ejecting or disconnecting the drive.
-- Do not bypass the guarded `docker` and `docker-compose` commands or start a local container runtime when the verified OWC volume is unavailable.
-- Treat the retained internal migration copies as rollback data and never delete them without explicit approval and a verified independent backup.
+- OrbStack and local Docker storage must use the internal physical drive only, including resolved symlink targets.
+- Use guarded `docker-start`, `docker`, `docker-compose`, `orb`, and `orbctl`; use `docker-stop` for supported shutdown.
+- Startup remains blocked while `~/.orbstack/internal-only-migration.pending` exists, until a preserving migration is verified; read `~/.dotfiles/docs/container-runtime-storage.md` before changing runtime storage or clearing that interlock.
+- Preserve all external source data and retained internal rollback copies; never initialize a fresh runtime, bypass the migration interlock, or restore external-backed startup to work around a blocker.
+- Data deletion requires explicit approval and a verified independent backup.
 
 ## Dmitri's Opinions
 
