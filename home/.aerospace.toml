@@ -17,6 +17,26 @@ automatically-unhide-macos-hidden-apps = false
 focus-follows-mouse.enabled = false
 key-mapping.preset = 'qwerty'
 
+# Keep 1-3 on the laptop and 4-7 on the Samsung when connected.
+# Fall back to the built-in display when the Samsung is disconnected.
+[workspace-to-monitor-force-assignment]
+1 = '^Built-in Retina Display$'
+2 = '^Built-in Retina Display$'
+3 = '^Built-in Retina Display$'
+4 = ['^LS49C95xU$', '^Built-in Retina Display$']
+5 = ['^LS49C95xU$', '^Built-in Retina Display$']
+6 = ['^LS49C95xU$', '^Built-in Retina Display$']
+7 = ['^LS49C95xU$', '^Built-in Retina Display$']
+
+# Route new windows from both Chrome variants to workspace 5.
+[[on-window-detected]]
+if.app-id = 'com.google.Chrome'
+run = 'move-node-to-workspace 5'
+
+[[on-window-detected]]
+if.app-id = 'com.google.chrome.for.testing'
+run = 'move-node-to-workspace 5'
+
 # His floating-app rules, without the duplicate misspelled Discord rule.
 [[on-window-detected]]
 if.app-name-regex-substring = 'telegram'
@@ -46,14 +66,14 @@ run = 'layout floating'
 if.app-name-regex-substring = 'quicktime'
 run = 'layout floating'
 
-# His spacious margins apply only to the Samsung ultrawide, not the laptop.
-# Reserve SketchyBar's right rail only on the built-in panel.
+# Keep outer margins compact; reserve SketchyBar's right rail on the laptop.
 [gaps]
 inner.horizontal = [{ monitor.'^LS49C95xU$' = 40 }, 10]
-outer.left = [{ monitor.'^LS49C95xU$' = 350 }, 20]
-outer.right = [{ monitor.'^LS49C95xU$' = 350 }, { monitor.'^Built-in Retina Display$' = 54 }, 20]
-outer.bottom = [{ monitor.'^LS49C95xU$' = 100 }, 10]
-outer.top = [{ monitor.'^LS49C95xU$' = 100 }, 10]
+outer.left = 20
+outer.right = [{ monitor.'^Built-in Retina Display$' = 54 }, 20]
+# Match the laptop's vertical margins on every display.
+outer.bottom = 10
+outer.top = 10
 
 [mode.main.binding]
 # Same directional map as Herdr: J down, K up, L left, semicolon right.
@@ -103,6 +123,18 @@ alt-comma = 'layout accordion horizontal vertical'
 alt-minus = 'resize smart -50'
 alt-equal = 'resize smart +50'
 alt-b = 'balance-sizes'
+# Reset only this workspace, including floating and AeroSpace-fullscreen windows.
+alt-shift-b = '''exec-and-forget /bin/sh -c '
+  workspace=$(aerospace list-workspaces --focused) || exit
+  windows=$(aerospace list-windows --workspace "$workspace" --format "%{window-id}") || exit
+  for window in $windows; do
+    aerospace fullscreen off --window-id "$window"
+    aerospace layout --window-id "$window" tiling
+  done
+  aerospace flatten-workspace-tree --workspace "$workspace"
+  aerospace layout --workspace "$workspace" --root tiles horizontal
+  aerospace balance-sizes --workspace "$workspace"
+' '''
 alt-shift-r = 'reload-config'
 alt-shift-p = 'enable toggle'
 
