@@ -1,6 +1,6 @@
 ---
 name: browser-routing
-description: "Choose Zen for personal/native work and requested Zen compatibility, or isolated Chrome for approved synthetic application QA. Load before browser control, authentication, capture, or launch to verify task ownership and browser-specific proof."
+description: "Choose Zen for personal/native work or isolated Chrome for approved synthetic QA. Load before browser launch, control, authentication, capture, or cleanup to verify routing, ownership, and task-owned shutdown."
 ---
 
 # Browser tool routing
@@ -56,8 +56,27 @@ Before launch or attachment, use the repository-owned QA/runtime/authentication 
 Keep Herdr placement, worktree leases, local routing, provider guards, and approved mutation scope binding; choosing Chrome does not waive them.
 A repository without a supported isolated route needs prerequisite tooling, not a raw browser launch or an arbitrary CDP endpoint.
 
-Require a newly created private disposable profile for the exact task, with no copied or reused profile data, Google sign-in, synchronization, extensions, or personal keychain access.
-Keep the same owned profile for one bounded proof run; create a fresh profile for a new run and retain only privacy-reviewed evidence.
+### Browser lifecycle: preflight, reuse, close
+
+1. **Preflight before launch.** Confirm the required tools and host are actually available, including Codex Computer Use when native interaction is needed.
+   Confirm the runtime has an ownership-checked shutdown path; a helper that only stops its fixture and leaves Chrome running is not a complete lifecycle.
+   If either prerequisite is missing, report the blocker before creating a browser.
+2. **Own one instance per bounded task.** Create a fresh private disposable profile with no copied profile data, Google sign-in, synchronization, extensions, or personal keychain access.
+   Record the task/repository, browser executable, PID and process birth identity, profile identity, endpoint, controller, and supported stop command in private task state.
+   These records must be verifiable against the live process, not merely assertions by the caller.
+3. **Reuse within the task.** Keep the same owned browser/profile across steps, retries, agent handoffs, and recoverable failures, revalidating ownership before attachment.
+   Inspect the task's recorded instance before launching a replacement; closing a controller or losing its connection does not prove Chrome exited.
+   A genuinely new proof run gets a fresh profile after retiring the previous owned instance, not an additional browser left beside it.
+   Parallel tasks need separate ownership; another task's browser is neither reusable capacity nor a cleanup target.
+4. **Close when the task ends.** On success, failure, blockage, cancellation, or replacement, use the supported graceful shutdown for that exact browser and its task-owned controllers/listeners.
+   Verify exit and released endpoints before reporting cleanup complete or launching a replacement.
+   A disconnected debugger, expired receipt, closed window, or stopped fixture alone is not proof of browser shutdown.
+5. **Retain evidence, not running browsers.** Keep privacy-reviewed artifacts and any required profile/recovery files separately from the live processes.
+   Keeping a browser alive for a later handoff requires explicit user approval, a named owner, and a clear end condition; report it as retained, not cleaned up.
+   If shutdown fails or ownership becomes inconclusive, preserve the resources, report the exact blocker and recovery metadata privately, and stop automatic relaunches.
+
+### Verify isolation and preserve other work
+
 Before connecting or reusing a bridge, verify the actual live process/profile, loopback endpoint, task/repository identity, and target page.
 A session name, caller flag, profile pathname, or self-reported receipt alone does not establish isolation.
 The repository runtime owner is responsible for verifying the private profile, process, endpoint and target page.
@@ -65,7 +84,9 @@ The upstream CLI does not enforce dotfiles-specific task receipts, Herdr caller 
 An isolated profile is not browser-network confinement.
 Use the repository's authentication, tenancy, provider and approved-operation boundaries to protect application state; a task needing enforced egress containment requires a separately validated sandbox and is outside this QA exception.
 Fail closed on stale, foreign, missing, or inconclusive ownership; preserve siblings and their sessions.
-Cleanup stops only exact-owned resources and re-probes survivors; do not use kill-all or delete retained app data/worktree leases.
+Cleanup revalidates process birth, executable, profile, and task ownership before stopping only exact-owned resources, then re-probes survivors.
+Age, inactivity, an expired allocation, or an exited parent is a reason to investigate, not permission to stop another task's browser.
+Preserve personal/default profiles, unrelated browsers, active QA sessions, retained app data, and worktree leases; never use kill-all or broad process-name matching.
 
 Use Codex Computer Use for end-user visual/native interaction, with the verified private QA window as its target.
 Apply repository-specific authentication, interactive proof, capture, and review rules through their owning commands; CDP diagnostics are not a substitute for observing the rendered state.
@@ -80,6 +101,13 @@ Use the repository-approved disposable profile and verify the target before comm
 For interactive Zen debugging, use native Computer Use and Zen's own Developer Tools on task-owned pages; report unsupported programmatic inspection rather than substituting Chrome.
 Do not print tokens, cookie values, passwords, or complete storage/session objects.
 Inspect only the claims, keys, headers, or fields needed to prove the hypothesis.
+
+## Shared Zen lifecycle
+
+Reuse the existing personal Zen application and its `development` space rather than creating disposable Zen sessions.
+Track which tabs/windows the task created; close those when finished only if they still belong exclusively to the task and contain no user work or unsaved input.
+Preserve pre-existing tabs/windows and report uncertain ownership instead of closing them.
+Ending a task never authorizes quitting the shared Zen app or changing its profiles, spaces, or synchronization.
 
 ## PDF rendering and browser launch safety
 
