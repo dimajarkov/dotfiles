@@ -25,7 +25,8 @@ When the user invokes `/lavish` or explicitly asks to use Lavish by name, build 
 
 ## Workflow
 
-1. Create the HTML artifact (default location `.lavish/<name>.html` in the working directory).
+1. Before creating or substantially revising HTML, read [Dmitri's artifact preferences](references/artifact-preferences.md) and apply them alongside the CLI's design and matching playbook guidance.
+   Create the HTML artifact (default location `.lavish/<name>.html` in the working directory).
 2. Run `npx -y lavish-axi <html-file>` to open or resume a review session in the browser.
    If the output carries a `self_paint_warning`, fix the unpainted page surface and save before polling - Lavish live-reloads the artifact.
 3. Run `npx -y lavish-axi poll <html-file>` to long-poll for the user's annotations and queued prompts.

@@ -67,6 +67,35 @@ in {
   };
   fonts.fontconfig.enable = true;
 
+  programs.sketchybar = {
+    enable = true;
+    extraPackages = [ pkgs.python3 ];
+  };
+  launchd.agents.sketchybar-aerospace = {
+    enable = config.programs.sketchybar.service.enable;
+    config = {
+      ProgramArguments = [
+        "${pkgs.python3}/bin/python3"
+        "${dotfiles}/home/.config/sketchybar/plugins/workspaces.py"
+        "watch"
+      ];
+      EnvironmentVariables = {
+        PATH = "${config.programs.sketchybar.finalPackage}/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+        PYTHONDONTWRITEBYTECODE = "1";
+      };
+      ProcessType = "Background";
+      KeepAlive = true;
+      RunAtLoad = true;
+      ThrottleInterval = 5;
+      StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/sketchybar/aerospace.err.log";
+      StandardOutPath = "${config.home.homeDirectory}/Library/Logs/sketchybar/aerospace.out.log";
+    };
+  };
+  home.activation.sketchybarLogDirectory = config.lib.dag.entryBetween
+    [ "setupLaunchAgents" ] [ "writeBoundary" ] ''
+      run ${pkgs.coreutils}/bin/mkdir -p "${config.home.homeDirectory}/Library/Logs/sketchybar"
+    '';
+
   programs.git = {
     enable = true;
     lfs.enable = true;
@@ -493,6 +522,10 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/copy-all/index.ts";
   home.file.".pi/agent/extensions/up-to-date.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/up-to-date.ts";
+  home.file.".config/sketchybar".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/sketchybar";
+  home.file.".aerospace.toml".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.aerospace.toml";
   home.file.".hammerspoon/init.lua".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.hammerspoon/init.lua";
   home.file.".config/gh/config.yml".source =

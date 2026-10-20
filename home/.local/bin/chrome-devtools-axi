@@ -1,5 +1,22 @@
 #!/bin/sh
 set -eu
 
-# Keep Home Manager's public entry point while using the npm-owned upstream CLI.
+# Preserve explicit executables and shared-service transport semantics. The
+# default npm-owned MCP needs page routing enabled for AXI's explicit page IDs.
+if [ -z "${CHROME_DEVTOOLS_AXI_MCP_PATH:-}" ] && [ -z "${CHROME_DEVTOOLS_AXI_MCP_SERVER_URL:-}" ]; then
+  # Home Manager links this front door through the Nix store to its source.
+  # Resolve that chain so its private adapter needs no separate global install.
+  launcher_source=$0
+  while [ -L "$launcher_source" ]; do
+    launcher_link=$(readlink "$launcher_source")
+    case "$launcher_link" in
+      /*) launcher_source=$launcher_link ;;
+      *) launcher_source=$(dirname "$launcher_source")/$launcher_link ;;
+    esac
+  done
+  launcher_directory=$(CDPATH='' cd -- "$(dirname "$launcher_source")" && pwd)
+  CHROME_DEVTOOLS_AXI_MCP_PATH=$launcher_directory/chrome-devtools-mcp-routing.mjs
+  export CHROME_DEVTOOLS_AXI_MCP_PATH
+fi
+
 exec "$HOME/.npm-global/bin/chrome-devtools-axi" "$@"

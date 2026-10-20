@@ -21,6 +21,7 @@ Running the switch builds:
 - Shell (zsh, aliases, starship prompt)
 - Editor (Neovim follows macOS appearance: GitHub Dark Default and GitHub Light Default)
 - Terminal (WezTerm follows system appearance: Catppuccin Mocha dark, Latte light)
+- [SketchyBar](docs/sketchybar.md) (Catppuccin status bar with AeroSpace workspaces, active app, volume, battery, and clock)
 - Agent configs (Claude, Codex, opencode all share one AGENTS.md)
 
 ## Prerequisites

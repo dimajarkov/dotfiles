@@ -1,7 +1,126 @@
+diff --git a/packages/agent/src/agent-loop.ts b/packages/agent/src/agent-loop.ts
+index f406aba..1e519a4 100644
+--- a/packages/agent/src/agent-loop.ts
++++ b/packages/agent/src/agent-loop.ts
+@@ -107,6 +107,7 @@ export async function runAgentLoop(
+ 	signal: AbortSignal | undefined,
+ 	streamFn: StreamFn,
+ ): Promise<AgentMessage[]> {
++	await config.beforeInput?.(prompts, signal);
+ 	const initialMessages = declareToolChanges(context, prompts);
+ 	const newMessages: AgentMessage[] = [...initialMessages];
+ 	const currentContext: AgentContext = {
+@@ -181,6 +182,7 @@ async function runLoop(
+ 
+ 		// Inner loop: process tool calls and steering messages
+ 		while (hasMoreToolCalls || pendingMessages.length > 0) {
++			if (pendingMessages.length > 0) await config.beforeInput?.(pendingMessages, signal);
+ 			let preparedMessages: AgentMessage[] = [];
+ 			if (lastCompletedTurn) {
+ 				const nextTurnSnapshot = await config.prepareNextTurn?.(lastCompletedTurn);
+@@ -203,6 +205,7 @@ async function runLoop(
+ 				// otherwise one-at-a-time mode would deliver two messages in this turn.
+ 				if (pendingMessages.length === 0) {
+ 					pendingMessages = (await config.getSteeringMessages?.()) || [];
++					if (pendingMessages.length > 0) await config.beforeInput?.(pendingMessages, signal);
+ 				}
+ 				await emit({ type: "turn_start" });
+ 			}
+@@ -298,6 +301,15 @@ async function runLoop(
+ 			}
+ 		}
+ 
++		// Owning runtimes may need recovery and actionable settlement before the next request.
++		if (config.deferFollowUp) {
++			if (explicitContinuation) {
++				explicitContinuation = false;
++				continue;
++			}
++			break;
++		}
++
+ 		// Agent would stop here. Check for follow-up messages.
+ 		const followUpMessages = (await config.getFollowUpMessages?.()) || [];
+ 		if (followUpMessages.length > 0) {
+diff --git a/packages/agent/src/agent.ts b/packages/agent/src/agent.ts
+index ee8e6e5..71064e6 100644
+--- a/packages/agent/src/agent.ts
++++ b/packages/agent/src/agent.ts
+@@ -36,13 +36,15 @@ import type {
+ export type { QueueMode } from "./types.ts";
+ 
+ function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
+-	return messages.filter(
+-		(message) =>
+-			message.role === "system" ||
+-			message.role === "user" ||
+-			message.role === "assistant" ||
+-			message.role === "toolResult",
+-	);
++	return messages
++		.filter(
++			(message) =>
++				message.role === "system" ||
++				message.role === "user" ||
++				message.role === "assistant" ||
++				message.role === "toolResult",
++		)
++		.map(({ userRequest: _request, ...message }) => message);
+ }
+ 
+ const EMPTY_USAGE = {
+@@ -124,6 +126,8 @@ export interface AgentOptions {
+ 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+ 	finishTurn?: FinishTurn;
+ 	prepareRequest?: PrepareRequest;
++	deferFollowUp?: boolean;
++	beforeInput?: AgentLoopConfig["beforeInput"];
+ 	prepareNextTurn?: (
+ 		signal?: AbortSignal,
+ 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+@@ -157,7 +161,9 @@ class PendingMessageQueue {
+ 	}
+ 
+ 	peek(): AgentMessage[] {
+-		if (this.mode === "all") return this.messages.slice();
++		if (this.mode === "all") {
++			return this.messages.slice();
++		}
+ 		const first = this.messages[0];
+ 		return first ? [first] : [];
+ 	}
+@@ -208,6 +214,8 @@ export class Agent {
+ 	) => Promise<AfterToolCallResult | undefined>;
+ 	public finishTurn?: FinishTurn;
+ 	public prepareRequest?: PrepareRequest;
++	public deferFollowUp: boolean;
++	public beforeInput?: AgentLoopConfig["beforeInput"];
+ 	public prepareNextTurn?: (
+ 		signal?: AbortSignal,
+ 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+@@ -242,6 +250,8 @@ export class Agent {
+ 		this.afterToolCall = runtimeOptions.afterToolCall;
+ 		this.finishTurn = runtimeOptions.finishTurn;
+ 		this.prepareRequest = runtimeOptions.prepareRequest;
++		this.deferFollowUp = runtimeOptions.deferFollowUp ?? false;
++		this.beforeInput = runtimeOptions.beforeInput;
+ 		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
+ 		this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
+ 		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
+@@ -481,6 +491,8 @@ export class Agent {
+ 			afterToolCall: this.afterToolCall,
+ 			finishTurn: this.finishTurn,
+ 			prepareRequest: this.prepareRequest,
++			deferFollowUp: this.deferFollowUp,
++			beforeInput: this.beforeInput,
+ 			prepareNextTurn:
+ 				this.prepareNextTurnWithContext || this.prepareNextTurn
+ 					? async (context) => {
 diff --git a/packages/agent/src/types.ts b/packages/agent/src/types.ts
+index dbfba74..2ec4d70 100644
 --- a/packages/agent/src/types.ts
 +++ b/packages/agent/src/types.ts
-@@ -269,6 +269,10 @@
+@@ -269,6 +269,10 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
  	 * replace the runtime values for this and later requests in the run. This hook does not poll queues.
  	 */
  	prepareRequest?: PrepareRequest;
@@ -12,7 +131,7 @@ diff --git a/packages/agent/src/types.ts b/packages/agent/src/types.ts
  
  	/**
  	 * Called after `turn_end` when the loop will continue, immediately before the next turn starts.
-@@ -371,7 +375,28 @@
+@@ -371,7 +375,28 @@ export interface CustomAgentMessages {
   * This abstraction allows apps to add custom message types while maintaining
   * type safety and compatibility with the base LLM messages.
   */
@@ -42,123 +161,96 @@ diff --git a/packages/agent/src/types.ts b/packages/agent/src/types.ts
  
  /**
   * Public agent state.
-diff --git a/packages/agent/src/agent.ts b/packages/agent/src/agent.ts
---- a/packages/agent/src/agent.ts
-+++ b/packages/agent/src/agent.ts
-@@ -36,13 +36,15 @@
- export type { QueueMode } from "./types.ts";
+diff --git a/packages/coding-agent/docs/extensions.md b/packages/coding-agent/docs/extensions.md
+index c0c7fd2..eeb9e2c 100644
+--- a/packages/coding-agent/docs/extensions.md
++++ b/packages/coding-agent/docs/extensions.md
+@@ -67,6 +67,10 @@ Automatic retries, recovery, compaction, or queued work can continue afterward.
+ `agent_before_settle` is the final actionable boundary: it can append entries and request one continuation.
+ `agent_settled` is final and notification-only; use it when an integration needs to know Pi will not continue automatically.
  
- function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
--	return messages.filter(
--		(message) =>
--			message.role === "system" ||
--			message.role === "user" ||
--			message.role === "assistant" ||
--			message.role === "toolResult",
--	);
-+	return messages
-+		.filter(
-+			(message) =>
-+				message.role === "system" ||
-+				message.role === "user" ||
-+				message.role === "assistant" ||
-+				message.role === "toolResult",
-+		)
-+		.map(({ userRequest: _request, ...message }) => message);
- }
- 
- const EMPTY_USAGE = {
-@@ -124,6 +126,8 @@
- 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
- 	finishTurn?: FinishTurn;
- 	prepareRequest?: PrepareRequest;
-+	deferFollowUp?: boolean;
-+	beforeInput?: AgentLoopConfig["beforeInput"];
- 	prepareNextTurn?: (
- 		signal?: AbortSignal,
- 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
-@@ -157,7 +161,9 @@
- 	}
- 
- 	peek(): AgentMessage[] {
--		if (this.mode === "all") return this.messages.slice();
-+		if (this.mode === "all") {
-+			return this.messages.slice();
-+		}
- 		const first = this.messages[0];
- 		return first ? [first] : [];
- 	}
-@@ -208,6 +214,8 @@
- 	) => Promise<AfterToolCallResult | undefined>;
- 	public finishTurn?: FinishTurn;
- 	public prepareRequest?: PrepareRequest;
-+	public deferFollowUp: boolean;
-+	public beforeInput?: AgentLoopConfig["beforeInput"];
- 	public prepareNextTurn?: (
- 		signal?: AbortSignal,
- 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
-@@ -242,6 +250,8 @@
- 		this.afterToolCall = runtimeOptions.afterToolCall;
- 		this.finishTurn = runtimeOptions.finishTurn;
- 		this.prepareRequest = runtimeOptions.prepareRequest;
-+		this.deferFollowUp = runtimeOptions.deferFollowUp ?? false;
-+		this.beforeInput = runtimeOptions.beforeInput;
- 		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
- 		this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
- 		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
-@@ -481,6 +491,8 @@
- 			afterToolCall: this.afterToolCall,
- 			finishTurn: this.finishTurn,
- 			prepareRequest: this.prepareRequest,
-+			deferFollowUp: this.deferFollowUp,
-+			beforeInput: this.beforeInput,
- 			prepareNextTurn:
- 				this.prepareNextTurnWithContext || this.prepareNextTurn
- 					? async (context) => {
-diff --git a/packages/agent/src/agent-loop.ts b/packages/agent/src/agent-loop.ts
---- a/packages/agent/src/agent-loop.ts
-+++ b/packages/agent/src/agent-loop.ts
-@@ -107,6 +107,7 @@
- 	signal: AbortSignal | undefined,
- 	streamFn: StreamFn,
- ): Promise<AgentMessage[]> {
-+	await config.beforeInput?.(prompts, signal);
- 	const initialMessages = declareToolChanges(context, prompts);
- 	const newMessages: AgentMessage[] = [...initialMessages];
- 	const currentContext: AgentContext = {
-@@ -181,6 +182,7 @@
- 
- 		// Inner loop: process tool calls and steering messages
- 		while (hasMoreToolCalls || pendingMessages.length > 0) {
-+			if (pendingMessages.length > 0) await config.beforeInput?.(pendingMessages, signal);
- 			let preparedMessages: AgentMessage[] = [];
- 			if (lastCompletedTurn) {
- 				const nextTurnSnapshot = await config.prepareNextTurn?.(lastCompletedTurn);
-@@ -203,6 +205,7 @@
- 				// otherwise one-at-a-time mode would deliver two messages in this turn.
- 				if (pendingMessages.length === 0) {
- 					pendingMessages = (await config.getSteeringMessages?.()) || [];
-+					if (pendingMessages.length > 0) await config.beforeInput?.(pendingMessages, signal);
- 				}
- 				await emit({ type: "turn_start" });
- 			}
-@@ -296,6 +299,15 @@
- 			if (hasMoreToolCalls || pendingMessages.length > 0) {
- 				explicitContinuation = false;
- 			}
-+		}
++For an awaited boundary around one actual response, including an intentional `all` queue group, use `user_request_start` and `user_request_end` with `ctx.getUserRequest()`.
++Observe `user_request_prepare` and `user_request_prepare_end` with `ctx.getUserRequestPreparation()` when the baseline must precede idle input transforms or expansion.
++See [User-request lifecycle](user-request-lifecycle.md) for provenance, outcomes, steering, correlation, and continuation semantics.
 +
-+		// Owning runtimes may need recovery and actionable settlement before the next request.
-+		if (config.deferFollowUp) {
-+			if (explicitContinuation) {
-+				explicitContinuation = false;
-+				continue;
-+			}
-+			break;
- 		}
+ <a id="extensionapi-methods"></a>
  
- 		// Agent would stop here. Check for follow-up messages.
+ ## Choose an integration point
+diff --git a/packages/coding-agent/docs/user-request-lifecycle.md b/packages/coding-agent/docs/user-request-lifecycle.md
+new file mode 100644
+index 0000000..f409c98
+--- /dev/null
++++ b/packages/coding-agent/docs/user-request-lifecycle.md
+@@ -0,0 +1,67 @@
++# User-request lifecycle
++
++A native run can process several admitted requests.
++Use request boundaries when observation must cover exactly one request response, including its tools, retries, recovery, and automatic continuations.
++An explicitly selected `all` queue batch has one response scope containing every admitted request in that selection.
++
++`UserRequest`, `UserRequestGroup`, and `UserRequestScope` are exported by agent-core and coding-agent.
++It has readonly `{id:string,source:string,delivery:"prompt"|"steer"|"followUp",correlationId?:string}` fields.
++Native IDs are fresh UUIDs allocated before input transforms and retained through queue admission and consumption.
++They are independent of prompt text and timestamps.
++Native `InputEvent.request` supplies the same provenance to every chained input handler.
++The declaration permits extension-constructed input events without provenance; native session input always supplies it.
++The ID and source remain stable if asynchronous input transformation changes the session busy state.
++Input delivery describes planned routing; admission and start records describe the actual route without creating another ID.
++Before an idle `prompt()` executes input transforms, expansion, or hooks, Pi awaits `user_request_prepare` with `{type:"user_request_prepare",request:UserRequest}`.
++This is an observation interval, not queue admission or a started model response.
++`ctx.getUserRequestPreparation()` returns its original request until it transfers to an actual response or ends.
++Its optional declaration preserves externally constructed legacy contexts; native preparation-capable contexts always supply it.
++Integrations needing first-edit coverage must check this capability as well as `getUserRequest()`.
++Busy input does not create another preparation interval or change the active response scope.
++The first actual response inherits any outstanding idle preparation interval without resampling its baseline.
++If asynchronous input changes which request starts first, `UserRequestStartEvent.preparationId` explicitly identifies that original interval for binding to the selected native scope.
++Normal same-ID start is idempotent, and an intentional `all` selection still starts exactly one group response.
++Handled input or rejected preflight ends an unconsumed interval through awaited `user_request_prepare_end` with `{request,outcome:"completed"|"interrupted"|"failed"}`.
++Handled extension work is completed, abort is interrupted, and rejected preflight is failed; these notifications do not manufacture model responses.
++Observation notifications cannot transform input or request continuation, and input handlers retain their ordinary ordering and error policy.
++Extension commands still execute before ordinary prompt interception, and queue-only `steer()`/`followUp()` calls retain their upstream admission semantics.
++
++`user_request_start` and `user_request_end` are awaited extension notifications.
++Payloads are `{type:"user_request_start",request}` and `{type:"user_request_end",request,outcome}`.
++Outcomes are `completed`, `interrupted`, and `failed`.
++Start finishes before selected-response preparation, provider work, and tools.
++For idle prompt input work, observe the earlier preparation barrier too.
++End finishes after tools, retries, recovery, and automatic continuations, before the next distinct request starts work.
++A terminal unrecovered provider or runtime failure is failed; abort or interactive steering superseding an active scope is interrupted.
++Already executing tools finish at their ordinary steering boundary.
++Notification handlers cannot return continuation decisions; ordinary handler errors are reported and coding can continue.
++
++`UserRequestScope` is `UserRequest | UserRequestGroup`.
++A group has readonly `{id:string,mode:"all",requests:readonly UserRequest[]}` fields.
++Its fresh response-scope UUID is independent of every member UUID; the ordered members retain their original source, delivery, and optional correlation reference.
++A group represents one actual response addressing an intentional batch, rather than separate completed responses for its members.
++The lifecycle event `request` and `ctx.getUserRequest()` and `session.userRequest` use this scope union.
++The context getter and session property return undefined outside a response.
++The context method is optional for extension-created contexts; the native runtime supplies it.
++Session subscribers observe both events using their existing notification-only contract.
++
++`enqueueMessage()` retains synchronous native queue admission and the exact `{status:"queued"}` receipt.
++It creates a fresh extension-origin request even when idle and no input event occurs.
++Its optional `correlationId` admission option retains a submitter-owned reference without replacing the native ID or guaranteeing deduplication.
++Repeated correlation references still create distinct requests.
++Custom messages triggering work create requests; context-only custom messages, nextTurn messages, boundary entries, retries, and internal continuations stay in their owning response.
++
++General `AgentMessage.userRequest` metadata and session-owned `pi.user-request` custom entries carry provenance.
++Custom entries record admitted/start/end phases, exclude prompt text, and do not participate in model context.
++User-message metadata survives ordinary persistence; custom-message admission and lifecycle provenance live in custom entries without changing caller details.
++Queues remain memory-only, and admission records do not prove consumption or successful completion.
++
++Queue selection, order, and model-facing batching follow the configured SDK modes unchanged.
++Ordinary one-at-a-time selection starts one scope per admitted request.
++Explicit `all` selection with two or more distinct tagged requests starts one group scope and publishes one actual group outcome.
++Selection with one tagged request uses its individual scope; untagged context contributions do not create group members.
++Start finishes before preparation for the entire selection, and its baseline remains active throughout tools, retries, recovery, and automatic continuation.
++A new selected group interrupts a superseded steering scope in the same way as a single steering request.
++AgentSession uses the general agent-core `beforeInput` barrier for selected input and `deferFollowUp` scheduling option to perform recovery and settlement before consuming follow-ups.
++Direct agent-core consumers keep default scheduling unless they select these options.
++Steering remains tool-safe and supersedes an active scope rather than becoming an independent completed follow-up.
 diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
+index 3f07a0c..c717ad4 100644
 --- a/packages/coding-agent/src/core/agent-session.ts
 +++ b/packages/coding-agent/src/core/agent-session.ts
 @@ -13,6 +13,7 @@
@@ -169,7 +261,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  import { readFileSync } from "node:fs";
  import { basename, dirname } from "node:path";
  import {
-@@ -30,6 +31,8 @@
+@@ -30,6 +31,8 @@ import {
  	type PrepareNextTurnContext,
  	runToolCall,
  	type ThinkingLevel,
@@ -178,7 +270,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  } from "@earendil-works/pi-agent-core";
  import { contentText, getCurrentSystemMessage, retryDelayMs } from "@earendil-works/pi-ai";
  import type {
-@@ -110,6 +113,10 @@
+@@ -110,6 +113,10 @@ import {
  	type ToolLoadout,
  	type TreePreparation,
  	type TurnStartEvent,
@@ -188,8 +280,8 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
 +	type UserRequestStartEvent,
  	wrapRegisteredTools,
  } from "./extensions/index.ts";
- import { emitSessionShutdownEvent } from "./extensions/runner.ts";
-@@ -201,6 +208,10 @@
+ import { type BeforeAgentStartTrigger, emitSessionShutdownEvent } from "./extensions/runner.ts";
+@@ -201,6 +208,10 @@ export type AgentSessionEvent =
  			willRetry: boolean;
  	  }
  	| { type: "agent_settled"; aborted: boolean }
@@ -200,7 +292,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  	| {
  			type: "queue_update";
  			steering: readonly string[];
-@@ -394,6 +405,8 @@
+@@ -395,6 +406,8 @@ export class AgentSession {
  	private _steeringMessages: string[] = [];
  	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
  	private _followUpMessages: string[] = [];
@@ -209,7 +301,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  	/** Messages queued to be included with the next user prompt as context ("asides"). */
  	private _pendingNextTurnMessages: CustomMessage[] = [];
  	/** Context-only custom messages queued during a run, flushed once the current turn's tool results are in. */
-@@ -428,6 +441,8 @@
+@@ -429,6 +442,8 @@ export class AgentSession {
  	private _lastAssistantMessage: AssistantMessage | undefined;
  	private _lastAssistantToolResults: AgentMessage[] = [];
  	private _lastActivityOutcome: AgentActivityOutcome = "completed";
@@ -218,7 +310,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  	private _isBeforeSettle = false;
  	private _abortDuringBeforeSettle = false;
  	private _isEmittingAgentSettled = false;
-@@ -515,6 +530,22 @@
+@@ -516,6 +531,22 @@ export class AgentSession {
  		this._installAgentNextTurnRefresh();
  		this._installAgentRequestProjection();
  		this._installAgentBoundaryHooks();
@@ -241,7 +333,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  		this._installHiddenDeclarationsProjection();
  		this._installAgentForcedPromptProjection();
  
-@@ -1075,11 +1106,61 @@
+@@ -1076,11 +1107,61 @@ export class AgentSession {
  		resolve();
  	}
  
@@ -303,7 +395,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  			const aborted = this._agentRunAbortRequested;
  			await this._extensionRunner.emit({ type: "agent_settled", aborted });
  			this._emit({ type: "agent_settled", aborted });
-@@ -1114,24 +1195,18 @@
+@@ -1118,24 +1199,18 @@ export class AgentSession {
  				this._nestedToolCalls.clear();
  			}
  		}
@@ -337,16 +429,58 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  				}
  			}
  		}
-@@ -1820,7 +1895,7 @@
- 	// =========================================================================
- 
- 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
--		this._agentRunAbortRequested = false;
-+		if (!this._userRequest) this._agentRunAbortRequested = false;
- 		// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
- 		this._failedResponse = undefined;
- 		this._recordSelection();
-@@ -1840,6 +1915,9 @@
+@@ -1834,32 +1909,29 @@ export class AgentSession {
+ 	 * starting another, and an abort requested meanwhile aborts the run as soon as it exists.
+ 	 * @param onStarted Called once the run's messages are prepared, before the first request.
+ 	 */
+-	private async _startRun(trigger?: BeforeAgentStartTrigger, onStarted?: () => void): Promise<void> {
++	private async _startRun(
++		trigger?: BeforeAgentStartTrigger,
++		onStarted?: () => void,
++		request?: UserRequest,
++	): Promise<void> {
+ 		this._isAgentRunActive = true;
+ 		this._agentRunAbortRequested = false;
+-		let messages: AgentMessage[];
+ 		try {
+-			messages = trigger ? await this._prepareRun(trigger) : [];
+-		} catch (error) {
+-			this._isAgentRunActive = false;
++			if (request) await this._startUserRequest(request);
++			if (this._agentRunAbortRequested) return;
++			const messages = trigger ? await this._prepareRun(trigger, request) : [];
++			// Messages held while the run was starting go before its starting messages, as they would
++			// have while idle. No run exists yet, so they cannot split a tool call from its result.
+ 			this._flushPendingBashMessages();
+ 			this._flushPendingCustomMessages();
+-			this._resolveIdleWaitIfIdle();
+-			throw error;
+-		}
+-		// Messages held while the run was starting go before its starting messages, as they would
+-		// have while idle. No run exists yet, so they cannot split a tool call from its result.
+-		this._flushPendingBashMessages();
+-		this._flushPendingCustomMessages();
+-		onStarted?.();
+-
+-		// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
+-		this._failedResponse = undefined;
+-		this._recordSelection();
+-		// The run records the loadout in the transcript; restored tools that did not register by now
+-		// are dropped, so a tool that never registers does not stay pending.
+-		this._pendingToolNames.clear();
+-		try {
++			onStarted?.();
++
++			// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
++			this._failedResponse = undefined;
++			this._recordSelection();
++			// The run records the loadout in the transcript; restored tools that did not register by now
++			// are dropped, so a tool that never registers does not stay pending.
++			this._pendingToolNames.clear();
+ 			await this.agent.prompt(messages);
+ 			while (!this._agentRunAbortRequested) {
+ 				if (await this._handlePostAgentRun()) {
+@@ -1871,6 +1943,9 @@ export class AgentSession {
  				if (this._agentRunAbortRequested) break;
  				await this.agent.continue();
  			}
@@ -356,7 +490,24 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  		} finally {
  			if (this._agentRunAbortRequested) this._finishCancelledRetry();
  			this._failedResponse = undefined;
-@@ -1885,9 +1963,9 @@
+@@ -1887,7 +1962,7 @@ export class AgentSession {
+ 	 * message followed by pending nextTurn messages (consumed here) and handler messages, with a
+ 	 * system patch first when the prompt changed.
+ 	 */
+-	private async _prepareRun(trigger: BeforeAgentStartTrigger): Promise<AgentMessage[]> {
++	private async _prepareRun(trigger: BeforeAgentStartTrigger, request?: UserRequest): Promise<AgentMessage[]> {
+ 		// Check if we need to compact before sending (catches aborted responses).
+ 		// The starting message is sent below, so do not call agent.continue() here.
+ 		const lastAssistant = this._findLastAssistantMessage();
+@@ -1917,6 +1992,7 @@ export class AgentSession {
+ 			messages.push({
+ 				role: "user",
+ 				content: [{ type: "text", text }, ...normalized.images],
++				userRequest: request,
+ 				timestamp: Date.now(),
+ 			});
+ 		}
+@@ -1975,9 +2051,9 @@ export class AgentSession {
  			return !this._agentRunAbortRequested;
  		}
  
@@ -369,7 +520,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  	}
  
  	private async _runBeforeSettleBoundary(): Promise<boolean> {
-@@ -1918,13 +1996,14 @@
+@@ -2008,13 +2084,14 @@ export class AgentSession {
  		text: string,
  		images: ImageContent[] | undefined,
  		source: InputSource,
@@ -386,7 +537,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  		if (inputResult.action === "handled") {
  			return undefined;
  		}
-@@ -1989,17 +2068,71 @@
+@@ -2079,17 +2156,71 @@ export class AgentSession {
  			);
  		}
  
@@ -458,7 +609,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  		const { text: currentText, images: currentImages } = processedInput;
  
  		// Expand skill commands (/skill:name args) and prompt templates (/template args)
-@@ -2017,9 +2150,9 @@
+@@ -2107,9 +2238,9 @@ export class AgentSession {
  				);
  			}
  			if (options.streamingBehavior === "followUp") {
@@ -470,147 +621,23 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  			}
  			preflightResult?.("queued");
  			return;
-@@ -2049,65 +2182,83 @@
+@@ -2135,8 +2266,13 @@ export class AgentSession {
  			throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
  		}
  
--		// Check if we need to compact before sending (catches aborted responses).
--		// The user's new prompt is sent below, so do not call agent.continue() here.
--		const lastAssistant = this._findLastAssistantMessage();
--		if (lastAssistant) {
--			await this._checkCompaction(lastAssistant, false);
--		}
--
--		// Emit before_agent_start before normalizing images so extension-driven model
--		// selection determines the resize profile used for the request and history.
--		const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
--		const result = await this._extensionRunner.emitBeforeAgentStart(
--			expandedText,
--			currentImages,
--			this._baseSystemPromptOptions,
--		);
--		// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
--		// which updates the live loadout instead. An explicit edit wins; otherwise the live
--		// loadout is authoritative, so a setActiveTools() call is not undone here.
--		const handlerEditedTools =
--			result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
--			result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
--		if (!handlerEditedTools) result.systemPromptOptions.selectedTools = this.getActiveToolNames();
--
--		const normalized = await this._normalizePromptImages(currentImages);
--		const userText = normalized.hints.length > 0 ? `${expandedText}\n\n${normalized.hints.join("\n")}` : expandedText;
--
--		// Build messages only after hooks and image normalization have completed.
--		const messages: AgentMessage[] = [];
--		const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: userText }];
--		userContent.push(...normalized.images);
--		messages.push({
--			role: "user",
--			content: userContent,
--			timestamp: Date.now(),
--		});
--
--		// Inject any pending "nextTurn" messages as context alongside the user message
--		for (const msg of this._pendingNextTurnMessages) {
--			messages.push(msg);
--		}
--		this._pendingNextTurnMessages = [];
--
--		for (const msg of result.messages) {
+-		await this._startRun({ messageType: "user", prompt: expandedText, images: currentImages }, () =>
+-			preflightResult?.("started"),
 +		if (preparationSignal?.aborted) return;
 +		if (request.delivery !== "prompt") request = Object.freeze({ ...request, delivery: "prompt" });
 +		this._admitUserRequest(request);
-+		// Reserve the scope before awaiting its baseline, so newly arriving input queues normally.
-+		this._isAgentRunActive = true;
-+		this._agentRunAbortRequested = false;
-+		try {
-+			await this._startUserRequest(request);
-+			if (this._agentRunAbortRequested) return;
-+			// Check if we need to compact before sending (catches aborted responses).
-+			// The user's new prompt is sent below, so do not call agent.continue() here.
-+			const lastAssistant = this._findLastAssistantMessage();
-+			if (lastAssistant) {
-+				await this._checkCompaction(lastAssistant, false);
-+			}
-+
-+			// Emit before_agent_start before normalizing images so extension-driven model
-+			// selection determines the resize profile used for the request and history.
-+			const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
-+			const result = await this._extensionRunner.emitBeforeAgentStart(
-+				expandedText,
-+				currentImages,
-+				this._baseSystemPromptOptions,
-+			);
-+			// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
-+			// which updates the live loadout instead. An explicit edit wins; otherwise the live
-+			// loadout is authoritative, so a setActiveTools() call is not undone here.
-+			const handlerEditedTools =
-+				result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
-+				result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
-+			if (!handlerEditedTools) result.systemPromptOptions.selectedTools = this.getActiveToolNames();
-+
-+			const normalized = await this._normalizePromptImages(currentImages);
-+			const userText =
-+				normalized.hints.length > 0 ? `${expandedText}\n\n${normalized.hints.join("\n")}` : expandedText;
-+
-+			// Build messages only after hooks and image normalization have completed.
-+			const messages: AgentMessage[] = [];
-+			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: userText }];
-+			userContent.push(...normalized.images);
- 			messages.push({
--				role: "custom",
--				customType: msg.customType,
--				// Untyped extensions can pass null/missing content; normalize at ingestion.
--				content: msg.content ?? [],
--				display: msg.display,
--				details: msg.details,
-+				role: "user",
-+				content: userContent,
-+				userRequest: request,
- 				timestamp: Date.now(),
- 			});
--		}
--		const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
--		this._runSystemPromptOptions = result.systemPromptOptions;
--		if (updateMessage) messages.unshift(updateMessage);
--
--		preflightResult?.("started");
--		await this._runAgentPrompt(messages);
-+
-+			// Inject any pending "nextTurn" messages as context alongside the user message
-+			for (const msg of this._pendingNextTurnMessages) {
-+				messages.push(msg);
-+			}
-+			this._pendingNextTurnMessages = [];
-+
-+			for (const msg of result.messages) {
-+				messages.push({
-+					role: "custom",
-+					customType: msg.customType,
-+					// Untyped extensions can pass null/missing content; normalize at ingestion.
-+					content: msg.content ?? [],
-+					display: msg.display,
-+					details: msg.details,
-+					timestamp: Date.now(),
-+				});
-+			}
-+			const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
-+			this._runSystemPromptOptions = result.systemPromptOptions;
-+			if (updateMessage) messages.unshift(updateMessage);
-+
-+			preflightResult?.("started");
-+			await this._runAgentPrompt(messages);
-+		} catch (error) {
-+			this._lastActivityOutcome = "error";
-+			throw error;
-+		} finally {
-+			// _runAgentPrompt normally settles; preparation can fail or be aborted before it starts.
-+			if (this._userRequest?.id === request.id) await this._emitAgentSettled();
-+		}
++		await this._startRun(
++			{ messageType: "user", prompt: expandedText, images: currentImages },
++			() => preflightResult?.("started"),
++			request,
+ 		);
  	}
  
- 	/**
-@@ -2180,11 +2331,13 @@
+@@ -2210,11 +2346,13 @@ export class AgentSession {
  			this._throwIfExtensionCommand(text);
  		}
  
@@ -624,7 +651,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  		);
  		if (!processedInput) return "handled";
  
-@@ -2192,9 +2345,9 @@
+@@ -2222,9 +2360,9 @@ export class AgentSession {
  		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
  
  		if (behavior === "steer") {
@@ -636,7 +663,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  		}
  		return "queued";
  	}
-@@ -2235,31 +2388,38 @@
+@@ -2265,31 +2403,38 @@ export class AgentSession {
  	/**
  	 * Internal: Queue a steering message (already expanded, no extension command check).
  	 */
@@ -682,7 +709,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  	}
  
  	/**
-@@ -2283,7 +2443,7 @@
+@@ -2313,7 +2458,7 @@ export class AgentSession {
  	 */
  	enqueueCustomMessage<T = unknown>(
  		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
@@ -691,7 +718,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  	): { status: "queued" } {
  		if (this.isCompacting && !this.isStreaming) {
  			throw new Error("Cannot enqueue a custom message during idle compaction");
-@@ -2295,7 +2455,8 @@
+@@ -2325,7 +2470,8 @@ export class AgentSession {
  			display: message.display,
  			details: message.details,
  			timestamp: Date.now(),
@@ -701,7 +728,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  		const running = this.isStreaming;
  		if (running && options?.deliverAs === "followUp") {
  			this.agent.followUp(appMessage);
-@@ -2304,8 +2465,10 @@
+@@ -2334,8 +2480,10 @@ export class AgentSession {
  			// starts the lifecycle and drains this steering queue before that call.
  			this.agent.steer(appMessage);
  		}
@@ -710,9 +737,9 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  			const startRun = async () => {
 +				if (this.isStreaming || !this.agent.hasQueuedMessages()) return;
  				try {
- 					await this._runAgentPrompt([]);
+ 					await this._startRun();
  				} catch (err) {
-@@ -2350,7 +2513,14 @@
+@@ -2380,7 +2528,14 @@ export class AgentSession {
  			display: message.display,
  			details: message.details,
  			timestamp: Date.now(),
@@ -728,7 +755,16 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  		if (options?.deliverAs === "nextTurn") {
  			this._pendingNextTurnMessages.push(appMessage);
  		} else if (this.isStreaming && options?.triggerTurn !== false) {
-@@ -2452,6 +2622,8 @@
+@@ -2394,7 +2549,7 @@ export class AgentSession {
+ 				this._deferredSettledActions.push(async () => await this.sendCustomMessage(message, options));
+ 				return;
+ 			}
+-			await this._startRun({ messageType: "custom", message: appMessage });
++			await this._startRun({ messageType: "custom", message: appMessage }, undefined, appMessage.userRequest);
+ 		} else if (this.isStreaming) {
+ 			// Appending now would put the message between an assistant tool call and its
+ 			// result, which providers that validate message order reject on replay. Defer
+@@ -2482,6 +2637,8 @@ export class AgentSession {
  		const followUp = [...this._followUpMessages];
  		this._steeringMessages = [];
  		this._followUpMessages = [];
@@ -737,7 +773,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  		this.agent.clearAllQueues();
  		this._emitQueueUpdate();
  		return { steering, followUp };
-@@ -2480,6 +2652,7 @@
+@@ -2510,6 +2667,7 @@ export class AgentSession {
  	 * Abort current operation and wait for agent to become idle.
  	 */
  	async abort(): Promise<void> {
@@ -745,7 +781,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  		if (this._isAgentRunActive) {
  			this._agentRunAbortRequested = true;
  		}
-@@ -3488,6 +3661,8 @@
+@@ -3518,6 +3676,8 @@ export class AgentSession {
  				isIdle: () => this.isIdle,
  				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
  				getSignal: () => this.agent.signal,
@@ -754,7 +790,7 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  				abort: () => {
  					if (this._extensionAbortHandler) {
  						this._extensionAbortHandler();
-@@ -3495,7 +3670,7 @@
+@@ -3525,7 +3685,7 @@ export class AgentSession {
  					}
  					void this.abort();
  				},
@@ -763,10 +799,96 @@ diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-a
  				shutdown: () => {
  					this._extensionShutdownHandler?.();
  				},
+diff --git a/packages/coding-agent/src/core/extensions/index.ts b/packages/coding-agent/src/core/extensions/index.ts
+index 1465e82..08f18b4 100644
+--- a/packages/coding-agent/src/core/extensions/index.ts
++++ b/packages/coding-agent/src/core/extensions/index.ts
+@@ -204,6 +204,10 @@ export type {
+ 	// Events - User Bash
+ 	UserBashEvent,
+ 	UserBashEventResult,
++	UserRequestEndEvent,
++	UserRequestPrepareEndEvent,
++	UserRequestPrepareEvent,
++	UserRequestStartEvent,
+ 	WidgetPlacement,
+ 	WorkingIndicatorOptions,
+ 	WriteToolCallEvent,
+diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
+index 5405a8e..3d4bf4d 100644
+--- a/packages/coding-agent/src/core/extensions/runner.ts
++++ b/packages/coding-agent/src/core/extensions/runner.ts
+@@ -2,6 +2,7 @@
+  * Extension runner - executes extensions and manages their lifecycle.
+  */
+ 
++import { randomUUID } from "node:crypto";
+ import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+ import {
+ 	getCurrentSystemMessage,
+@@ -374,6 +375,8 @@ export class ExtensionRunner {
+ 	private getScopedModels: () => readonly ScopedModel[] = () => [];
+ 	private isIdleFn: () => boolean = () => true;
+ 	private isProjectTrustedFn: () => boolean = () => true;
++	private getUserRequestFn: NonNullable<ExtensionContext["getUserRequest"]> = () => undefined;
++	private getUserRequestPreparationFn: ExtensionContext["getUserRequestPreparation"];
+ 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
+ 	private waitForIdleFn: () => Promise<void> = async () => {};
+ 	private abortFn: () => void = () => {};
+@@ -450,6 +453,8 @@ export class ExtensionRunner {
+ 		this.isIdleFn = contextActions.isIdle;
+ 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
+ 		this.getSignalFn = contextActions.getSignal;
++		this.getUserRequestFn = contextActions.getUserRequest ?? (() => undefined);
++		this.getUserRequestPreparationFn = contextActions.getUserRequestPreparation;
+ 		this.abortFn = contextActions.abort;
+ 		this.hasPendingMessagesFn = contextActions.hasPendingMessages;
+ 		this.shutdownHandler = contextActions.shutdown;
+@@ -923,6 +928,19 @@ export class ExtensionRunner {
+ 				runner.assertActive();
+ 				return runner.runtime.getThinkingLevel();
+ 			},
++			get getUserRequestPreparation() {
++				runner.assertActive();
++				return runner.getUserRequestPreparationFn
++					? () => {
++							runner.assertActive();
++							return runner.getUserRequestPreparationFn?.();
++						}
++					: undefined;
++			},
++			getUserRequest: () => {
++				runner.assertActive();
++				return runner.getUserRequestFn();
++			},
+ 			isIdle: () => {
+ 				runner.assertActive();
+ 				return runner.isIdleFn();
+@@ -1528,6 +1546,11 @@ export class ExtensionRunner {
+ 		images: ImageContent[] | undefined,
+ 		source: InputSource,
+ 		streamingBehavior?: "steer" | "followUp",
++		request: NonNullable<InputEvent["request"]> = Object.freeze({
++			id: randomUUID(),
++			source,
++			delivery: streamingBehavior ?? "prompt",
++		}),
+ 	): Promise<InputEventResult> {
+ 		const ctx = this.createContext();
+ 		let currentText = text;
+@@ -1542,6 +1565,7 @@ export class ExtensionRunner {
+ 						images: currentImages,
+ 						source,
+ 						streamingBehavior,
++						request,
+ 					};
+ 					const result = (await handler(event, ctx)) as InputEventResult | undefined;
+ 					if (result?.action === "handled") return result;
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
+index 5548a39..d7b28f2 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
-@@ -16,6 +16,8 @@
+@@ -16,6 +16,8 @@ import type {
  	AgentToolUpdateCallback,
  	ThinkingLevel,
  	ToolExecutionMode,
@@ -775,7 +897,7 @@ diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/codin
  } from "@earendil-works/pi-agent-core";
  import type {
  	AnyModel,
-@@ -344,6 +346,10 @@
+@@ -344,6 +346,10 @@ export interface ExtensionContext {
  	scopedModels: readonly ScopedModel[];
  	/** Current thinking level, when provided by the session runtime. */
  	thinkingLevel?: ThinkingLevel;
@@ -786,7 +908,7 @@ diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/codin
  	/** Whether the agent is idle (not streaming) */
  	isIdle(): boolean;
  	/** Whether project-local trust is active for this context. */
-@@ -1002,6 +1008,34 @@
+@@ -1030,6 +1036,34 @@ export interface AgentBeforeSettleEvent extends BoundaryState {
  }
  
  /** Fired after an agent run has fully settled and no automatic retry, compaction, or queued continuation will run. */
@@ -821,7 +943,7 @@ diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/codin
  export interface AgentSettledEvent {
  	type: "agent_settled";
  	/** Whether the run ended because it was aborted, for example with Escape. */
-@@ -1141,6 +1175,8 @@
+@@ -1169,6 +1203,8 @@ export type InputSource = "interactive" | "rpc" | "extension";
  
  /** Fired when user input is received, before agent processing */
  export interface InputEvent {
@@ -830,7 +952,7 @@ diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/codin
  	type: "input";
  	/** The input text */
  	text: string;
-@@ -1391,6 +1427,10 @@
+@@ -1419,6 +1455,10 @@ export type ExtensionEvent =
  	| AgentEndEvent
  	| AgentBeforeSettleEvent
  	| AgentSettledEvent
@@ -841,7 +963,7 @@ diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/codin
  	| UIPromptStartEvent
  	| UIPromptEndEvent
  	| TurnStartEvent
-@@ -1618,6 +1658,10 @@
+@@ -1646,6 +1686,10 @@ export interface ExtensionAPI {
  		handler: ExtensionHandler<AgentBeforeSettleEvent, AgentBeforeSettleEventResult>,
  	): () => void;
  	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): () => void;
@@ -852,7 +974,7 @@ diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/codin
  	on(event: "ui_prompt_start", handler: ExtensionHandler<UIPromptStartEvent>): () => void;
  	on(event: "ui_prompt_end", handler: ExtensionHandler<UIPromptEndEvent>): () => void;
  	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): () => void;
-@@ -2081,7 +2125,7 @@
+@@ -2109,7 +2153,7 @@ type HandlerFn = (...args: unknown[]) => Promise<unknown>;
  
  export type EnqueueMessageHandler = <T = unknown>(
  	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
@@ -861,7 +983,7 @@ diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/codin
  ) => { status: "queued" };
  
  export type SendMessageHandler = <T = unknown>(
-@@ -2196,6 +2240,8 @@
+@@ -2227,6 +2271,8 @@ export interface ExtensionContextActions {
  	isIdle: () => boolean;
  	isProjectTrusted: () => boolean;
  	getSignal: () => AbortSignal | undefined;
@@ -870,93 +992,11 @@ diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/codin
  	abort: () => void;
  	hasPendingMessages: () => boolean;
  	shutdown: () => void;
-diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
---- a/packages/coding-agent/src/core/extensions/runner.ts
-+++ b/packages/coding-agent/src/core/extensions/runner.ts
-@@ -2,6 +2,7 @@
-  * Extension runner - executes extensions and manages their lifecycle.
-  */
- 
-+import { randomUUID } from "node:crypto";
- import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
- import {
- 	getCurrentSystemMessage,
-@@ -367,6 +368,8 @@
- 	private getScopedModels: () => readonly ScopedModel[] = () => [];
- 	private isIdleFn: () => boolean = () => true;
- 	private isProjectTrustedFn: () => boolean = () => true;
-+	private getUserRequestFn: NonNullable<ExtensionContext["getUserRequest"]> = () => undefined;
-+	private getUserRequestPreparationFn: ExtensionContext["getUserRequestPreparation"];
- 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
- 	private waitForIdleFn: () => Promise<void> = async () => {};
- 	private abortFn: () => void = () => {};
-@@ -443,6 +446,8 @@
- 		this.isIdleFn = contextActions.isIdle;
- 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
- 		this.getSignalFn = contextActions.getSignal;
-+		this.getUserRequestFn = contextActions.getUserRequest ?? (() => undefined);
-+		this.getUserRequestPreparationFn = contextActions.getUserRequestPreparation;
- 		this.abortFn = contextActions.abort;
- 		this.hasPendingMessagesFn = contextActions.hasPendingMessages;
- 		this.shutdownHandler = contextActions.shutdown;
-@@ -915,6 +920,19 @@
- 			get thinkingLevel() {
- 				runner.assertActive();
- 				return runner.runtime.getThinkingLevel();
-+			},
-+			get getUserRequestPreparation() {
-+				runner.assertActive();
-+				return runner.getUserRequestPreparationFn
-+					? () => {
-+							runner.assertActive();
-+							return runner.getUserRequestPreparationFn?.();
-+						}
-+					: undefined;
-+			},
-+			getUserRequest: () => {
-+				runner.assertActive();
-+				return runner.getUserRequestFn();
- 			},
- 			isIdle: () => {
- 				runner.assertActive();
-@@ -1523,6 +1541,11 @@
- 		images: ImageContent[] | undefined,
- 		source: InputSource,
- 		streamingBehavior?: "steer" | "followUp",
-+		request: NonNullable<InputEvent["request"]> = Object.freeze({
-+			id: randomUUID(),
-+			source,
-+			delivery: streamingBehavior ?? "prompt",
-+		}),
- 	): Promise<InputEventResult> {
- 		const ctx = this.createContext();
- 		let currentText = text;
-@@ -1537,6 +1560,7 @@
- 						images: currentImages,
- 						source,
- 						streamingBehavior,
-+						request,
- 					};
- 					const result = (await handler(event, ctx)) as InputEventResult | undefined;
- 					if (result?.action === "handled") return result;
-diff --git a/packages/coding-agent/src/core/extensions/index.ts b/packages/coding-agent/src/core/extensions/index.ts
---- a/packages/coding-agent/src/core/extensions/index.ts
-+++ b/packages/coding-agent/src/core/extensions/index.ts
-@@ -202,6 +202,10 @@
- 	// Events - User Bash
- 	UserBashEvent,
- 	UserBashEventResult,
-+	UserRequestEndEvent,
-+	UserRequestPrepareEndEvent,
-+	UserRequestPrepareEvent,
-+	UserRequestStartEvent,
- 	WidgetPlacement,
- 	WorkingIndicatorOptions,
- 	WriteToolCallEvent,
 diff --git a/packages/coding-agent/src/core/messages.ts b/packages/coding-agent/src/core/messages.ts
+index 0641176..920efc5 100644
 --- a/packages/coding-agent/src/core/messages.ts
 +++ b/packages/coding-agent/src/core/messages.ts
-@@ -185,6 +185,10 @@
+@@ -185,6 +185,10 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
  				case "user":
  				case "assistant":
  				case "toolResult":
@@ -968,6 +1008,7 @@ diff --git a/packages/coding-agent/src/core/messages.ts b/packages/coding-agent/
  				default:
  					// biome-ignore lint/correctness/noSwitchDeclarations: fine
 diff --git a/packages/coding-agent/src/index.ts b/packages/coding-agent/src/index.ts
+index 0b8fb1d..a6c2788 100644
 --- a/packages/coding-agent/src/index.ts
 +++ b/packages/coding-agent/src/index.ts
 @@ -1,5 +1,6 @@
@@ -977,7 +1018,7 @@ diff --git a/packages/coding-agent/src/index.ts b/packages/coding-agent/src/inde
  export { type Args, parseArgs } from "./cli/args.ts";
  
  // Config paths
-@@ -192,6 +193,10 @@
+@@ -194,6 +195,10 @@ export type {
  	UIPromptStartEvent,
  	UserBashEvent,
  	UserBashEventResult,
@@ -988,155 +1029,11 @@ diff --git a/packages/coding-agent/src/index.ts b/packages/coding-agent/src/inde
  	WidgetPlacement,
  	WorkingIndicatorOptions,
  	WriteToolCallEvent,
-diff --git a/packages/coding-agent/docs/extensions.md b/packages/coding-agent/docs/extensions.md
---- a/packages/coding-agent/docs/extensions.md
-+++ b/packages/coding-agent/docs/extensions.md
-@@ -65,6 +65,10 @@
- 
- `agent_before_settle` is the final actionable boundary: it can append entries and request one continuation.
- `agent_settled` is final and notification-only; use it when an integration needs to know Pi will not continue automatically.
-+
-+For an awaited boundary around one actual response, including an intentional `all` queue group, use `user_request_start` and `user_request_end` with `ctx.getUserRequest()`.
-+Observe `user_request_prepare` and `user_request_prepare_end` with `ctx.getUserRequestPreparation()` when the baseline must precede idle input transforms or expansion.
-+See [User-request lifecycle](user-request-lifecycle.md) for provenance, outcomes, steering, correlation, and continuation semantics.
- 
- <a id="extensionapi-methods"></a>
- 
-diff --git a/packages/coding-agent/docs/user-request-lifecycle.md b/packages/coding-agent/docs/user-request-lifecycle.md
-new file mode 100644
---- /dev/null
-+++ b/packages/coding-agent/docs/user-request-lifecycle.md
-@@ -0,0 +1,67 @@
-+# User-request lifecycle
-+
-+A native run can process several admitted requests.
-+Use request boundaries when observation must cover exactly one request response, including its tools, retries, recovery, and automatic continuations.
-+An explicitly selected `all` queue batch has one response scope containing every admitted request in that selection.
-+
-+`UserRequest`, `UserRequestGroup`, and `UserRequestScope` are exported by agent-core and coding-agent.
-+It has readonly `{id:string,source:string,delivery:"prompt"|"steer"|"followUp",correlationId?:string}` fields.
-+Native IDs are fresh UUIDs allocated before input transforms and retained through queue admission and consumption.
-+They are independent of prompt text and timestamps.
-+Native `InputEvent.request` supplies the same provenance to every chained input handler.
-+The declaration permits extension-constructed input events without provenance; native session input always supplies it.
-+The ID and source remain stable if asynchronous input transformation changes the session busy state.
-+Input delivery describes planned routing; admission and start records describe the actual route without creating another ID.
-+Before an idle `prompt()` executes input transforms, expansion, or hooks, Pi awaits `user_request_prepare` with `{type:"user_request_prepare",request:UserRequest}`.
-+This is an observation interval, not queue admission or a started model response.
-+`ctx.getUserRequestPreparation()` returns its original request until it transfers to an actual response or ends.
-+Its optional declaration preserves externally constructed legacy contexts; native preparation-capable contexts always supply it.
-+Integrations needing first-edit coverage must check this capability as well as `getUserRequest()`.
-+Busy input does not create another preparation interval or change the active response scope.
-+The first actual response inherits any outstanding idle preparation interval without resampling its baseline.
-+If asynchronous input changes which request starts first, `UserRequestStartEvent.preparationId` explicitly identifies that original interval for binding to the selected native scope.
-+Normal same-ID start is idempotent, and an intentional `all` selection still starts exactly one group response.
-+Handled input or rejected preflight ends an unconsumed interval through awaited `user_request_prepare_end` with `{request,outcome:"completed"|"interrupted"|"failed"}`.
-+Handled extension work is completed, abort is interrupted, and rejected preflight is failed; these notifications do not manufacture model responses.
-+Observation notifications cannot transform input or request continuation, and input handlers retain their ordinary ordering and error policy.
-+Extension commands still execute before ordinary prompt interception, and queue-only `steer()`/`followUp()` calls retain their upstream admission semantics.
-+
-+`user_request_start` and `user_request_end` are awaited extension notifications.
-+Payloads are `{type:"user_request_start",request}` and `{type:"user_request_end",request,outcome}`.
-+Outcomes are `completed`, `interrupted`, and `failed`.
-+Start finishes before selected-response preparation, provider work, and tools.
-+For idle prompt input work, observe the earlier preparation barrier too.
-+End finishes after tools, retries, recovery, and automatic continuations, before the next distinct request starts work.
-+A terminal unrecovered provider or runtime failure is failed; abort or interactive steering superseding an active scope is interrupted.
-+Already executing tools finish at their ordinary steering boundary.
-+Notification handlers cannot return continuation decisions; ordinary handler errors are reported and coding can continue.
-+
-+`UserRequestScope` is `UserRequest | UserRequestGroup`.
-+A group has readonly `{id:string,mode:"all",requests:readonly UserRequest[]}` fields.
-+Its fresh response-scope UUID is independent of every member UUID; the ordered members retain their original source, delivery, and optional correlation reference.
-+A group represents one actual response addressing an intentional batch, rather than separate completed responses for its members.
-+The lifecycle event `request` and `ctx.getUserRequest()` and `session.userRequest` use this scope union.
-+The context getter and session property return undefined outside a response.
-+The context method is optional for extension-created contexts; the native runtime supplies it.
-+Session subscribers observe both events using their existing notification-only contract.
-+
-+`enqueueMessage()` retains synchronous native queue admission and the exact `{status:"queued"}` receipt.
-+It creates a fresh extension-origin request even when idle and no input event occurs.
-+Its optional `correlationId` admission option retains a submitter-owned reference without replacing the native ID or guaranteeing deduplication.
-+Repeated correlation references still create distinct requests.
-+Custom messages triggering work create requests; context-only custom messages, nextTurn messages, boundary entries, retries, and internal continuations stay in their owning response.
-+
-+General `AgentMessage.userRequest` metadata and session-owned `pi.user-request` custom entries carry provenance.
-+Custom entries record admitted/start/end phases, exclude prompt text, and do not participate in model context.
-+User-message metadata survives ordinary persistence; custom-message admission and lifecycle provenance live in custom entries without changing caller details.
-+Queues remain memory-only, and admission records do not prove consumption or successful completion.
-+
-+Queue selection, order, and model-facing batching follow the configured SDK modes unchanged.
-+Ordinary one-at-a-time selection starts one scope per admitted request.
-+Explicit `all` selection with two or more distinct tagged requests starts one group scope and publishes one actual group outcome.
-+Selection with one tagged request uses its individual scope; untagged context contributions do not create group members.
-+Start finishes before preparation for the entire selection, and its baseline remains active throughout tools, retries, recovery, and automatic continuation.
-+A new selected group interrupts a superseded steering scope in the same way as a single steering request.
-+AgentSession uses the general agent-core `beforeInput` barrier for selected input and `deferFollowUp` scheduling option to perform recovery and settlement before consuming follow-ups.
-+Direct agent-core consumers keep default scheduling unless they select these options.
-+Steering remains tool-safe and supersedes an active scope rather than becoming an independent completed follow-up.
-diff --git a/packages/coding-agent/test/suite/agent-session-boundaries.test.ts b/packages/coding-agent/test/suite/agent-session-boundaries.test.ts
---- a/packages/coding-agent/test/suite/agent-session-boundaries.test.ts
-+++ b/packages/coding-agent/test/suite/agent-session-boundaries.test.ts
-@@ -114,8 +114,16 @@
- 				expect(requests[0]).toContain("queued steering");
- 				expect(requests[0]).not.toContain("queued follow-up");
- 			} else if (queueKind === "follow-up") {
--				expect(harness.faux.state.callCount).toBe(2);
--				expect(requests[0]).toContain("queued follow-up");
-+				// Automatic continuation belongs to the original response before the next external request.
-+				expect(harness.faux.state.callCount).toBe(3);
-+				expect(requests[0]).not.toContain("queued follow-up");
-+				expect(requests[1]).toContain("queued follow-up");
-+				const starts = harness.eventsOfType("user_request_start");
-+				expect(starts).toHaveLength(2);
-+				expect(harness.eventsOfType("user_request_end")).toEqual([
-+					{ type: "user_request_end", request: starts[0].request, outcome: "completed" },
-+					{ type: "user_request_end", request: starts[1].request, outcome: "completed" },
-+				]);
- 			} else {
- 				expect(harness.faux.state.callCount).toBe(3);
- 				expect(requests[0]).toContain("queued steering");
-diff --git a/packages/coding-agent/test/suite/agent-session-retry-events.test.ts b/packages/coding-agent/test/suite/agent-session-retry-events.test.ts
---- a/packages/coding-agent/test/suite/agent-session-retry-events.test.ts
-+++ b/packages/coding-agent/test/suite/agent-session-retry-events.test.ts
-@@ -274,6 +274,8 @@
- 		await harness.session.prompt("hi");
- 
- 		expect(normalizeEventOrder(harness.events)).toEqual([
-+			"user_request_prepare",
-+			"user_request_start",
- 			"agent_start",
- 			"turn_start",
- 			"message_start:system",
-@@ -285,6 +287,7 @@
- 			"message_end:assistant",
- 			"turn_end",
- 			"agent_end",
-+			"user_request_end",
- 			"agent_settled",
- 		]);
- 	});
-@@ -313,6 +316,8 @@
- 
- 		expect(toolRuns).toEqual(["hello"]);
- 		expect(normalizeEventOrder(harness.events)).toEqual([
-+			"user_request_prepare",
-+			"user_request_start",
- 			"agent_start",
- 			"turn_start",
- 			"message_start:system",
-@@ -333,6 +338,7 @@
- 			"message_end:assistant",
- 			"turn_end",
- 			"agent_end",
-+			"user_request_end",
- 			"agent_settled",
- 		]);
- 	});
 diff --git a/packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts b/packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts
+index ee9758a..f13b8e1 100644
 --- a/packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts
 +++ b/packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts
-@@ -226,11 +226,23 @@
+@@ -226,11 +226,23 @@ describe("AgentSession bash and persistence characterization", () => {
  		// The prompt is declared by the first request, after the queued custom message.
  		expect(entries.map((entry) => entry.type)).toEqual([
  			"custom_message",
@@ -1160,7 +1057,7 @@ diff --git a/packages/coding-agent/test/suite/agent-session-bash-persistence.tes
  		]);
  		expect(harness.session.messages.map((message) => message.role)).toEqual([
  			"custom",
-@@ -281,7 +293,13 @@
+@@ -281,7 +293,13 @@ describe("AgentSession bash and persistence characterization", () => {
  		await harness.session.abort();
  		await promptPromise;
  
@@ -1175,3 +1072,64 @@ diff --git a/packages/coding-agent/test/suite/agent-session-bash-persistence.tes
  		expect(lastEntry?.type).toBe("message");
  		if (lastEntry?.type === "message") {
  			expect(lastEntry.message.role).toBe("assistant");
+diff --git a/packages/coding-agent/test/suite/agent-session-boundaries.test.ts b/packages/coding-agent/test/suite/agent-session-boundaries.test.ts
+index a4d30c8..7e12f22 100644
+--- a/packages/coding-agent/test/suite/agent-session-boundaries.test.ts
++++ b/packages/coding-agent/test/suite/agent-session-boundaries.test.ts
+@@ -114,8 +114,16 @@ describe("AgentSession actionable boundaries", () => {
+ 				expect(requests[0]).toContain("queued steering");
+ 				expect(requests[0]).not.toContain("queued follow-up");
+ 			} else if (queueKind === "follow-up") {
+-				expect(harness.faux.state.callCount).toBe(2);
+-				expect(requests[0]).toContain("queued follow-up");
++				// Automatic continuation belongs to the original response before the next external request.
++				expect(harness.faux.state.callCount).toBe(3);
++				expect(requests[0]).not.toContain("queued follow-up");
++				expect(requests[1]).toContain("queued follow-up");
++				const starts = harness.eventsOfType("user_request_start");
++				expect(starts).toHaveLength(2);
++				expect(harness.eventsOfType("user_request_end")).toEqual([
++					{ type: "user_request_end", request: starts[0].request, outcome: "completed" },
++					{ type: "user_request_end", request: starts[1].request, outcome: "completed" },
++				]);
+ 			} else {
+ 				expect(harness.faux.state.callCount).toBe(3);
+ 				expect(requests[0]).toContain("queued steering");
+diff --git a/packages/coding-agent/test/suite/agent-session-retry-events.test.ts b/packages/coding-agent/test/suite/agent-session-retry-events.test.ts
+index 597acc4..b9bd264 100644
+--- a/packages/coding-agent/test/suite/agent-session-retry-events.test.ts
++++ b/packages/coding-agent/test/suite/agent-session-retry-events.test.ts
+@@ -274,6 +274,8 @@ describe("AgentSession retry and event characterization", () => {
+ 		await harness.session.prompt("hi");
+ 
+ 		expect(normalizeEventOrder(harness.events)).toEqual([
++			"user_request_prepare",
++			"user_request_start",
+ 			"agent_start",
+ 			"turn_start",
+ 			"message_start:system",
+@@ -285,6 +287,7 @@ describe("AgentSession retry and event characterization", () => {
+ 			"message_end:assistant",
+ 			"turn_end",
+ 			"agent_end",
++			"user_request_end",
+ 			"agent_settled",
+ 		]);
+ 	});
+@@ -313,6 +316,8 @@ describe("AgentSession retry and event characterization", () => {
+ 
+ 		expect(toolRuns).toEqual(["hello"]);
+ 		expect(normalizeEventOrder(harness.events)).toEqual([
++			"user_request_prepare",
++			"user_request_start",
+ 			"agent_start",
+ 			"turn_start",
+ 			"message_start:system",
+@@ -333,6 +338,7 @@ describe("AgentSession retry and event characterization", () => {
+ 			"message_end:assistant",
+ 			"turn_end",
+ 			"agent_end",
++			"user_request_end",
+ 			"agent_settled",
+ 		]);
+ 	});

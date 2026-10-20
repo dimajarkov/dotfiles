@@ -1,33 +1,40 @@
 #!/bin/sh
-# Legacy entrypoint retained for loaded callers. Storage is INTERNAL ONLY.
 set -eu
+
+mount='/Volumes/OWC Envoy Ultra'
+expected_uuid='17EE0606-3007-4185-B429-A99781BDCBE8'
+
 refuse() {
-  printf '%s\n' "Docker/OrbStack refused: internal-only storage is not ready ($1). See ~/.dotfiles/docs/container-runtime-storage.md." >&2
+  printf '%s\n' "Docker refused: the verified OWC Envoy Ultra container store is unavailable ($1)." >&2
   exit 78
 }
 
-[ ! -e "$HOME/.orbstack/internal-only-migration.pending" ] || refuse 'preserving migration is pending'
+plist=$(/usr/sbin/diskutil info -plist "$mount" 2>/dev/null) || refuse 'drive is not mounted'
+field() {
+  printf '%s' "$plist" | /usr/bin/plutil -extract "$1" raw -o - - 2>/dev/null
+}
+
+[ "$(field VolumeUUID)" = "$expected_uuid" ] || refuse 'volume UUID does not match'
+[ "$(field MountPoint)" = "$mount" ] || refuse 'mount point does not match'
+[ "$(field FilesystemType)" = 'apfs' ] || refuse 'filesystem is not APFS'
+[ "$(field Writable)" = 'true' ] || refuse 'volume is not writable'
+[ "$(field Internal)" = 'false' ] || refuse 'volume is not external'
+
 config="$HOME/.orbstack/vmconfig.json"
-receipt="$HOME/.orbstack/internal-only-verified.json"
-target="$HOME/.orbstack-internal-live"
-[ -f "$config" ] && [ ! -L "$config" ] || refuse 'configuration missing or redirected'
-data_dir=$(/usr/bin/plutil -extract data_dir raw -o - "$config" 2>/dev/null) || refuse 'data_dir unreadable'
-[ "$data_dir" = "$target" ] || refuse 'data_dir conflicts with internal-only target'
-[ -d "$target" ] && [ ! -L "$target" ] || refuse 'internal store missing or redirected'
+[ -f "$config" ] || refuse 'OrbStack external storage is not configured'
+data_dir=$(/usr/bin/plutil -extract data_dir raw -o - "$config" 2>/dev/null) || refuse 'OrbStack data_dir is unreadable'
+target="$mount/20_PROJECTS/Development/OrbStack"
+[ "$data_dir" = "$target" ] || refuse 'data_dir is not the authorized existing store'
+[ -d "$target" ] && [ ! -L "$target" ] || refuse 'store missing or redirected'
 canonical=$(CDPATH='' cd -P -- "$target" && pwd -P) || refuse 'store cannot be resolved'
 [ "$canonical" = "$target" ] || refuse 'store has a symlinked ancestor'
-image="$target/data.img.raw"
-[ -f "$image" ] && [ ! -L "$image" ] || refuse 'image missing or redirected'
-# Check the actual mounted devices, not a path prefix or a named external drive.
-for path in "$target" "$image"; do
-  device=$(/bin/df -P "$path" | /usr/bin/awk 'END {print $1}')
-  plist=$(/usr/sbin/diskutil info -plist "$device" 2>/dev/null) || refuse 'storage identity unavailable'
-  field() { printf '%s' "$plist" | /usr/bin/plutil -extract "$1" raw -o - - 2>/dev/null; }
-  [ "$(field Internal)" = true ] || refuse 'physical storage is not internal'
-  [ "$(field Writable)" = true ] || refuse 'storage is not writable'
+
+data_image=
+for candidate in "$data_dir/data.img.raw" "$data_dir/data/data.img.raw"; do
+  if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+    data_image="$candidate"
+    break
+  fi
 done
-[ "$(/usr/bin/stat -f '%d' "$target")" = "$(/usr/bin/stat -f '%d' "$image")" ] || refuse 'image is on a different filesystem'
-# Issued only after stopped-source sparse copy, integrity and inventory verification.
-[ -f "$receipt" ] && [ ! -L "$receipt" ] || refuse 'verified migration receipt missing'
-[ "$(/usr/bin/plutil -extract verified raw -o - "$receipt" 2>/dev/null)" = true ] || refuse 'migration not verified'
-[ "$(/usr/bin/plutil -extract data_dir raw -o - "$receipt" 2>/dev/null)" = "$target" ] || refuse 'receipt conflicts with store'
+[ -n "$data_image" ] || refuse 'OrbStack data image is missing'
+[ "$(/usr/bin/stat -f '%d' "$mount")" = "$(/usr/bin/stat -f '%d' "$data_image")" ] || refuse 'data image is on a different filesystem'

@@ -1,0 +1,119 @@
+# Adapted from https://github.com/omerxx/dotfiles/blob/master/aerospace/aerospace.toml
+# App switching stays in Hammerspoon: Cmd-1 WezTerm, Cmd-3 Zen, Cmd-4 Codex.
+# AeroSpace owns Option shortcuts globally; use Herdr's prefix shortcuts for its panes.
+config-version = 2
+start-at-login = false
+auto-reload-config = true
+# A missing/stopped bar must never prevent workspace switching.
+exec-on-workspace-change = ['/bin/sh', '-c', 'export PATH="$HOME/.nix-profile/bin:/etc/profiles/per-user/$USER/bin:/run/current-system/sw/bin:$PATH"; command -v sketchybar >/dev/null && sketchybar --trigger aerospace_workspace_change FOCUSED_WORKSPACE="$AEROSPACE_FOCUSED_WORKSPACE" || true']
+enable-normalization-flatten-containers = true
+enable-normalization-opposite-orientation-for-nested-containers = true
+accordion-padding = 300
+default-root-container-layout = 'tiles'
+default-root-container-orientation = 'auto'
+persistent-workspaces = ['1', '2', '3', '4', '5', '6', '7']
+on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
+automatically-unhide-macos-hidden-apps = false
+focus-follows-mouse.enabled = false
+key-mapping.preset = 'qwerty'
+
+# His floating-app rules, without the duplicate misspelled Discord rule.
+[[on-window-detected]]
+if.app-name-regex-substring = 'telegram'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'finder'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'safari'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'discord'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'mail'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'trello'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'quicktime'
+run = 'layout floating'
+
+# His spacious margins apply only to the Samsung ultrawide, not the laptop.
+# Reserve SketchyBar's right rail only on the built-in panel.
+[gaps]
+inner.horizontal = [{ monitor.'^LS49C95xU$' = 40 }, 10]
+outer.left = [{ monitor.'^LS49C95xU$' = 350 }, 20]
+outer.right = [{ monitor.'^LS49C95xU$' = 350 }, { monitor.'^Built-in Retina Display$' = 54 }, 20]
+outer.bottom = [{ monitor.'^LS49C95xU$' = 100 }, 10]
+outer.top = [{ monitor.'^LS49C95xU$' = 100 }, 10]
+
+[mode.main.binding]
+# Same directional map as Herdr: J down, K up, L left, semicolon right.
+alt-j = 'focus down'
+alt-k = 'focus up'
+alt-l = 'focus left'
+alt-semicolon = 'focus right'
+alt-shift-j = 'move down'
+alt-shift-k = 'move up'
+alt-shift-l = 'move left'
+alt-shift-semicolon = 'move right'
+
+# Keep the original arrow shortcuts as aliases.
+alt-left = 'focus left'
+alt-down = 'focus down'
+alt-up = 'focus up'
+alt-right = 'focus right'
+alt-shift-left = 'move left'
+alt-shift-down = 'move down'
+alt-shift-up = 'move up'
+alt-shift-right = 'move right'
+
+alt-1 = 'workspace 1'
+alt-2 = 'workspace 2'
+alt-3 = 'workspace 3'
+alt-4 = 'workspace 4'
+alt-5 = 'workspace 5'
+alt-6 = 'workspace 6'
+alt-7 = 'workspace 7'
+
+# Like his setup, sending a window to another workspace follows that window.
+alt-shift-1 = 'move-node-to-workspace --focus-follows-window 1'
+alt-shift-2 = 'move-node-to-workspace --focus-follows-window 2'
+alt-shift-3 = 'move-node-to-workspace --focus-follows-window 3'
+alt-shift-4 = 'move-node-to-workspace --focus-follows-window 4'
+alt-shift-5 = 'move-node-to-workspace --focus-follows-window 5'
+alt-shift-6 = 'move-node-to-workspace --focus-follows-window 6'
+alt-shift-7 = 'move-node-to-workspace --focus-follows-window 7'
+alt-tab = 'workspace-back-and-forth'
+alt-shift-tab = 'move-workspace-to-monitor --wrap-around next'
+
+# Keep our existing actions with Option as the base modifier.
+alt-f = 'fullscreen'
+alt-space = 'layout floating tiling'
+alt-slash = 'layout tiles horizontal vertical'
+alt-comma = 'layout accordion horizontal vertical'
+alt-minus = 'resize smart -50'
+alt-equal = 'resize smart +50'
+alt-b = 'balance-sizes'
+alt-shift-r = 'reload-config'
+alt-shift-p = 'enable toggle'
+
+# Service mode on an unused key, since semicolon is now a direction.
+alt-shift-s = 'mode service'
+
+[mode.service.binding]
+esc = ['reload-config', 'mode main']
+r = ['flatten-workspace-tree', 'mode main']
+f = ['layout floating tiling', 'mode main']
+alt-shift-j = ['join-with down', 'mode main']
+alt-shift-k = ['join-with up', 'mode main']
+alt-shift-l = ['join-with left', 'mode main']
+alt-shift-semicolon = ['join-with right', 'mode main']

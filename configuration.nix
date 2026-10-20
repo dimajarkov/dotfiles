@@ -37,11 +37,14 @@
     onActivation.cleanup = "zap";
     onActivation.autoUpdate = true;
     onActivation.extraFlags = [ "--force" ];
-    taps = [{
-      name = "dimajarkov/dotfiles";
-      clone_target = "https://github.com/dimajarkov/dotfiles.git";
-      trusted = true;
-    }];
+    taps = [
+      {
+        name = "dimajarkov/dotfiles";
+        clone_target = "https://github.com/dimajarkov/dotfiles.git";
+        trusted = true;
+      }
+      "nikitabobko/tap"
+    ];
     brews = [
       "autoconf"
       "gh"
@@ -54,6 +57,7 @@
       }
     ];
     casks = [
+      "nikitabobko/tap/aerospace"
       "amethyst"
       "claude-code"
       "ghostty"

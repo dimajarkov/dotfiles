@@ -36,6 +36,11 @@ These are common instructions for Dmitri's agents across all scenarios.
 - Chrome evidence proves Chrome behavior, not Zen behavior; separate Zen acceptance is required only when the task explicitly requires it.
   A missing Zen route is still a blocker for Zen-specific work, not permission for silent browser substitution.
 
+## Lavish artifact authoring
+
+Before creating or substantially revising a Lavish HTML artifact, read `~/.agents/skills/lavish/references/artifact-preferences.md` for Dmitri's progressive-disclosure and breadcrumb navigation defaults.
+This applies even when invoking the CLI directly without loading the Lavish skill.
+
 ## Software installation
 
 - Follow repository policy, its declared manager, existing lockfile, and isolated environment; resolve conflicting evidence first.
@@ -45,10 +50,10 @@ These are common instructions for Dmitri's agents across all scenarios.
 
 ## Container runtime policy
 
-- OrbStack and local Docker storage must use the internal physical drive only, including resolved symlink targets.
+- Keep OrbStack and local Docker on the verified OWC Envoy Ultra store, as explicitly requested on 2026-10-19.
 - Use guarded `docker-start`, `docker`, `docker-compose`, `orb`, and `orbctl`; use `docker-stop` for supported shutdown.
-- Startup remains blocked while `~/.orbstack/internal-only-migration.pending` exists, until a preserving migration is verified; read `~/.dotfiles/docs/container-runtime-storage.md` before changing runtime storage or clearing that interlock.
-- Preserve all external source data and retained internal rollback copies; never initialize a fresh runtime, bypass the migration interlock, or restore external-backed startup to work around a blocker.
+- Before changing storage or recovering from a disconnect, read `~/.dotfiles/docs/container-runtime-storage.md`.
+- Preserve the existing external image and internal rollback/interlock files; never initialize an empty replacement when the drive is absent.
 - Data deletion requires explicit approval and a verified independent backup.
 
 ## Dmitri's Opinions

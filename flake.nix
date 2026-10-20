@@ -80,6 +80,21 @@
         };
       };
       checks.${system} = {
+        sketchybar-configuration = pkgs.runCommand "sketchybar-configuration-check" {
+          nativeBuildInputs = [ pkgs.python3 pkgs.ruff ];
+        } ''
+          export PYTHONDONTWRITEBYTECODE=1
+          mkdir -p home/.config tests
+          cp -R ${./home/.config/sketchybar} home/.config/sketchybar
+          cp ${./tests/sketchybar.py} tests/sketchybar.py
+          cp ${./tests/sketchybar-workspaces.py} tests/sketchybar-workspaces.py
+          cp ${./tests/sketchybar-stability.py} tests/sketchybar-stability.py
+          python3 tests/sketchybar.py
+          python3 tests/sketchybar-workspaces.py
+          ruff check home/.config/sketchybar/plugins/workspaces.py tests/sketchybar*.py
+          ruff format --check home/.config/sketchybar/plugins/workspaces.py tests/sketchybar*.py
+          touch "$out"
+        '';
         bash-darwin-source = import ./nix/tests/bash-darwin-pipes.nix {
           inherit pkgs bashDarwin bashDarwinInteractive;
         };

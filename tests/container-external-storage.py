@@ -1,4 +1,4 @@
-"""Internal-only guard contract. Run with /usr/bin/python3 on macOS."""
+"""External-store guard contract. Run with /usr/bin/python3 on macOS."""
 import json
 import os
 from pathlib import Path
@@ -10,15 +10,16 @@ import unittest
 SOURCE = Path(__file__).resolve().parents[1] / "home/.local/bin/owc-container-ready"
 
 
-class InternalStorageGuard(unittest.TestCase):
+class ExternalStorageGuard(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name).resolve()
         self.config = self.home / ".orbstack"
         self.config.mkdir()
-        self.target = self.home / ".orbstack-internal-live"
-        self.target.mkdir()
+        self.mount = self.home / "volume"
+        self.target = self.mount / "20_PROJECTS/Development/OrbStack"
+        self.target.mkdir(parents=True)
         (self.target / "data.img.raw").write_bytes(b"synthetic")
         self.set_config(str(self.target))
         (self.config / "internal-only-verified.json").write_text(json.dumps({
@@ -27,30 +28,30 @@ class InternalStorageGuard(unittest.TestCase):
         # Only the platform identity response is substituted, in a test copy.
         # Production contains no environment-controlled bypass.
         self.identity = self.home / "identity.plist"
-        self.set_identity(True)
+        self.set_identity(False)
         probe = self.home / "diskutil"
         probe.write_text('#!/bin/sh\nexec /bin/cat "' + str(self.identity) + '"\n')
         probe.chmod(0o755)
         self.guard = self.home / "guard"
-        self.guard.write_text(SOURCE.read_text().replace("/usr/sbin/diskutil", str(probe)))
+        self.guard.write_text(SOURCE.read_text().replace("/usr/sbin/diskutil", str(probe)).replace("/Volumes/OWC Envoy Ultra", str(self.mount)))
         self.guard.chmod(0o755)
 
     def set_config(self, path):
         (self.config / "vmconfig.json").write_text(json.dumps({"data_dir": path}))
 
     def set_identity(self, internal):
-        self.identity.write_bytes(plistlib.dumps({"Internal": internal, "Writable": True}))
+        self.identity.write_bytes(plistlib.dumps({"Internal": internal, "Writable": True, "VolumeUUID": "17EE0606-3007-4185-B429-A99781BDCBE8", "MountPoint": str(self.mount), "FilesystemType": "apfs"}))
 
     def check(self, expected):
         result = subprocess.run([str(self.guard)], env={**os.environ, "HOME": str(self.home)},
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, expected, result.stderr)
 
-    def test_verified_internal(self):
+    def test_verified_external(self):
         self.check(0)
 
-    def test_external(self):
-        self.set_identity(False)
+    def test_internal(self):
+        self.set_identity(True)
         self.check(78)
 
     def test_unknown_identity(self):
@@ -65,13 +66,13 @@ class InternalStorageGuard(unittest.TestCase):
         self.set_config("/Volumes/another-drive/store")
         self.check(78)
 
-    def test_pending_migration(self):
+    def test_retained_old_migration_marker(self):
         (self.config / "internal-only-migration.pending").touch()
-        self.check(78)
+        self.check(0)
 
-    def test_unverified_copy(self):
+    def test_no_internal_copy_required(self):
         (self.config / "internal-only-verified.json").unlink()
-        self.check(78)
+        self.check(0)
 
     def test_store_symlink(self):
         other = self.home / "redirected"

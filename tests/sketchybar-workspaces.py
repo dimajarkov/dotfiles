@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Synthetic membership/controller tests; never query or change the live bar."""
+
 import contextlib
 import importlib.util
 from pathlib import Path
@@ -11,18 +12,29 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-SOURCE = Path(__file__).resolve().parents[1] / "home/.config/sketchybar/plugins/workspaces.py"
+SOURCE = (
+    Path(__file__).resolve().parents[1]
+    / "home/.config/sketchybar/plugins/workspaces.py"
+)
 spec = importlib.util.spec_from_file_location("workspaces", SOURCE)
 w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
 
 
 def window(ws="1", bundle="org.test.App", name="Test", number=1):
-    return {"workspace": ws, "app-bundle-id": bundle, "app-name": name, "window-id": number}
+    return {
+        "workspace": ws,
+        "app-bundle-id": bundle,
+        "app-name": name,
+        "window-id": number,
+    }
 
 
 def snapshot(windows=(), spaces=(), focused="1"):
-    with patch.object(w, "query", side_effect=[list(spaces), list(windows)]), patch.object(w, "run", return_value=focused):
+    with (
+        patch.object(w, "query", side_effect=[list(spaces), list(windows)]),
+        patch.object(w, "run", return_value=focused),
+    ):
         return w.snapshot()
 
 
@@ -45,15 +57,37 @@ def sets(args):
 
 class MembershipTests(unittest.TestCase):
     def test_query_contract_and_empty_workspaces(self):
-        with patch.object(w, "query", side_effect=[[], []]) as query, patch.object(w, "run", return_value="2\n") as run:
+        with (
+            patch.object(w, "query", side_effect=[[], []]) as query,
+            patch.object(w, "run", return_value="2\n") as run,
+        ):
             groups, focused = w.snapshot()
         self.assertEqual(list(groups), list(map(str, range(1, 8))))
         self.assertEqual(focused, "2")
-        self.assertEqual(query.call_args_list[1].args[0], [w.AEROSPACE, "list-windows", "--all", "--json", "--format", "%{workspace}%{app-bundle-id}%{app-name}%{window-id}"])
-        self.assertEqual(run.call_args.args[0], [w.AEROSPACE, "list-workspaces", "--focused"])
+        self.assertEqual(
+            query.call_args_list[1].args[0],
+            [
+                w.AEROSPACE,
+                "list-windows",
+                "--all",
+                "--json",
+                "--format",
+                "%{workspace}%{app-bundle-id}%{app-name}%{window-id}",
+            ],
+        )
+        self.assertEqual(
+            run.call_args.args[0], [w.AEROSPACE, "list-workspaces", "--focused"]
+        )
 
     def test_dedupe_shared_apps_and_stable_order(self):
-        rows = [window(number=8), window(number=2), window("2"), window(bundle="aaa"), window("10"), window("other")]
+        rows = [
+            window(number=8),
+            window(number=2),
+            window("2"),
+            window(bundle="aaa"),
+            window("10"),
+            window("other"),
+        ]
         a, _ = snapshot(rows, [{"workspace": "empty"}])
         b, _ = snapshot(reversed(rows), [{"workspace": "empty"}])
         self.assertEqual(a, b)
@@ -65,7 +99,11 @@ class MembershipTests(unittest.TestCase):
         for value in [0, -1, "1;echo bad", True, None]:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 snapshot([window(number=value)])
-        with patch.object(w, "query", side_effect=[{}, []]), patch.object(w, "run", return_value="1"), self.assertRaises(ValueError):
+        with (
+            patch.object(w, "query", side_effect=[{}, []]),
+            patch.object(w, "run", return_value="1"),
+            self.assertRaises(ValueError),
+        ):
             w.snapshot()
 
     def test_safe_ids_and_shell_quoting(self):
@@ -80,7 +118,14 @@ class MembershipTests(unittest.TestCase):
         self.assertIn(shlex.quote(ws), click)
         # Exercise the shell parser with a fake AeroSpace function, not eval.
         click = click.replace(w.AEROSPACE, "capture")
-        output = subprocess.check_output(["/bin/sh", "-c", 'capture() { printf "%s\\n" "$@"; }; BUTTON=left; ' + click], text=True)
+        output = subprocess.check_output(
+            [
+                "/bin/sh",
+                "-c",
+                'capture() { printf "%s\\n" "$@"; }; BUTTON=left; ' + click,
+            ],
+            text=True,
+        )
         self.assertEqual(output.splitlines(), ["workspace", ws])
         app_props = sets(args)[w.item_id("app", ws, bundle)]
         self.assertIn("click_script=" + w.AEROSPACE + " focus --window-id 1", app_props)
@@ -93,37 +138,80 @@ class MembershipTests(unittest.TestCase):
         self.assertIn("icon.color=" + w.RED, props["space.1"])
         self.assertIn("background.color=" + w.CLEAR, props["space.2"])
         for name in images:
-            self.assertIn("background.image=app.org.test.App", props[name])
-            self.assertIn("background.image.scale=0.6", props[name])
+            prefix = (
+                "icon.background.image"
+                if name.startswith("wsc.popup.")
+                else "background.image"
+            )
+            self.assertIn(prefix + "=app.org.test.App", props[name])
+            self.assertIn(prefix + ".scale=0.6", props[name])
+            self.assertIn(prefix + "=", props[name])
+            self.assertNotIn(prefix + "=none", props[name])
             self.assertIn("background.height=24", props[name])
             self.assertIn("background.drawing=on", props[name])
+        for properties in props.values():
+            self.assertFalse(any(prop.startswith("width=") for prop in properties))
         self.assertIn("label.drawing=off", props[w.item_id("app", "1", "org.test.App")])
         self.assertIn("label=Test", props[w.item_id("popup", "1", "org.test.App")])
+
+    def test_refresh_does_not_queue_dynamic_width_animations(self):
+        groups, _ = snapshot([window()])
+        first, _ = w.plan(groups, "1", {"apple"}, 600)
+        existing = set(sets(first)) | {"apple"}
+        refresh, _ = w.plan(groups, "1", existing, 600)
+        self.assertNotIn("width=dynamic", refresh)
 
     def test_removals_moves_and_group_order(self):
         old, _ = snapshot([window()])
         previous, _ = w.plan(old, "1", {"apple"}, 600)
-        existing = set(sets(previous)) | {"apple", "clock", "date", "battery", "volume", "workspace_controller", "display_controller", "unrelated"}
+        existing = set(sets(previous)) | {
+            "apple",
+            "clock",
+            "date",
+            "battery",
+            "volume",
+            "workspace_controller",
+            "display_controller",
+            "unrelated",
+        }
         new, _ = snapshot([window("2")])
         args, _ = w.plan(new, "2", existing, 600)
         removals = [args[i + 1] for i, value in enumerate(args) if value == "--remove"]
-        self.assertEqual(set(removals), {w.item_id("app", "1", "org.test.App"), w.item_id("popup", "1", "org.test.App")})
-        order = args[args.index("--reorder") + 1:]
-        self.assertEqual(order[:4], ["apple", "space.1", "space.2", w.item_id("app", "2", "org.test.App")])
+        self.assertEqual(
+            set(removals),
+            {
+                w.item_id("app", "1", "org.test.App"),
+                w.item_id("popup", "1", "org.test.App"),
+            },
+        )
+        order = args[args.index("--reorder") + 1 :]
+        self.assertEqual(
+            order[:4],
+            ["apple", "space.1", "space.2", w.item_id("app", "2", "org.test.App")],
+        )
         self.assertEqual(order[-4:], ["clock", "date", "battery", "volume"])
         self.assertNotIn("unrelated", removals)
 
     def test_overflow_discloses_every_app(self):
-        groups, _ = snapshot([window(str(ws), "org.test.App" + str(app), "App " + str(app), app + 1)
-                              for ws in range(1, 8) for app in range(20)])
+        groups, _ = snapshot(
+            [
+                window(str(ws), "org.test.App" + str(app), "App " + str(app), app + 1)
+                for ws in range(1, 8)
+                for app in range(20)
+            ]
+        )
         counts = w.allocation(groups, 600)
-        total_height = 7 * w.HEADER_HEIGHT + sum(counts.values()) * w.ROW_HEIGHT + 7 * w.ROW_HEIGHT
+        total_height = (
+            7 * w.HEADER_HEIGHT + sum(counts.values()) * w.ROW_HEIGHT + 7 * w.ROW_HEIGHT
+        )
         self.assertLessEqual(total_height, 600)
         args, _ = w.plan(groups, "1", {"apple"}, 600)
         props = sets(args)
         self.assertEqual(sum(name.startswith("wsc.popup.") for name in props), 140)
         for ws, apps in groups.items():
-            self.assertIn("icon=+" + str(len(apps) - counts[ws]), props[w.item_id("more", ws)])
+            self.assertIn(
+                "icon=+" + str(len(apps) - counts[ws]), props[w.item_id("more", ws)]
+            )
             self.assertIn("popup.align=left", props[w.header(ws)])
         self.assertLessEqual(max(counts.values()) - min(counts.values()), 1)
 
@@ -138,28 +226,91 @@ class MembershipTests(unittest.TestCase):
     def test_unavailable_preserves_membership_then_recovers(self):
         groups, _ = snapshot([window()])
         existing = {"apple", "space.1", w.item_id("app", "1", "org.test.App")}
-        with patch.object(w, "lock", return_value=contextlib.nullcontext()), patch.object(w, "query", return_value={"items": list(existing)}), patch.object(w, "snapshot", side_effect=ValueError), patch.object(w, "run") as run:
+        with (
+            patch.object(w, "lock", return_value=contextlib.nullcontext()),
+            patch.object(w, "query", return_value={"items": list(existing)}),
+            patch.object(w, "snapshot", side_effect=ValueError),
+            patch.object(w, "run") as run,
+        ):
             w.render()
         args = run.call_args.args[0]
         self.assertNotIn("--remove", args)
         self.assertNotIn("--add", args)
         self.assertIn("icon.color=" + w.MUTED, args)
         self.assertIn("background.color=" + w.CLEAR, args)
-        with patch.object(w, "lock", return_value=contextlib.nullcontext()), patch.object(w, "query", return_value={"items": list(existing)}), patch.object(w, "snapshot", return_value=(groups, "1")), patch.object(w, "inline_budget", return_value=600), patch.object(w, "run") as run:
+        with (
+            patch.object(w, "lock", return_value=contextlib.nullcontext()),
+            patch.object(w, "query", return_value={"items": list(existing)}),
+            patch.object(w, "snapshot", return_value=(groups, "1")),
+            patch.object(w, "inline_budget", return_value=600),
+            patch.object(w, "run") as run,
+        ):
             w.render()
         self.assertIn("icon.color=" + w.RED, run.call_args.args[0])
 
     def test_native_image_error_clears_stale_images(self):
         groups, _ = snapshot([window()])
-        with patch.object(w, "lock", return_value=contextlib.nullcontext()), patch.object(w, "query", return_value={"items": ["apple"]}), patch.object(w, "snapshot", return_value=(groups, "1")), patch.object(w, "inline_budget", return_value=600), patch.object(w, "run", side_effect=[subprocess.CalledProcessError(1, "sketchybar"), subprocess.CalledProcessError(1, "image"), "", ""]) as run:
+        with (
+            patch.object(w, "lock", return_value=contextlib.nullcontext()),
+            patch.object(w, "query", return_value={"items": ["apple"]}),
+            patch.object(w, "snapshot", return_value=(groups, "1")),
+            patch.object(w, "inline_budget", return_value=600),
+            patch.object(
+                w,
+                "run",
+                side_effect=[
+                    subprocess.CalledProcessError(1, "sketchybar"),
+                    subprocess.CalledProcessError(1, "image"),
+                    "",
+                    "",
+                ],
+            ) as run,
+        ):
             w.render()
         fallback = run.call_args.args[0]
-        self.assertIn("background.image=none", fallback)
+        self.assertIn("icon.background.image=", fallback)
+        self.assertIn("icon.background.image.drawing=off", fallback)
         self.assertIn("icon=?", fallback)
         self.assertNotIn(w.item_id("app", "1", "org.test.App"), fallback)
 
+    def test_missing_icon_does_not_replace_valid_native_images(self):
+        groups, _ = snapshot([window(), window(bundle="org.missing", number=2)])
+        calls = []
+
+        def native(args):
+            calls.append(args)
+            if "--add" in args or any(arg.endswith("=app.org.missing") for arg in args):
+                raise subprocess.CalledProcessError(1, args)
+            return ""
+
+        with (
+            patch.object(w, "lock", return_value=contextlib.nullcontext()),
+            patch.object(w, "query", return_value={"items": ["apple"]}),
+            patch.object(w, "snapshot", return_value=(groups, "1")),
+            patch.object(w, "inline_budget", return_value=600),
+            patch.object(w, "run", side_effect=native),
+        ):
+            w.render()
+        fallback = sets(calls[-1][1:])
+        self.assertEqual(
+            set(fallback),
+            {
+                w.item_id("app", "1", "org.missing"),
+                w.item_id("popup", "1", "org.missing"),
+            },
+        )
+        self.assertIn(
+            "background.image=", fallback[w.item_id("app", "1", "org.missing")]
+        )
+        self.assertIn(
+            "icon.background.image=", fallback[w.item_id("popup", "1", "org.missing")]
+        )
+
     def test_private_lock_and_symlink_rejection(self):
-        with tempfile.TemporaryDirectory() as temp, patch.object(w.Path, "home", return_value=Path(temp)):
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+        ):
             with w.lock("render.lock"):
                 with self.assertRaises(TimeoutError), w.lock("render.lock", wait=False):
                     pass
@@ -177,7 +328,14 @@ class MembershipTests(unittest.TestCase):
 
         def spawn(args, **kwargs):
             self.assertEqual(args, [w.AEROSPACE, "subscribe", *w.EVENTS])
-            child = real_popen([sys.executable, "-c", 'import time; print("event\\n" * 40, flush=True); time.sleep(30)'], **kwargs)
+            child = real_popen(
+                [
+                    sys.executable,
+                    "-c",
+                    'import time; print("event\\n" * 40, flush=True); time.sleep(30)',
+                ],
+                **kwargs,
+            )
             children.append(child)
             return child
 
@@ -186,7 +344,16 @@ class MembershipTests(unittest.TestCase):
             if len(triggers) == 2:
                 handlers[signal.SIGTERM](signal.SIGTERM, None)
 
-        with patch.object(w, "lock", return_value=contextlib.nullcontext()), patch.object(w.signal, "signal", side_effect=lambda sig, handler: handlers.update({sig: handler})), patch.object(w.subprocess, "Popen", side_effect=spawn), patch.object(w, "trigger", side_effect=trigger):
+        with (
+            patch.object(w, "lock", return_value=contextlib.nullcontext()),
+            patch.object(
+                w.signal,
+                "signal",
+                side_effect=lambda sig, handler: handlers.update({sig: handler}),
+            ),
+            patch.object(w.subprocess, "Popen", side_effect=spawn),
+            patch.object(w, "trigger", side_effect=trigger),
+        ):
             w.watch()
         self.assertEqual(len(children), 1)
         self.assertEqual(len(triggers), 3)  # startup, coalesced burst, trailing refresh
