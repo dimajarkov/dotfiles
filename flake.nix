@@ -14,6 +14,11 @@
     };
     # Keep the review host and its Bun dependency recipe on the installed release.
     hunk-upstream.url = "github:modem-dev/hunk/7991d3034af1d2116e9c77db31265e409a73bd9f";
+    # Personal fork: physical identity, guarded repair and launch admission.
+    treehouse-owned = {
+      url = "github:dimajarkov/treehouse/f0f75db0941b970e830e75e4dbfd197646476d06";
+      flake = false;
+    };
   };
 
   outputs = inputs@{ self, nix-darwin, nix-homebrew, home-manager, nixpkgs, ... }:
@@ -32,6 +37,9 @@
         bun2nix = inputs.hunk-upstream.inputs.bun2nix.packages.${system}.default;
       };
       piCodingAgent = pkgs.callPackage ./nix/packages/pi-coding-agent.nix {};
+      treehouseOwned = pkgs.callPackage ./nix/packages/treehouse-owned.nix {
+        source = inputs.treehouse-owned;
+      };
       hunkTurnReviewProfile = import ./nix/modules/hunk-turn-review-profile.nix {
         inherit pkgs hunkReviewHost hunkReviewHostTypes hunkTurnReviewAssets piCodingAgent bashDarwin bashDarwinInteractive;
       };
@@ -66,8 +74,14 @@
         hunk-turn-review-assets = hunkTurnReviewAssets;
         hunk-turn-review = hunkTurnReviewProfile;
         pi-coding-agent = piCodingAgent;
+        treehouse-owned = treehouseOwned;
       };
       apps.${system} = {
+        treehouse-owned-install = {
+          type = "app";
+          program = "${treehouseOwned}/bin/treehouse-owned-install";
+          meta.description = "Explicit guarded update of the existing regular-file Treehouse installation";
+        };
         hunk-turn-review-install = {
           type = "app";
           program = "${hunkTurnReviewProfile}/bin/hunk-turn-review-install";
@@ -80,6 +94,14 @@
         };
       };
       checks.${system} = {
+        treehouse-owned = treehouseOwned;
+        treehouse-owned-installation = pkgs.runCommand "treehouse-owned-installation-check" {} ''
+          export TREEHOUSE_INSTALLER=${treehouseOwned}/share/treehouse-owned/install.py
+          export TREEHOUSE_DOTFILES_FLAKE_LOCK=${./flake.lock}
+          export TREEHOUSE_ARTIFACT_MANIFEST=${treehouseOwned}/share/treehouse-owned/manifest.json
+          ${pkgs.python3}/bin/python3 ${./nix/tests/treehouse-owned-installation.py}
+          touch "$out"
+        '';
         sketchybar-configuration = pkgs.runCommand "sketchybar-configuration-check" {
           nativeBuildInputs = [ pkgs.python3 pkgs.ruff ];
         } ''
