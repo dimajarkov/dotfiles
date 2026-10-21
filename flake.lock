@@ -230,7 +230,8 @@
         "hunk-upstream": "hunk-upstream",
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",
-        "nixpkgs": "nixpkgs_2"
+        "nixpkgs": "nixpkgs_2",
+        "treehouse-owned": "treehouse-owned"
       }
     },
     "systems": {
@@ -267,6 +268,23 @@
       "original": {
         "owner": "numtide",
         "repo": "treefmt-nix",
+        "type": "github"
+      }
+    },
+    "treehouse-owned": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792574628,
+        "narHash": "sha256-hm0EG9LHMnf2QjnpHz3+B6xGLl0HZN1g+OwdXLI/eig=",
+        "owner": "dimajarkov",
+        "repo": "treehouse",
+        "rev": "f0f75db0941b970e830e75e4dbfd197646476d06",
+        "type": "github"
+      },
+      "original": {
+        "owner": "dimajarkov",
+        "repo": "treehouse",
+        "rev": "f0f75db0941b970e830e75e4dbfd197646476d06",
         "type": "github"
       }
     }
