@@ -21,6 +21,64 @@ w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
 
 
+class NativeGeometryTests(unittest.TestCase):
+    def native(self, **changes):
+        return dict(
+            arrangement=1,
+            screen=2,
+            width=1512,
+            origin=-500,
+            top=32,
+            leftArea=[-500, 663, 32],
+            rightArea=[348, 664, 32],
+            **changes,
+        )
+
+    def test_native_negative_origin(self):
+        import display
+
+        result = display.normalize(self.native())
+        self.assertEqual((result["left"], result["right"]), (663, 848))
+
+    def test_invalid_native_rectangles(self):
+        import display
+
+        for changes in (
+            {"leftArea": [0, 0, 0], "rightArea": [0, 0, 0]},
+            {"rightArea": [100, 664, 32]},
+            {"leftArea": [-501, 663, 32]},
+            {"leftArea": [-500, 663, 0]},
+        ):
+            value = self.native()
+            value.update(changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                display.normalize(value)
+
+    def test_unnotched_center_split(self):
+        import display
+
+        value = self.native()
+        value.update(top=0, leftArea=None, rightArea=None)
+        result = display.normalize(value)
+        self.assertEqual(result["left"], result["right"])
+
+    def test_display_recovery(self):
+        import display
+
+        with (
+            patch.object(display, "geometry", side_effect=[ValueError(), DISPLAY]),
+            patch.object(display.subprocess, "run") as run,
+        ):
+            display.reconcile()
+            self.assertIn("hidden=on", run.call_args.args[0])
+            display.reconcile()
+            self.assertIn("hidden=off", run.call_args.args[0])
+        config = (SOURCE.parent.parent / "sketchybarrc").read_text()
+        self.assertIn(
+            "display_controller drawing=off updates=on update_freq=30", config
+        )
+
+
 def window(ws="1", bundle="org.test.App", name="Test", number=1):
     return {
         "workspace": ws,
@@ -30,9 +88,26 @@ def window(ws="1", bundle="org.test.App", name="Test", number=1):
     }
 
 
-def snapshot(windows=(), spaces=(), focused="1"):
+MONITORS = [
+    {"monitor-id": 9, "monitor-appkit-nsscreen-screens-id": 2},
+    {"monitor-id": 1, "monitor-appkit-nsscreen-screens-id": 1},
+]
+DISPLAY = {"arrangement": 1, "screen": 2, "left": 650, "right": 850, "width": 1500}
+
+
+def snapshot(windows=(), spaces=None, focused="1"):
+    rows = list(windows)
+    if spaces is None:
+        spaces = [
+            {"workspace": ws}
+            for ws in sorted(
+                set(map(str, range(1, 8))) | {row["workspace"] for row in rows},
+                key=w.workspace_key,
+            )
+        ]
     with (
-        patch.object(w, "query", side_effect=[list(spaces), list(windows)]),
+        patch.object(w, "geometry", return_value=DISPLAY),
+        patch.object(w, "query", side_effect=[MONITORS, list(spaces), rows]),
         patch.object(w, "run", return_value=focused),
     ):
         return w.snapshot()
@@ -49,7 +124,7 @@ def sets(args):
             while index < len(args) and not args[index].startswith("--"):
                 props.append(args[index])
                 index += 1
-            result[name] = props
+            result.setdefault(name, []).extend(props)
         else:
             index += 1
     return result
@@ -58,14 +133,21 @@ def sets(args):
 class MembershipTests(unittest.TestCase):
     def test_query_contract_and_empty_workspaces(self):
         with (
-            patch.object(w, "query", side_effect=[[], []]) as query,
+            patch.object(w, "geometry", return_value=DISPLAY),
+            patch.object(
+                w, "query", side_effect=[MONITORS, [{"workspace": "empty"}], []]
+            ) as query,
             patch.object(w, "run", return_value="2\n") as run,
         ):
             groups, focused = w.snapshot()
-        self.assertEqual(list(groups), list(map(str, range(1, 8))))
-        self.assertEqual(focused, "2")
+        self.assertEqual(list(groups), ["empty"])
         self.assertEqual(
             query.call_args_list[1].args[0],
+            [w.AEROSPACE, "list-workspaces", "--monitor", "9", "--json"],
+        )
+        self.assertEqual(focused, "2")
+        self.assertEqual(
+            query.call_args_list[2].args[0],
             [
                 w.AEROSPACE,
                 "list-windows",
@@ -88,19 +170,98 @@ class MembershipTests(unittest.TestCase):
             window("10"),
             window("other"),
         ]
-        a, _ = snapshot(rows, [{"workspace": "empty"}])
-        b, _ = snapshot(reversed(rows), [{"workspace": "empty"}])
+        spaces = [{"workspace": ws} for ws in ["1", "2", "10", "empty", "other"]]
+        a, _ = snapshot(rows, spaces)
+        b, _ = snapshot(reversed(rows), spaces)
         self.assertEqual(a, b)
         self.assertEqual(a["1"], [("aaa", "Test", 1), ("org.test.App", "Test", 2)])
         self.assertEqual(len(a["2"]), 1)
         self.assertEqual(list(a)[-3:], ["10", "empty", "other"])
+
+    def test_external_workspaces_and_windows_are_excluded(self):
+        groups, focused = snapshot(
+            [window("1"), window("external")],
+            [{"workspace": "1"}, {"workspace": "empty"}],
+            focused="external",
+        )
+        self.assertEqual(list(groups), ["1", "empty"])
+        self.assertEqual(groups["empty"], [])
+        args, _ = w.plan(groups, focused, {"apple"}, 600)
+        self.assertNotIn("icon.color=" + w.RED, args)
+
+    def test_no_builtin_never_invents_workspaces(self):
+        with (
+            patch.object(w, "geometry", return_value=None),
+            patch.object(w, "query") as query,
+        ):
+            self.assertEqual(w.snapshot(), ({}, ""))
+        query.assert_not_called()
+
+    def test_compact_popup_keeps_all_workspaces_and_native_apps(self):
+        groups, _ = snapshot([window()])
+        args, images = w.plan(groups, "1", {"apple"}, 80)
+        props = sets(args)
+        self.assertIn("icon=+7", props["wsc.overflow"])
+        for ws in groups:
+            self.assertIn("drawing=off", props[w.header(ws)])
+            self.assertIn("label=Workspace " + ws, props[w.item_id("entry", ws)])
+        entry = w.item_id("entry", "1", "org.test.App")
+        self.assertIn("icon.background.image=app.org.test.App", props[entry])
+        self.assertIn(entry, images)
+        self.assertIn("popup.drawing=toggle", " ".join(props["wsc.overflow"]))
+        zero, _ = w.plan(groups, "1", {"apple"}, 0)
+        self.assertNotIn("wsc.overflow", sets(zero))
+        self.assertTrue(all("drawing=off" in sets(zero)[w.header(ws)] for ws in groups))
+
+    def test_allocation_stays_within_horizontal_budget(self):
+        groups = {
+            "1": [(str(i), "App", i + 1) for i in range(50)],
+            "2": [],
+            "3": [("other", "Other", 99)],
+        }
+        minimum = sum(w.group_width(apps, 0) for apps in groups.values())
+        for budget in range(minimum, 1600):
+            counts = w.allocation(groups, budget, "3")
+            self.assertLessEqual(
+                sum(w.group_width(apps, counts[ws]) for ws, apps in groups.items()),
+                budget,
+            )
+        counts = w.allocation(groups, minimum, "3")
+        # Replacing a +1 disclosure with one native image costs less, not more.
+        self.assertEqual(counts["3"], 1)
+
+    def test_brackets_use_explicit_membership_and_fixed_gaps(self):
+        groups, _ = snapshot([window()])
+        args, _ = w.plan(groups, "1", {"apple"}, 600)
+        index = args.index("bracket")
+        self.assertEqual(
+            args[index + 1 : index + 4],
+            [w.item_id("group", "1"), "space.1", w.item_id("app", "1", "org.test.App")],
+        )
+        props = sets(args)
+        self.assertIn("width=8", props[w.item_id("gap", "1")])
+        self.assertIn("background.corner_radius=7", props[w.item_id("group", "1")])
+
+    def test_new_native_item_rebuilds_bracket_before_removing_old_members(self):
+        groups, _ = snapshot([window()])
+        first, _ = w.plan(groups, "1", {"apple"}, 600)
+        existing = set(sets(first)) | {"apple"}
+        groups, _ = snapshot([window(), window(bundle="org.new", number=2)])
+        args, _ = w.plan(groups, "1", existing, 600)
+        bracket = w.item_id("group", "1")
+        remove = args.index("--remove")
+        self.assertEqual(args[remove + 1], bracket)
+        add = args.index("bracket")
+        self.assertGreater(add, remove)
+        self.assertIn(w.item_id("app", "1", "org.new"), args[add + 2 : add + 5])
 
     def test_invalid_snapshot_is_not_empty(self):
         for value in [0, -1, "1;echo bad", True, None]:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 snapshot([window(number=value)])
         with (
-            patch.object(w, "query", side_effect=[{}, []]),
+            patch.object(w, "geometry", return_value=DISPLAY),
+            patch.object(w, "query", side_effect=[MONITORS, {}, []]),
             patch.object(w, "run", return_value="1"),
             self.assertRaises(ValueError),
         ):
@@ -134,9 +295,12 @@ class MembershipTests(unittest.TestCase):
         groups, _ = snapshot([window()])
         args, images = w.plan(groups, "1", {"apple"}, 600)
         props = sets(args)
-        self.assertIn("background.color=" + w.SURFACE, props["space.1"])
+        self.assertIn("background.color=" + w.ACTIVE, props[w.item_id("group", "1")])
+        self.assertIn(
+            "background.border_color=" + w.RED, props[w.item_id("group", "1")]
+        )
         self.assertIn("icon.color=" + w.RED, props["space.1"])
-        self.assertIn("background.color=" + w.CLEAR, props["space.2"])
+        self.assertIn("background.color=" + w.INACTIVE, props[w.item_id("group", "2")])
         for name in images:
             prefix = (
                 "icon.background.image"
@@ -149,8 +313,7 @@ class MembershipTests(unittest.TestCase):
             self.assertNotIn(prefix + "=none", props[name])
             self.assertIn("background.height=24", props[name])
             self.assertIn("background.drawing=on", props[name])
-        for properties in props.values():
-            self.assertFalse(any(prop.startswith("width=") for prop in properties))
+        self.assertIn("width=24", props[w.item_id("app", "1", "org.test.App")])
         self.assertIn("label.drawing=off", props[w.item_id("app", "1", "org.test.App")])
         self.assertIn("label=Test", props[w.item_id("popup", "1", "org.test.App")])
 
@@ -159,7 +322,8 @@ class MembershipTests(unittest.TestCase):
         first, _ = w.plan(groups, "1", {"apple"}, 600)
         existing = set(sets(first)) | {"apple"}
         refresh, _ = w.plan(groups, "1", existing, 600)
-        self.assertNotIn("width=dynamic", refresh)
+        self.assertFalse(any(prop.startswith("width=") for prop in refresh))
+        self.assertNotIn("--add", refresh)
 
     def test_removals_moves_and_group_order(self):
         old, _ = snapshot([window()])
@@ -182,12 +346,20 @@ class MembershipTests(unittest.TestCase):
             {
                 w.item_id("app", "1", "org.test.App"),
                 w.item_id("popup", "1", "org.test.App"),
+                w.item_id("group", "1"),
+                w.item_id("group", "2"),
             },
         )
         order = args[args.index("--reorder") + 1 :]
         self.assertEqual(
-            order[:4],
-            ["apple", "space.1", "space.2", w.item_id("app", "2", "org.test.App")],
+            order[:5],
+            [
+                "apple",
+                "space.1",
+                w.item_id("gap", "1"),
+                "space.2",
+                w.item_id("app", "2", "org.test.App"),
+            ],
         )
         self.assertEqual(order[-4:], ["clock", "date", "battery", "volume"])
         self.assertNotIn("unrelated", removals)
@@ -200,11 +372,12 @@ class MembershipTests(unittest.TestCase):
                 for app in range(20)
             ]
         )
-        counts = w.allocation(groups, 600)
-        total_height = (
-            7 * w.HEADER_HEIGHT + sum(counts.values()) * w.ROW_HEIGHT + 7 * w.ROW_HEIGHT
+        counts = w.allocation(groups, 600, "1")
+        total_width = sum(
+            w.group_width(apps, counts[ws]) for ws, apps in groups.items()
         )
-        self.assertLessEqual(total_height, 600)
+        self.assertLessEqual(total_width, 600)
+        self.assertGreater(counts["1"], counts["2"])
         args, _ = w.plan(groups, "1", {"apple"}, 600)
         props = sets(args)
         self.assertEqual(sum(name.startswith("wsc.popup.") for name in props), 140)
@@ -213,15 +386,16 @@ class MembershipTests(unittest.TestCase):
                 "icon=+" + str(len(apps) - counts[ws]), props[w.item_id("more", ws)]
             )
             self.assertIn("popup.align=left", props[w.header(ws)])
-        self.assertLessEqual(max(counts.values()) - min(counts.values()), 1)
+        self.assertTrue(all(counts[ws] == 0 for ws in groups if ws != "1"))
 
     def test_display_budget_and_fallback(self):
-        with patch.object(w, "run", side_effect=["[]", "700"]):
-            self.assertEqual(w.inline_budget(), 340)
-        with patch.object(w, "run", side_effect=OSError):
-            self.assertEqual(w.inline_budget(), 600)
-        with patch.object(w, "run", side_effect=["[]", "982"]):
-            self.assertEqual(w.inline_budget(), 600)
+        for left in (300, 650, 900):
+            with patch.object(w, "geometry", return_value={**DISPLAY, "left": left}):
+                self.assertEqual(w.inline_budget(), left - 48)
+        with patch.object(w, "geometry", side_effect=OSError):
+            self.assertEqual(w.inline_budget(), 0)
+        with patch.object(w, "geometry", return_value=None):
+            self.assertEqual(w.inline_budget(), 0)
 
     def test_unavailable_preserves_membership_then_recovers(self):
         groups, _ = snapshot([window()])

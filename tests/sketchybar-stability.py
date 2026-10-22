@@ -22,12 +22,23 @@ spec.loader.exec_module(controller)
 
 
 def state():
-    groups, _focused = controller.snapshot()
-    return groups
+    groups, focused = controller.snapshot()
+    return groups, focused, controller.inline_budget()
 
 
 def measure(refreshes=8):
-    name = controller.header(next(reversed(state())))
+    groups, focused, budget = state()
+    assert groups, "No built-in workspaces: temporal probe is not applicable"
+    counts = controller.allocation(groups, budget, focused)
+    compact = (
+        sum(controller.group_width(apps, counts[ws]) for ws, apps in groups.items())
+        > budget
+    )
+    names = (
+        [controller.PREFIX + "overflow"]
+        if compact
+        else [controller.header(ws) for ws in groups]
+    )
     frames = set()
     samples = 0
 
@@ -39,11 +50,14 @@ def measure(refreshes=8):
         future = pool.submit(refresh)
         started = time.monotonic()
         while not future.done() or time.monotonic() - started < 2:
-            output = subprocess.check_output(["sketchybar", "--query", name], text=True)
-            if not output.strip():
-                continue
-            item = json.loads(output)
-            frames.add(json.dumps(item["bounding_rects"], sort_keys=True))
+            positions = {}
+            for name in names:
+                output = subprocess.check_output(
+                    ["sketchybar", "--query", name], text=True
+                )
+                assert output.strip(), "Workspace item disappeared"
+                positions[name] = json.loads(output)["bounding_rects"]
+            frames.add(json.dumps(positions, sort_keys=True))
             samples += 1
         future.result()
     return frames, samples
@@ -63,10 +77,10 @@ if __name__ == "__main__":
         before = state()
         frames, samples = measure()
         assert before == state(), (
-            "Inconclusive: window membership changed during the probe"
+            "Inconclusive: membership, focus or safe display width changed during the probe"
         )
         print(
-            f"{samples} temporal samples across 8 refreshes: {len(frames)} distinct header positions"
+            f"{samples} temporal samples across 8 refreshes: {len(frames)} distinct horizontal workspace layouts"
         )
         assert len(frames) == 1, "JITTER: unchanged refreshes moved workspace headers"
         print("PASS: repeated unchanged refreshes keep workspace geometry stable")

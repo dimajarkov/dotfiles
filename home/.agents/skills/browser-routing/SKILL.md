@@ -7,9 +7,25 @@ description: "Choose Zen for personal/native work or isolated Chrome for approve
 
 Choose the narrowest tool that exposes the evidence needed.
 
+## Capability check before browser fallback
+
+Before launching or controlling a browser, or asking the user to unlock the desktop, identify whether the task needs a service operation or rendered/native evidence.
+For service operations such as publishing an artifact, editing a PR, or retrieving structured data:
+
+1. Inspect the relevant connector or installed CLI's supported commands and flags.
+2. When a preferred wrapper lacks the operation, check the upstream CLI's installed version/help and official API documentation before concluding that a browser is required.
+   Follow the service's skill for the supported fallback; GitHub capability discovery and attachment delivery are owned by [`gh-axi`](../gh-axi/SKILL.md).
+3. Prefer the supported CLI/API route within the existing authentication and authorization boundaries, and verify the result by readback.
+4. Use Computer Use when rendered/native interaction is the requested evidence or the supported programmatic routes have an evidenced gap.
+   Record the specific reason for that fallback before involving the user's desktop.
+
+Uploading a video or PDF is a service operation; checking its rendered playback or appearance is a separate evidence step.
+A CLI/API result does not substitute for required interactive journey or visual proof.
+This routing check preserves all browser isolation, authentication, privacy, ownership, and cleanup requirements below.
+
 ## Computer Use through Codex
 
-Use Computer Use through the Codex harness for:
+When rendered/native interaction is required, use Computer Use through the Codex harness for:
 
 - End-user flows and visual QA.
 - Layout, spacing, clipping, focus, hover, drag, animation, and responsive behavior.

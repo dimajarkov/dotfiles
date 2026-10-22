@@ -111,10 +111,11 @@
           cp ${./tests/sketchybar.py} tests/sketchybar.py
           cp ${./tests/sketchybar-workspaces.py} tests/sketchybar-workspaces.py
           cp ${./tests/sketchybar-stability.py} tests/sketchybar-stability.py
+          cp ${./tests/sketchybar-live.py} tests/sketchybar-live.py
           python3 tests/sketchybar.py
           python3 tests/sketchybar-workspaces.py
-          ruff check home/.config/sketchybar/plugins/workspaces.py tests/sketchybar*.py
-          ruff format --check home/.config/sketchybar/plugins/workspaces.py tests/sketchybar*.py
+          ruff check home/.config/sketchybar/plugins/*.py tests/sketchybar*.py
+          ruff format --check home/.config/sketchybar/plugins/*.py tests/sketchybar*.py
           touch "$out"
         '';
         bash-darwin-source = import ./nix/tests/bash-darwin-pipes.nix {

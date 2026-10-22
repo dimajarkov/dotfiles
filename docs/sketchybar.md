@@ -6,25 +6,39 @@ The writable configuration lives in `home/.config/sketchybar`, linked at `~/.con
 
 ## Appearance and interaction
 
-The translucent Catppuccin Macchiato palette, rounded bar, workspace pills and light clock capsule take inspiration from [omerxx's configuration](https://github.com/omerxx/dotfiles/tree/master/sketchybar).
-This is an adaptation for our AeroSpace setup, not a copy of his machine-specific paths or yabai dependencies.
+The translucent Catppuccin Macchiato palette and light clock capsule retain the existing theme.
+Compact rounded workspace groups use the bracket/background approach from [FelixKratz's example](https://github.com/FelixKratz/dotfiles/blob/master/.config/sketchybar/items/spaces.lua), adapted to AeroSpace and native app icons rather than Mission Control IDs or icon-font mappings.
+The bar itself is flush, not floating.
 It uses the existing Hack Nerd Font and macOS SF Pro fonts, without downloading a separate icon font or compiling helpers.
 
-- A 40-point vertical rail sits on the right edge of the built-in Retina display only.
-- Top: System Settings button, then workspace numbers with native application icons stacked beneath each workspace.
-- Every AeroSpace workspace is inventoried, including workspaces assigned to the ultrawide.
+- A 32-point horizontal bar occupies the native top strip on the built-in display only, with zero margin, offset or outer rounding.
+- Left: System Settings button, then compact rounded groups containing a workspace number and native application icons.
+  Inactive groups have subtle backgrounds; the active built-in workspace gets a tinted background and bright outline.
+- Only AeroSpace workspaces assigned to the built-in screen are inventoried, including empty workspaces.
   Multiple windows of an application produce one icon per workspace, while an application present in several workspaces appears in each relevant group.
 - Workspace numbers activate that workspace; application icons focus one of its windows.
   Right-click a workspace for its complete application-name/icon popup.
-  When the inline list exceeds its height budget, a `+N` disclosure opens that same complete list rather than silently dropping apps.
+  When the inline list exceeds its width budget, a `+N` disclosure opens that same complete list rather than silently dropping apps.
+  The active workspace gets first priority for inline icons; other groups retain stable ordering.
+  If even the compact groups cannot fit, one `+N` workspace disclosure provides every workspace and app in a complete native-icon popup.
   An unavailable native icon gets a `?` fallback without affecting other apps.
-- Compact clock, date, battery percentage and an icon-only sound control sit at the bottom.
+- Clock, date, battery percentage and an icon-only sound control sit on the right, retaining Calendar and Sound Settings actions.
+- The center notch is empty. Native `NSScreen.auxiliaryTopLeftArea`/`auxiliaryTopRightArea` determine its protected edges; non-notched panels reserve the center split.
+  Workspace widths are bounded by the usable left area, with a safety gutter, fixed-size inline slots and explicit inter-group spacers.
+  Geometry-query failure hides workspace content rather than assuming the current laptop's dimensions.
 - AeroSpace subscription events update membership and focus, with a five-second recovery reconciliation for missing close/move events.
 - A single serialized renderer reconciles the complete membership snapshot without collecting window titles.
-- Native CoreGraphics detection selects the built-in panel using SketchyBar's own arrangement ID, independently of AeroSpace's monitor numbering.
-- Display changes and wake refresh that selection; the bar stays hidden if no built-in display is available, including clamshell mode.
-- AeroSpace reserves a 54-point right gap on the built-in panel and retains its previous top gap.
+- Native CoreGraphics detection selects the built-in panel using SketchyBar's own arrangement ID.
+  AeroSpace is mapped separately through its `monitor-appkit-nsscreen-screens-id` into the native `NSScreen.screens` order, then queried with its own monitor ID.
+  Neither the two tools' display IDs nor names are assumed interchangeable.
+- Display changes, wake and a 30-second reconciliation refresh that selection, including recovery after transient native-query failures.
+  Native auxiliary rectangles are validated before coordinate conversion; unavailable notch geometry hides the bar rather than removing camera protection.
+  The bar stays hidden if no built-in display is available, including clamshell mode.
+- AeroSpace's obsolete 54-point built-in right reservation is removed: right margin is the normal 20 points, with existing top/bottom margins unchanged.
   The Samsung ultrawide has no bar and retains its existing margins.
+- `show_in_fullscreen=off` hides the bar in native fullscreen.
+- `topmost=window` deliberately uses the floating-window level below the native menu's level, so the on-demand native menu takes precedence when revealed.
+  Do not change this to `topmost=on` (status-window level), or `off` (which moves a top bar below a visible menu).
 - AeroSpace retains its existing `start-at-login = false` setting.
   SketchyBar starts independently at login and recovers its highlights when AeroSpace becomes available.
 
@@ -66,12 +80,18 @@ If AeroSpace is stopped, selection is cleared and workspace state is marked unav
 
 Design sources and sizing/event limitations are recorded in [workspace icon research](research/sketchybar-workspace-icons.md) and [thin rail research](research/sketchybar-thin-rail.md).
 The synthetic suites cover membership deduplication, moves/removals, ordering, overflow disclosure, missing-icon isolation, safe quoting, unavailable-state recovery, and subscription lifecycle.
-The read-only live check compares AeroSpace membership with the rendered native-image items, verifies the focused workspace, and checks built-in-only right-edge geometry without overlapping frames.
-The temporal stability probe repeats eight unchanged refreshes while sampling live header positions, temporarily suspending and then restoring the workspace controller's automatic updates.
-It reproduced periodic movement before the fix and now verifies stable positions across refreshes.
-Do not repeatedly send item `width=dynamic`: SketchyBar 2.23 queues a width animation even for this setting, temporarily changing vertical row advancement.
-New items already default to dynamic width; `background.height` controls row height.
+The read-only live check compares built-in-only AeroSpace membership with rendered native-image items, verifies selection, and checks flush 32-point horizontal frames, notch exclusion and non-overlap (excluding intentional bracket backgrounds).
+The temporal stability probe repeats eight unchanged refreshes while sampling all workspace header positions (or the compact overflow), temporarily suspending and then restoring the controller's automatic updates.
+Do not run the live suites against the old rail before rollout; the stability probe mutates controller updates and renders the new configuration.
+Do not repeatedly send item `width` settings: SketchyBar 2.23 queues width animations even for `dynamic`.
+Fixed horizontal widths are assigned only at item creation. Explicit spacer items provide group gaps because constant-width items ignore background padding when advancing.
 Reload and subscription-disconnect checks also verify one owned watcher and successful reconnection.
 These checks are separate from rendered visual acceptance.
-SketchyBar 2.23.0 incorrectly serializes vertical positions as `top` in `--query bar`; item bounding rectangles provide the actual placement evidence.
-Mouse hit testing and rendered appearance still need human confirmation because Codex Computer Use could not target SketchyBar for scoped native capture.
+SketchyBar 2.23.0 serializes even vertical positions as `top`; the live test therefore checks actual item rectangles, not just the serialized position.
+
+Window-level evidence: installed-version [bar_manager.c](https://github.com/FelixKratz/SketchyBar/blob/031cdff653ff80b7d253e1de659088de827d68d1/src/bar_manager.c#L293-L305) maps `window` to `kCGFloatingWindowLevel` rather than `kCGStatusWindowLevel` and gates native fullscreen visibility at space type 4.
+[bar.c](https://github.com/FelixKratz/SketchyBar/blob/031cdff653ff80b7d253e1de659088de827d68d1/src/bar.c#L465-L522) offsets the top bar below a visible menu only when topmost is false.
+A read-only `CGWindowLevelForKey` query on the target macOS returned floating=3, main menu=24, status=25.
+Thus `window` preserves flush geometry while allowing the higher-level native menu to cover it; no private menu-visibility polling or desktop capture is used.
+The tradeoff is that the revealed menu covers the bar rather than reflowing it. Actual menu reveal, fullscreen transitions, clicks and appearance remain rollout/human acceptance checks, not synthetic-test claims.
+Mouse hit testing and rendered appearance still need human confirmation because this session has no active Codex Computer Use capability for scoped native capture.

@@ -66,11 +66,11 @@ run = 'layout floating'
 if.app-name-regex-substring = 'quicktime'
 run = 'layout floating'
 
-# Keep outer margins compact; reserve SketchyBar's right rail on the laptop.
+# Keep outer margins compact; SketchyBar occupies the native top strip.
 [gaps]
 inner.horizontal = [{ monitor.'^LS49C95xU$' = 40 }, 10]
-outer.left = 20
-outer.right = [{ monitor.'^Built-in Retina Display$' = 54 }, 20]
+outer.left = [{ monitor.'^Built-in Retina Display$' = 10 }, 20]
+outer.right = [{ monitor.'^Built-in Retina Display$' = 10 }, 20]
 # Match the laptop's vertical margins on every display.
 outer.bottom = 10
 outer.top = 10

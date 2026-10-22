@@ -57,6 +57,16 @@ class Plugins(unittest.TestCase):
             ("osascript", "/usr/bin"),
         ):
             text = text.replace(f"{prefix}/{name}", str(self.directory / name))
+        if plugin == "display.sh":
+            native = (
+                (CONFIG / "plugins/display.py")
+                .read_text()
+                .replace("/usr/bin/osascript", str(self.directory / "osascript"))
+            )
+            plugins = self.directory / "plugins"
+            plugins.mkdir(exist_ok=True)
+            (plugins / "display.py").write_text(native)
+            environment["CONFIG_DIR"] = str(self.directory)
         subprocess.run(
             ["/bin/bash", "-c", text],
             env={**self.environment, **environment},
@@ -66,7 +76,7 @@ class Plugins(unittest.TestCase):
         )
         return [json.loads(line) for line in self.calls.read_text().splitlines()]
 
-    def test_rail_config_is_thin_and_reconciles_membership(self):
+    def test_top_strip_config_reconciles_membership(self):
         subprocess.run(
             ["/bin/bash", str(CONFIG / "sketchybarrc")],
             env=self.environment,
@@ -75,8 +85,16 @@ class Plugins(unittest.TestCase):
             text=True,
         )
         calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
-        self.assertIn("position=right", calls[0])
-        self.assertIn("height=40", calls[0])
+        for prop in (
+            "position=top",
+            "height=32",
+            "margin=0",
+            "y_offset=0",
+            "corner_radius=0",
+            "topmost=window",
+            "show_in_fullscreen=off",
+        ):
+            self.assertIn(prop, calls[0])
         self.assertIn("hidden=on", calls[0])
         controller = next(c for c in calls if "workspace_controller" in c)
         self.assertIn("update_freq=5", controller)
@@ -132,8 +150,23 @@ class Plugins(unittest.TestCase):
         self.assertRegex(calls[0][-1], r"^label=\d{2} \w{3}$")
 
     def test_display_selects_detected_builtin_not_fixed_index(self):
-        calls = self.run_plugin("display.sh", OSASCRIPT_OUTPUT="2")
-        self.assertEqual(calls[-1], ["--bar", "display=2", "hidden=off"])
+        calls = self.run_plugin(
+            "display.sh",
+            OSASCRIPT_OUTPUT=json.dumps(
+                {
+                    "arrangement": 2,
+                    "screen": 1,
+                    "leftArea": [0, 600, 32],
+                    "rightArea": [800, 600, 32],
+                    "origin": 0,
+                    "top": 32,
+                    "width": 1400,
+                }
+            ),
+        )
+        self.assertEqual(
+            calls[-1], ["--bar", "display=2", "notch_width=200", "hidden=off"]
+        )
 
     def test_clamshell_hides_bar(self):
         calls = self.run_plugin("display.sh")

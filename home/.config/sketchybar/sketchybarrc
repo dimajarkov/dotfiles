@@ -6,10 +6,10 @@ export PATH="/opt/homebrew/bin:$PATH"
 source "$CONFIG_DIR/colors.sh"
 PLUGIN_DIR="$CONFIG_DIR/plugins"
 
-# Vertical bar height is its width. Native display detection keeps it off externals.
-sketchybar --bar position=right height=40 margin=6 y_offset=12 hidden=on \
-  corner_radius=8 color="$BAR_COLOR" blur_radius=20 shadow=on \
-  padding_left=8 padding_right=8 sticky=on topmost=window \
+# Flush native top strip. Floating-window level stays below the revealed menu.
+sketchybar --bar position=top height=32 margin=0 y_offset=0 hidden=on \
+  corner_radius=0 color="$BAR_COLOR" blur_radius=20 shadow=off \
+  padding_left=8 padding_right=8 sticky=on topmost=window show_in_fullscreen=off \
   --default updates=when_shown \
   icon.font="Hack Nerd Font:Regular:15.0" icon.color="$TEXT" \
   icon.padding_left=0 icon.padding_right=0 \
@@ -17,7 +17,7 @@ sketchybar --bar position=right height=40 margin=6 y_offset=12 hidden=on \
   label.padding_left=0 label.padding_right=0 \
   background.height=24 background.corner_radius=6 \
   background.drawing=on background.color=0x00000000 \
-  background.padding_left=2 background.padding_right=2 \
+  background.padding_left=4 background.padding_right=4 \
   popup.align=left popup.background.color=0xff24273a \
   popup.background.corner_radius=8 popup.background.border_width=1 \
   popup.background.border_color="$SURFACE"
@@ -26,7 +26,7 @@ sketchybar --add event aerospace_workspace_change \
   --add event aerospace_state_change \
   --add item apple left \
   --set apple icon= icon.font="SF Pro:Bold:17.0" icon.color="$MAUVE" \
-  label.drawing=off click_script="/usr/bin/open -a 'System Settings'"
+  icon.width=24 label.drawing=off click_script="/usr/bin/open -a 'System Settings'"
 
 # One serialized controller owns workspace headers, application images and popups.
 # Native events provide fast updates; reconciliation covers missing close/move events.
@@ -36,28 +36,28 @@ sketchybar --add item workspace_controller left \
   --subscribe workspace_controller aerospace_workspace_change aerospace_state_change \
   space_windows_change front_app_switched display_change system_woke \
   --add item display_controller left \
-  --set display_controller drawing=off updates=on \
+  --set display_controller drawing=off updates=on update_freq=30 \
   script="/bin/bash \"$PLUGIN_DIR/display.sh\"" \
   --subscribe display_controller display_change system_woke
 
-# Small text-only clock/date/battery and an icon-only sound control fit a 40pt rail.
+# Native-strip controls retain their existing scripts and actions.
 sketchybar --add item clock right \
-  --set clock icon.drawing=off background.color="$TEXT" \
+  --set clock icon.drawing=off label.padding_left=8 label.padding_right=8 background.color="$TEXT" \
   label.color=0xff24273a label.font="SF Pro:Bold:11.0" \
   update_freq=30 script="/bin/bash \"$PLUGIN_DIR/status.sh\"" \
   click_script="/usr/bin/open -a Calendar" \
   --subscribe clock system_woke \
   --add item date right \
-  --set date icon.drawing=off label.font="SF Pro:Regular:9.0" update_freq=60 \
+  --set date icon.drawing=off label.padding_left=6 label.padding_right=6 label.font="SF Pro:Regular:11.0" update_freq=60 \
   script="/bin/bash \"$PLUGIN_DIR/status.sh\"" \
   click_script="/usr/bin/open -a Calendar" \
   --subscribe date system_woke \
   --add item battery right \
-  --set battery icon.drawing=off label.font="SF Pro:Semibold:10.0" \
+  --set battery icon.drawing=off label.padding_left=6 label.padding_right=6 label.font="SF Pro:Semibold:11.0" \
   update_freq=60 script="/bin/bash \"$PLUGIN_DIR/status.sh\"" \
   --subscribe battery power_source_change system_woke \
   --add item volume right \
-  --set volume label.drawing=off script="/bin/bash \"$PLUGIN_DIR/status.sh\"" \
+  --set volume label.drawing=off icon.width=24 script="/bin/bash \"$PLUGIN_DIR/status.sh\"" \
   click_script="/usr/bin/open 'x-apple.systempreferences:com.apple.Sound-Settings.extension'" \
   --subscribe volume volume_change system_woke
 

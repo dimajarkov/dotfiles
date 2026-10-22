@@ -23,6 +23,24 @@ For GitHub Enterprise or another custom host, the underlying `gh` CLI must be au
 
 Use gh-axi whenever a task touches GitHub: listing, filing, or editing issues; viewing, creating, reviewing, or merging pull requests; inspecting workflow runs and CI failures; triggering, enabling, or disabling workflows; managing releases, repositories, or labels; managing Projects (v2) boards and their items; managing Actions secrets or variables; searching issues, PRs, repos, commits, or code; listing, viewing, editing, renaming, creating, deleting, or cloning gists; or calling the GitHub API directly.
 
+## CLI/API capability check before Computer Use
+
+Before opening a browser or asking the user to unlock the desktop for a GitHub operation:
+
+1. Check the installed `gh-axi <command> --help` for the required operation and flags.
+2. If the wrapper lacks a capability, inspect `gh --version` and `gh <command> --help`, then the official GitHub CLI or API documentation as needed.
+   A missing wrapper flag does not establish a missing GitHub capability.
+3. Use `gh-axi` where supported; use the authenticated upstream `gh` command or documented API for the specific capability the wrapper lacks.
+   Preserve the same repository, host, permissions, privacy review, and authorized action scope.
+   Use supported authentication, never extracted browser cookies or undocumented upload endpoints.
+4. Fall back to Computer Use only when the task requires rendered/native interaction or the supported CLI/API routes have an evidenced gap.
+   State that gap and load `browser-routing` before browser interaction.
+
+For PR media, inspect `gh pr comment --help` for attachment support before using GitHub's file picker.
+Where supported, `gh pr comment <number> --repo <owner/repo> --body-file <caption-file> --attach <reviewed-file>` publishes the reviewed artifact programmatically.
+Read back the resulting comment and asset URL, then use the wrapper to update the PR body with that URL if required.
+Publication/readback proves attachment delivery; proving that the embedded player works remains a separate rendered check when required.
+
 ## Workflow
 
 1. Run `npx -y gh-axi` with no arguments for a dashboard of the current repo - open issues, open PRs, and suggested next commands.
@@ -51,7 +69,8 @@ Run `npx -y gh-axi --help` for global flags, or `npx -y gh-axi <command> --help`
 
 - Output is TOON-encoded and token-efficient; pipe through grep/head only when a list is very long.
 - Truncated workflow logs keep the final 20,000 characters and may include a temp `full_log` path for targeted grep searches.
-- Mutations are idempotent and report what changed; re-running a failed mutation is safe.
+- Before retrying a mutation with an uncertain outcome, read back remote state.
+  Comments and attachment uploads can create duplicates; retry only after determining whether the first request committed.
 - For multi-line markdown bodies, comments, or release notes, write the text to a UTF-8 file and pass `--body-file <path>` or the release `--notes-file <path>` alias on commands that support file-backed text.
 - Label, assignee, reviewer, and project flags repeat: pass the flag once per value, e.g. `issue edit 42 --add-label bug --add-label chore`, and every value is applied. A repeated flag with a missing or blank value is rejected, never silently dropped.
 - Secret values are stdin-only: `echo -n "<value>" | npx -y gh-axi secret set <name>`.
