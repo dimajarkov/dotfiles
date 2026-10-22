@@ -11,7 +11,7 @@ enable-normalization-opposite-orientation-for-nested-containers = true
 accordion-padding = 300
 default-root-container-layout = 'tiles'
 default-root-container-orientation = 'auto'
-persistent-workspaces = ['1', '2', '3', '4', '5', '6', '7']
+persistent-workspaces = ['1', '2', '3', 'browse', 'os-finances', 'warrior-v2', 'jobs']
 on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
 automatically-unhide-macos-hidden-apps = false
 focus-follows-mouse.enabled = false
@@ -23,19 +23,19 @@ key-mapping.preset = 'qwerty'
 1 = '^Built-in Retina Display$'
 2 = '^Built-in Retina Display$'
 3 = '^Built-in Retina Display$'
-4 = ['^LS49C95xU$', '^LEN S24e-10$', '^Built-in Retina Display$']
-5 = ['^LS49C95xU$', '^LEN S24e-10$', '^Built-in Retina Display$']
-6 = ['^LS49C95xU$', '^LEN S24e-10$', '^Built-in Retina Display$']
-7 = ['^LS49C95xU$', '^LEN S24e-10$', '^Built-in Retina Display$']
+'browse' = ['^LS49C95xU$', '^LEN S24e-10$', '^Built-in Retina Display$']
+'os-finances' = ['^LS49C95xU$', '^LEN S24e-10$', '^Built-in Retina Display$']
+'warrior-v2' = ['^LS49C95xU$', '^LEN S24e-10$', '^Built-in Retina Display$']
+'jobs' = ['^LS49C95xU$', '^LEN S24e-10$', '^Built-in Retina Display$']
 
-# Route new windows from both Chrome variants to workspace 5.
+# Route new windows from both Chrome variants to os-finances (Option-5).
 [[on-window-detected]]
 if.app-id = 'com.google.Chrome'
-run = 'move-node-to-workspace 5'
+run = 'move-node-to-workspace os-finances'
 
 [[on-window-detected]]
 if.app-id = 'com.google.chrome.for.testing'
-run = 'move-node-to-workspace 5'
+run = 'move-node-to-workspace os-finances'
 
 # His floating-app rules, without the duplicate misspelled Discord rule.
 [[on-window-detected]]
@@ -71,9 +71,10 @@ run = 'layout floating'
 inner.horizontal = [{ monitor.'^LS49C95xU$' = 40 }, 10]
 outer.left = [{ monitor.'^Built-in Retina Display$' = 10 }, 20]
 outer.right = [{ monitor.'^Built-in Retina Display$' = 10 }, 20]
-# Match the laptop's vertical margins on every display.
 outer.bottom = 10
-outer.top = 10
+# The laptop's native camera strip already reserves SketchyBar's 32pt height.
+# Other displays need that height plus the normal 10pt breathing room.
+outer.top = [{ monitor.'^Built-in Retina Display$' = 10 }, 42]
 
 [mode.main.binding]
 # Same directional map as Herdr: J down, K up, L left, semicolon right.
@@ -99,19 +100,19 @@ alt-shift-right = 'move right'
 alt-1 = 'workspace 1'
 alt-2 = 'workspace 2'
 alt-3 = 'workspace 3'
-alt-4 = 'workspace 4'
-alt-5 = 'workspace 5'
-alt-6 = 'workspace 6'
-alt-7 = 'workspace 7'
+alt-4 = 'workspace browse'
+alt-5 = 'workspace os-finances'
+alt-6 = 'workspace warrior-v2'
+alt-7 = 'workspace jobs'
 
 # Like his setup, sending a window to another workspace follows that window.
 alt-shift-1 = 'move-node-to-workspace --focus-follows-window 1'
 alt-shift-2 = 'move-node-to-workspace --focus-follows-window 2'
 alt-shift-3 = 'move-node-to-workspace --focus-follows-window 3'
-alt-shift-4 = 'move-node-to-workspace --focus-follows-window 4'
-alt-shift-5 = 'move-node-to-workspace --focus-follows-window 5'
-alt-shift-6 = 'move-node-to-workspace --focus-follows-window 6'
-alt-shift-7 = 'move-node-to-workspace --focus-follows-window 7'
+alt-shift-4 = 'move-node-to-workspace --focus-follows-window browse'
+alt-shift-5 = 'move-node-to-workspace --focus-follows-window os-finances'
+alt-shift-6 = 'move-node-to-workspace --focus-follows-window warrior-v2'
+alt-shift-7 = 'move-node-to-workspace --focus-follows-window jobs'
 alt-tab = 'workspace-back-and-forth'
 alt-shift-tab = 'move-workspace-to-monitor --wrap-around next'
 

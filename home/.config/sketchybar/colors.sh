@@ -1,10 +1,10 @@
 #!/bin/bash
-# Catppuccin Macchiato, inspired by omerxx/dotfiles/sketchybar/colors.sh.
-export BAR_COLOR=0xcc24273a
-export TEXT=0xffcad3f5
-export MUTED=0xff939ab7
-export SURFACE=0xff494d64
+# Neutral charcoal glass, warm-white text and restrained graphite surfaces.
+export BAR_COLOR=0xcc181818
+export TEXT=0xffe8e6e1
+export MUTED=0xffa5a5a2
+export SURFACE=0xff444443
 export RED=0xffed8796
 export GREEN=0xffa6da95
-export BLUE=0xff8aadf4
-export MAUVE=0xffc6a0f6
+export BLUE=0xffb7c1c3
+export MAUVE=0xffd0cfca

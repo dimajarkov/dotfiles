@@ -1,5 +1,5 @@
 #!/bin/bash
-# Catppuccin palette inspired by omerxx, with native AeroSpace application icons.
+# Neutral charcoal strip with native AeroSpace application icons.
 set -eu
 export CONFIG_DIR="${CONFIG_DIR:-$HOME/.config/sketchybar}"
 export PATH="/opt/homebrew/bin:$PATH"
@@ -7,6 +7,8 @@ source "$CONFIG_DIR/colors.sh"
 PLUGIN_DIR="$CONFIG_DIR/plugins"
 
 # Flush native top strip. Floating-window level stays below the revealed menu.
+# Default items have no display association: status controls repeat on every bar.
+# Only dynamically created workspace items are associated with a specific panel.
 sketchybar --bar position=top height=32 margin=0 y_offset=0 hidden=on \
   corner_radius=0 color="$BAR_COLOR" blur_radius=20 shadow=off \
   padding_left=8 padding_right=8 sticky=on topmost=window show_in_fullscreen=off \
@@ -15,11 +17,11 @@ sketchybar --bar position=top height=32 margin=0 y_offset=0 hidden=on \
   icon.padding_left=0 icon.padding_right=0 \
   label.font="SF Pro:Semibold:10.0" label.color="$TEXT" \
   label.padding_left=0 label.padding_right=0 \
-  background.height=24 background.corner_radius=6 \
+  background.height=24 background.corner_radius=0 \
   background.drawing=on background.color=0x00000000 \
   background.padding_left=4 background.padding_right=4 \
-  popup.align=left popup.background.color=0xff24273a \
-  popup.background.corner_radius=8 popup.background.border_width=1 \
+  popup.align=left popup.background.color=0xf0222222 \
+  popup.background.corner_radius=0 popup.background.border_width=1 \
   popup.background.border_color="$SURFACE"
 
 sketchybar --add event aerospace_workspace_change \
@@ -40,25 +42,30 @@ sketchybar --add item workspace_controller left \
   script="/bin/bash \"$PLUGIN_DIR/display.sh\"" \
   --subscribe display_controller display_change system_woke
 
-# Native-strip controls retain their existing scripts and actions.
+# Fixed widths total 396pt + 40pt item padding + 16pt safety gutter.
+# All status items repeat on every panel; display.py validates the safe budget.
 sketchybar --add item clock right \
-  --set clock icon.drawing=off label.padding_left=8 label.padding_right=8 background.color="$TEXT" \
-  label.color=0xff24273a label.font="SF Pro:Bold:11.0" \
+  --set clock width=60 icon.drawing=off label.padding_left=8 label.padding_right=8 \
+  label.color="$TEXT" label.font="SF Pro:Semibold:11.0" \
   update_freq=30 script="/bin/bash \"$PLUGIN_DIR/status.sh\"" \
   click_script="/usr/bin/open -a Calendar" \
   --subscribe clock system_woke \
   --add item date right \
-  --set date icon.drawing=off label.padding_left=6 label.padding_right=6 label.font="SF Pro:Regular:11.0" update_freq=60 \
+  --set date width=100 icon.drawing=off label.padding_left=6 label.padding_right=6 label.font="SF Pro:Regular:11.0" update_freq=60 \
   script="/bin/bash \"$PLUGIN_DIR/status.sh\"" \
   click_script="/usr/bin/open -a Calendar" \
   --subscribe date system_woke \
   --add item battery right \
-  --set battery icon.drawing=off label.padding_left=6 label.padding_right=6 label.font="SF Pro:Semibold:11.0" \
+  --set battery width=84 icon.drawing=on icon.width=32 label.padding_left=4 label.padding_right=4 label.font="SF Pro:Semibold:11.0" \
   update_freq=60 script="/bin/bash \"$PLUGIN_DIR/status.sh\"" \
   --subscribe battery power_source_change system_woke \
-  --add item volume right \
-  --set volume label.drawing=off icon.width=24 script="/bin/bash \"$PLUGIN_DIR/status.sh\"" \
-  click_script="/usr/bin/open 'x-apple.systempreferences:com.apple.Sound-Settings.extension'" \
-  --subscribe volume volume_change system_woke
+  --add item ram right \
+  --set ram width=76 icon=RAM icon.font="SF Pro:Regular:10.0" icon.color="$MUTED" icon.width=32 label=-- \
+  --add item cpu right \
+  --set cpu width=76 icon=CPU icon.font="SF Pro:Regular:10.0" icon.color="$MUTED" icon.width=32 label=-- \
+  update_freq=15 script="python3 \"$PLUGIN_DIR/metrics.py\"" \
+  --subscribe cpu system_woke \
+  --add bracket datetime date clock \
+  --set datetime background.color=0x66303030 background.corner_radius=0
 
 sketchybar --update

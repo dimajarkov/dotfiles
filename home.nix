@@ -522,6 +522,11 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/copy-all/index.ts";
   home.file.".pi/agent/extensions/up-to-date.ts".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/extensions/up-to-date.ts";
+  # The font and its ligature map share one pinned Nix owner/version.
+  home.file."Library/Fonts/sketchybar-app-font.ttf".source =
+    "${pkgs.sketchybar-app-font}/share/fonts/truetype/sketchybar-app-font.ttf";
+  home.file.".local/share/sketchybar/icon_map.lua".source =
+    "${pkgs.sketchybar-app-font}/lib/sketchybar-app-font/icon_map.lua";
   home.file.".config/sketchybar".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/sketchybar";
   home.file.".aerospace.toml".source =

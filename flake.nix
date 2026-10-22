@@ -106,16 +106,23 @@
           nativeBuildInputs = [ pkgs.python3 pkgs.ruff ];
         } ''
           export PYTHONDONTWRITEBYTECODE=1
+          export SKETCHYBAR_APP_FONT_MAP=${pkgs.sketchybar-app-font}/lib/sketchybar-app-font/icon_map.lua
+          export SKETCHYBAR_APP_FONT_FILE=${pkgs.sketchybar-app-font}/share/fonts/truetype/sketchybar-app-font.ttf
           mkdir -p home/.config tests
           cp -R ${./home/.config/sketchybar} home/.config/sketchybar
           cp ${./tests/sketchybar.py} tests/sketchybar.py
+          cp ${./tests/sketchybar-metrics.py} tests/sketchybar-metrics.py
+          cp ${./tests/aerospace-sketchybar.py} tests/aerospace-sketchybar.py
+          cp ${./home/.aerospace.toml} home/.aerospace.toml
           cp ${./tests/sketchybar-workspaces.py} tests/sketchybar-workspaces.py
           cp ${./tests/sketchybar-stability.py} tests/sketchybar-stability.py
           cp ${./tests/sketchybar-live.py} tests/sketchybar-live.py
           python3 tests/sketchybar.py
+          python3 tests/sketchybar-metrics.py
+          python3 tests/aerospace-sketchybar.py
           python3 tests/sketchybar-workspaces.py
-          ruff check home/.config/sketchybar/plugins/*.py tests/sketchybar*.py
-          ruff format --check home/.config/sketchybar/plugins/*.py tests/sketchybar*.py
+          ruff check home/.config/sketchybar/plugins/*.py tests/sketchybar*.py tests/aerospace-sketchybar.py
+          ruff format --check home/.config/sketchybar/plugins/*.py tests/sketchybar*.py tests/aerospace-sketchybar.py
           touch "$out"
         '';
         bash-darwin-source = import ./nix/tests/bash-darwin-pipes.nix {

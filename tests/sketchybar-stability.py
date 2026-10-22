@@ -22,23 +22,25 @@ spec.loader.exec_module(controller)
 
 
 def state():
-    groups, focused = controller.snapshot()
-    return groups, focused, controller.inline_budget()
+    return controller.inventory(controller.geometry())
 
 
 def measure(refreshes=8):
-    groups, focused, budget = state()
-    assert groups, "No built-in workspaces: temporal probe is not applicable"
-    counts = controller.allocation(groups, budget, focused)
-    compact = (
-        sum(controller.group_width(apps, counts[ws]) for ws, apps in groups.items())
-        > budget
-    )
-    names = (
-        [controller.PREFIX + "overflow"]
-        if compact
-        else [controller.header(ws) for ws in groups]
-    )
+    states = state()
+    names = []
+    for display, groups, visible in states:
+        budget = controller.inline_budget(display)
+        counts = controller.allocation(groups, budget, visible)
+        compact = (
+            sum(controller.group_width(apps, counts[ws]) for ws, apps in groups.items())
+            > budget
+        )
+        names.extend(
+            [controller.PREFIX + "overflow.d" + str(display["arrangement"])]
+            if compact and budget >= controller.MORE_WIDTH
+            else [controller.header(ws, display["arrangement"]) for ws in groups]
+        )
+    assert names, "No safe workspace items: temporal probe is not applicable"
     frames = set()
     samples = 0
 

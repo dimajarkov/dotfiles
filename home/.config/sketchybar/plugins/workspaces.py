@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import selectors
 import shlex
 import signal
@@ -17,21 +18,20 @@ import time
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from display import geometry
+from display import bar_properties, geometry
 
 AEROSPACE = "/opt/homebrew/bin/aerospace"
-IMAGE_SCALE = 0.6  # Tune against native image bounds on the actual mixed-DPI displays.
 ROW_HEIGHT = 24
 HEADER_WIDTH = 28
 APP_WIDTH = 24
 MORE_WIDTH = 28
 GROUP_GAP = 8
-INACTIVE = "0x55363a4f"
-ACTIVE = "0x665b466b"
-TEXT = "0xffcad3f5"
-MUTED = "0xff939ab7"
-SURFACE = "0xff494d64"
-RED = "0xffed8796"
+INACTIVE = "0x552e2e2e"
+ACTIVE = "0x66787874"
+TEXT = "0xffe8e6e1"
+MUTED = "0xffa5a5a2"
+SURFACE = "0xff444443"
+YELLOW = "0xffeed49f"
 CLEAR = "0x00000000"
 PREFIX = "wsc."
 EVENTS = (
@@ -57,7 +57,9 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()[:24]
 
 
-def header(workspace):
+def header(workspace, display=None):
+    if display is not None:
+        return item_id("space", workspace, display=display)
     return (
         "space." + workspace
         if workspace in map(str, range(1, 8))
@@ -65,22 +67,79 @@ def header(workspace):
     )
 
 
-def item_id(kind, workspace, bundle=""):
-    return PREFIX + kind + "." + digest(workspace)[:12] + digest(bundle)[:12]
+def item_id(kind, workspace, bundle="", display=None):
+    return (
+        PREFIX
+        + kind
+        + "."
+        + digest(workspace)[:12]
+        + digest(bundle)[:12]
+        + (".d" + str(display) if display is not None else "")
+    )
+
+
+def workspace_shortcuts(path=None):
+    """Read literal Option-number workspace bindings from the main mode only."""
+    path = Path(
+        path
+        or os.environ.get(
+            "SKETCHYBAR_AEROSPACE_CONFIG", Path.home() / ".aerospace.toml"
+        )
+    )
+    try:
+        text = path.read_text()
+    except (OSError, UnicodeError):
+        return {}
+    section = re.search(
+        r"^\[mode\.main\.binding\]\s*\n(.*?)(?=^\[|\Z)", text, re.MULTILINE | re.DOTALL
+    )
+    if not section:
+        return {}
+    bindings = re.findall(
+        r"^alt-([0-9])\s*=\s*(['\"])workspace ([^\n]*?)\2\s*(?:#.*)?$",
+        section[1],
+        re.MULTILINE,
+    )
+    return {workspace: number for number, _, workspace in bindings}
+
+
+WORKSPACE_SHORTCUTS = workspace_shortcuts()
+
+
+def workspace_label(workspace):
+    number = WORKSPACE_SHORTCUTS.get(workspace)
+    return f"{number} {workspace}" if number and number != workspace else workspace
 
 
 def workspace_key(value):
+    number = WORKSPACE_SHORTCUTS.get(value, value)
     return (
-        (0, int(value), value)
-        if value.isascii() and value.isdecimal()
+        (0, 10 if number == "0" else int(number), value)
+        if number.isascii() and number.isdecimal()
         else (1, 0, value)
     )
 
 
-def snapshot():
-    display = geometry()
-    if not display:
-        return {}, ""
+def snapshot(display, monitors, windows):
+    """One monitor's assigned workspaces (including empty) and visible selection."""
+    matches = [
+        m["monitor-id"]
+        for m in monitors
+        if int(m["monitor-appkit-nsscreen-screens-id"]) == display["screen"]
+    ]
+    if len(matches) != 1:
+        raise ValueError("unavailable or ambiguous monitor mapping")
+    monitor = matches[0]
+    spaces = query([AEROSPACE, "list-workspaces", "--monitor", str(monitor), "--json"])
+    focused = run(
+        [AEROSPACE, "list-workspaces", "--monitor", str(monitor), "--visible"]
+    ).strip()
+    return membership(spaces, windows, focused)
+
+
+def inventory(displays):
+    if not displays:
+        return []
     monitors = query(
         [
             AEROSPACE,
@@ -90,12 +149,6 @@ def snapshot():
             "%{monitor-id}%{monitor-appkit-nsscreen-screens-id}",
         ]
     )
-    monitor = next(
-        m["monitor-id"]
-        for m in monitors
-        if int(m["monitor-appkit-nsscreen-screens-id"]) == display["screen"]
-    )
-    spaces = query([AEROSPACE, "list-workspaces", "--monitor", str(monitor), "--json"])
     windows = query(
         [
             AEROSPACE,
@@ -106,7 +159,24 @@ def snapshot():
             "%{workspace}%{app-bundle-id}%{app-name}%{window-id}",
         ]
     )
-    focused = run([AEROSPACE, "list-workspaces", "--focused"]).strip()
+    states = []
+    for display in displays:
+        try:
+            groups, visible = snapshot(display, monitors, windows)
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+            StopIteration,
+            subprocess.SubprocessError,
+        ):
+            groups, visible = {}, ""
+        states.append((display, groups, visible))
+    return states
+
+
+def membership(spaces, windows, focused):
     if not isinstance(spaces, list) or not isinstance(windows, list) or not focused:
         raise ValueError("unavailable snapshot")
     groups = {}
@@ -141,18 +211,32 @@ def snapshot():
     }, focused
 
 
-def inline_budget():
-    try:
-        display = geometry()
-        # Apple button (24 + inherited 8 padding), outer padding and a safe gutter.
-        return max(0, int(display["left"]) - 48) if display else 0
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-        return 0  # Fail closed: stale geometry must never put content in the notch.
+def inline_budget(display):
+    # Both halves remain independent: duplicated status controls occupy the right.
+    # Reserve the center split even on unnotched panels, retaining a safe gutter.
+    return max(0, int(display["left"]) - 48)
 
 
-def group_width(apps, count):
+def workspace_badge(workspace):
+    return WORKSPACE_SHORTCUTS.get(
+        workspace, workspace if workspace.isdecimal() else ""
+    )
+
+
+def workspace_title(workspace):
+    return "" if workspace == workspace_badge(workspace) else workspace
+
+
+def header_width(workspace):
+    # Separate fixed-width shortcut badge and conservatively sized name label.
+    badge = HEADER_WIDTH if workspace_badge(workspace) else 0
+    title = workspace_title(workspace)
+    return max(HEADER_WIDTH, badge + (len(title) * 8 + 12 if title else 0))
+
+
+def group_width(apps, count, workspace=""):
     return (
-        HEADER_WIDTH
+        header_width(workspace)
         + GROUP_GAP
         + count * APP_WIDTH
         + (MORE_WIDTH if count < len(apps) else 0)
@@ -161,12 +245,12 @@ def group_width(apps, count):
 
 def allocation(groups, budget, focused=""):
     counts = {ws: 0 for ws in groups}
-    used = sum(group_width(apps, 0) for apps in groups.values())
+    used = sum(group_width(apps, 0, ws) for ws, apps in groups.items())
     # Fill the focused group first, then the remaining groups in stable order.
     for ws in sorted(groups, key=lambda ws: ws != focused):
         while counts[ws] < len(groups[ws]):
-            extra = group_width(groups[ws], counts[ws] + 1) - group_width(
-                groups[ws], counts[ws]
+            extra = group_width(groups[ws], counts[ws] + 1, ws) - group_width(
+                groups[ws], counts[ws], ws
             )
             if used + extra > budget:
                 break
@@ -179,23 +263,131 @@ def command(*args):
     return shlex.join(map(str, args))
 
 
-def image_properties(bundle, prefix="background.image"):
-    # Empty paths clear an image in 2.23; the string "none" is treated as a file.
+APP_FONT = "sketchybar-app-font:Regular:16.0"
+FALLBACK_FONT = "Hack Nerd Font:Regular:15.0"
+FALLBACK_ICON = "\uf2d0"  # Neutral window outline, never an unrendered ligature.
+TERMINAL_NAMES = {
+    "terminal",
+    "iterm",
+    "iterm2",
+    "wezterm",
+    "herdr",
+    "ghostty",
+    "kitty",
+    "alacritty",
+    "warp",
+    "rio",
+    "hyper",
+    "tabby",
+}
+TERMINAL_BUNDLES = {
+    "com.apple.terminal",
+    "com.googlecode.iterm2",
+    "com.github.wez.wezterm",
+    "com.mitchellh.ghostty",
+    "net.kovidgoyal.kitty",
+    "org.alacritty",
+    "dev.warp.warp-stable",
+    "com.herdr.app",
+    "com.herdr",
+    "app.herdr",
+}
+
+
+def load_icon_map():
+    """Read only the pinned package's literal table rows; never execute Lua."""
+    path = Path(
+        os.environ.get(
+            "SKETCHYBAR_APP_FONT_MAP",
+            str(Path.home() / ".local/share/sketchybar/icon_map.lua"),
+        )
+    )
+    font = Path(
+        os.environ.get(
+            "SKETCHYBAR_APP_FONT_FILE",
+            str(Path.home() / "Library/Fonts/sketchybar-app-font.ttf"),
+        )
+    )
+    try:
+        if not font.is_file():
+            return {}
+        rows = re.findall(
+            r'^\s*\[ \[\[(.*?)\]\] \] = "(:[a-z0-9_-]+:)",\s*$',
+            path.read_text(),
+            re.MULTILINE,
+        )
+        return dict(rows)
+    except (OSError, UnicodeError):
+        return {}
+
+
+ICON_MAP = load_icon_map()
+
+
+def app_icon(bundle, name):
+    if not ICON_MAP:
+        return FALLBACK_ICON, FALLBACK_FONT
+    if bundle.lower() in TERMINAL_BUNDLES or name.casefold() in TERMINAL_NAMES:
+        glyph = ":terminal:"
+    elif bundle.lower() == "com.openai.chat" or name.casefold() in {
+        "chatgpt",
+        "openai",
+    }:
+        glyph = ":openai:"
+    elif bundle.lower() == "com.google.chrome.for.testing" or name in {
+        "Google Chrome for Testing",
+        "Chrome for Testing",
+    }:
+        glyph = ":google_chrome:"
+    else:
+        glyph = ICON_MAP.get(name, ":default:")
+    return glyph, APP_FONT
+
+
+def clear_images():
+    # Empty paths clear cached native images in 2.23; "none" is a filename.
     return [
-        prefix + "=",
-        prefix + "=app." + bundle,
-        prefix + ".scale=" + str(IMAGE_SCALE),
-        prefix + ".drawing=on",
+        prefix + suffix
+        for prefix in (
+            "background.image",
+            "icon.background.image",
+            "label.background.image",
+        )
+        for suffix in ("=", ".drawing=off")
     ]
 
 
-def plan(groups, focused, existing, budget):
-    # Constant widths are set at creation only, avoiding refresh animations.
-    args, desired, order, image_items = [], set(), ["apple"], {}
-    counts = allocation(groups, budget, focused)
-    compact = sum(group_width(apps, counts[ws]) for ws, apps in groups.items()) > budget
+def icon_properties(bundle, name):
+    glyph, font = app_icon(bundle, name)
+    return clear_images() + [
+        "icon=" + glyph,
+        "icon.font=" + font,
+        "icon.color=" + TEXT,
+        "icon.drawing=on",
+        "icon.width=24",
+        "icon.align=center",
+        "icon.background.drawing=off",
+    ]
 
-    def add(name, position, props):
+
+def plan(groups, focused, existing, budget, display=None):
+    # Constant widths are set at creation only, avoiding refresh animations.
+    def hname(ws):
+        return header(ws, display)
+
+    def iname(kind, ws, bundle=""):
+        return item_id(kind, ws, bundle, display)
+
+    overflow = (
+        PREFIX + "overflow" + (".d" + str(display) if display is not None else "")
+    )
+    args, desired, order, icons = [], set(), ["apple"], {}
+    counts = allocation(groups, budget, focused)
+    compact = (
+        sum(group_width(apps, counts[ws], ws) for ws, apps in groups.items()) > budget
+    )
+
+    def add(name, position, props, width_override=None):
         desired.add(name)
         if name not in existing:
             args.extend(["--add", "item", name, position])
@@ -207,12 +399,21 @@ def plan(groups, focused, existing, budget):
                     if name.startswith(PREFIX + "gap.")
                     else HEADER_WIDTH
                 )
-                args.extend(["--set", name, "width=" + str(width)])
+                args.extend(
+                    [
+                        "--set",
+                        name,
+                        "width="
+                        + str(width if width_override is None else width_override),
+                    ]
+                )
         args.extend(["--set", name, *props])
+        if display is not None:
+            args.append("display=" + str(display))
 
     for ws, apps in groups.items():
         start = len(order)
-        h = header(ws)
+        h = hname(ws)
         toggle = command("sketchybar", "--set", h, "popup.drawing=toggle")
         click = (
             'if [ "$BUTTON" = right ]; then '
@@ -226,14 +427,27 @@ def plan(groups, focused, existing, budget):
             "left",
             [
                 "drawing=" + ("off" if compact else "on"),
-                "icon=" + ws,
-                "icon.drawing=on",
+                "icon=" + workspace_badge(ws),
+                "icon.drawing=" + ("on" if workspace_badge(ws) else "off"),
                 "icon.font=SF Pro:Bold:11.0",
-                "icon.width=28",
+                "icon.width=" + str(HEADER_WIDTH),
                 "icon.align=center",
                 "icon.padding_left=0",
                 "icon.padding_right=0",
-                "label.drawing=off",
+                "icon.background.drawing=on",
+                "icon.background.height=" + str(ROW_HEIGHT),
+                "icon.background.corner_radius=0",
+                "icon.background.color="
+                + ("0x44eed49f" if ws == focused else "0x663d3d3d"),
+                "icon.background.border_width=1",
+                "icon.background.border_color="
+                + (YELLOW if ws == focused else SURFACE),
+                "label=" + workspace_title(ws),
+                "label.drawing=" + ("on" if workspace_title(ws) else "off"),
+                "label.font=SF Pro:Semibold:11.0",
+                "label.color=" + TEXT,
+                "label.padding_left=6",
+                "label.padding_right=6",
                 "background.height=24",
                 "background.drawing=on",
                 "background.padding_left=0",
@@ -241,11 +455,12 @@ def plan(groups, focused, existing, budget):
                 "padding_left=0",
                 "padding_right=0",
                 "background.color=" + CLEAR,
-                "icon.color=" + (RED if ws == focused else TEXT),
+                "icon.color=" + (YELLOW if ws == focused else TEXT),
                 "popup.align=left",
                 "popup.height=" + str(ROW_HEIGHT),
                 "click_script=" + click,
             ],
+            width_override=header_width(ws),
         )
         order.append(h)
         for index, (bundle, name, window_id) in enumerate(apps):
@@ -263,19 +478,13 @@ def plan(groups, focused, existing, budget):
                 "drawing=on",
             ]
             focus = command(AEROSPACE, "focus", "--window-id", window_id)
-            popup_id = item_id("popup", ws, bundle)
+            popup_id = iname("popup", ws, bundle)
             add(
                 popup_id,
                 "popup." + h,
                 row
-                + image_properties(bundle, "icon.background.image")
+                + icon_properties(bundle, name)
                 + [
-                    "background.image=",
-                    "icon.drawing=on",
-                    "icon=",
-                    "icon.width=24",
-                    "icon.background.drawing=on",
-                    "icon.background.color=" + CLEAR,
                     "label.padding_left=6",
                     "label.padding_right=8",
                     "label.drawing=on",
@@ -288,25 +497,25 @@ def plan(groups, focused, existing, budget):
                     + command("sketchybar", "--set", h, "popup.drawing=off"),
                 ],
             )
-            image_items[popup_id] = bundle
+            icons[popup_id] = app_icon(bundle, name)
             if index < counts[ws]:
-                app_id = item_id("app", ws, bundle)
+                app_id = iname("app", ws, bundle)
                 add(
                     app_id,
                     "left",
                     row
-                    + image_properties(bundle)
+                    + icon_properties(bundle, name)
                     + [
                         "drawing=" + ("off" if compact else "on"),
                         "label.drawing=off",
                         "click_script=" + focus,
                     ],
                 )
-                image_items[app_id] = bundle
+                icons[app_id] = app_icon(bundle, name)
                 order.append(app_id)
         hidden = len(apps) - counts[ws]
         if hidden:
-            disclosure = item_id("more", ws)
+            disclosure = iname("more", ws)
             add(
                 disclosure,
                 "left",
@@ -340,11 +549,17 @@ def plan(groups, focused, existing, budget):
             name
             for name in existing
             if name == h
-            or name.startswith(
-                (PREFIX + "app." + digest(ws)[:12], PREFIX + "more." + digest(ws)[:12])
+            or (
+                name.startswith(
+                    (
+                        PREFIX + "app." + digest(ws)[:12],
+                        PREFIX + "more." + digest(ws)[:12],
+                    )
+                )
+                and (display is None or name.endswith(".d" + str(display)))
             )
         }
-        bracket = item_id("group", ws)
+        bracket = iname("group", ws)
         desired.add(bracket)
         rebuild = bracket in existing and previous != set(members)
         if rebuild:
@@ -358,14 +573,16 @@ def plan(groups, focused, existing, budget):
                 "drawing=" + ("off" if compact else "on"),
                 "background.drawing=on",
                 "background.height=24",
-                "background.corner_radius=7",
+                "background.corner_radius=0",
                 "background.border_width=1",
-                "background.border_color=" + (RED if ws == focused else SURFACE),
+                "background.border_color=" + (YELLOW if ws == focused else SURFACE),
                 "background.color=" + (ACTIVE if ws == focused else INACTIVE),
             ]
         )
         # Constant-width items ignore background padding for advancement in 2.23.
-        gap = item_id("gap", ws)
+        if display is not None:
+            args.extend(["--set", bracket, "display=" + str(display)])
+        gap = iname("gap", ws)
         add(
             gap,
             "left",
@@ -382,7 +599,6 @@ def plan(groups, focused, existing, budget):
     if compact and budget >= MORE_WIDTH:
         # Unusually narrow panels / many workspace IDs: keep every workspace and
         # application reachable in one complete popup rather than cross the notch.
-        overflow = PREFIX + "overflow"
         add(
             overflow,
             "left",
@@ -398,7 +614,7 @@ def plan(groups, focused, existing, budget):
         )
         order.append(overflow)
         for ws, apps in groups.items():
-            entry = item_id("entry", ws)
+            entry = iname("entry", ws)
             add(
                 entry,
                 "popup." + overflow,
@@ -406,7 +622,7 @@ def plan(groups, focused, existing, budget):
                     "drawing=on",
                     "icon.drawing=on",
                     "label.drawing=on",
-                    "icon=" + ws,
+                    "icon=" + WORKSPACE_SHORTCUTS.get(ws, ws),
                     "label=Workspace " + ws,
                     "click_script="
                     + command(AEROSPACE, "workspace", ws)
@@ -415,17 +631,13 @@ def plan(groups, focused, existing, budget):
                 ],
             )
             for bundle, name, window_id in apps:
-                entry = item_id("entry", ws, bundle)
+                entry = iname("entry", ws, bundle)
                 add(
                     entry,
                     "popup." + overflow,
-                    image_properties(bundle, "icon.background.image")
+                    icon_properties(bundle, name)
                     + [
                         "drawing=on",
-                        "icon=",
-                        "icon.width=24",
-                        "icon.drawing=on",
-                        "icon.background.drawing=on",
                         "label=" + ws + " · " + name,
                         "label.drawing=on",
                         "click_script="
@@ -434,12 +646,12 @@ def plan(groups, focused, existing, budget):
                         + command("sketchybar", "--set", overflow, "popup.drawing=off"),
                     ],
                 )
-                image_items[entry] = bundle
+                icons[entry] = app_icon(bundle, name)
     for name in sorted(existing - desired):
-        if owned(name):
+        if owned(name) and (display is None or name.endswith(".d" + str(display))):
             args.extend(["--remove", name])
     order.extend(
-        item_id("popup", ws, app[0]) for ws, apps in groups.items() for app in apps
+        iname("popup", ws, app[0]) for ws, apps in groups.items() for app in apps
     )
     order.extend(
         name
@@ -449,12 +661,45 @@ def plan(groups, focused, existing, budget):
             "clock",
             "date",
             "battery",
-            "volume",
+            "ram",
+            "cpu",
         )
         if name in existing
     )
     args.extend(["--reorder", *order])
-    return args, image_items
+    return args, icons
+
+
+def plan_all(states, existing):
+    """Merge independent panel plans into one atomic update and global ordering."""
+    args, icons, order = [], {}, ["apple"]
+    displays = {d["arrangement"] for d, _, _ in states}
+    for display, groups, visible in states:
+        local, app_icons = plan(
+            groups, visible, existing, inline_budget(display), display["arrangement"]
+        )
+        split = local.index("--reorder")
+        args.extend(local[:split])
+        order.extend(name for name in local[split + 1 :] if owned(name))
+        icons.update(app_icons)
+    for name in sorted(existing):
+        if owned(name) and not any(name.endswith(".d" + str(d)) for d in displays):
+            args.extend(["--remove", name])
+    order.extend(
+        name
+        for name in (
+            "workspace_controller",
+            "display_controller",
+            "clock",
+            "date",
+            "battery",
+            "ram",
+            "cpu",
+        )
+        if name in existing
+    )
+    args.extend(["--reorder", *order])
+    return args, icons
 
 
 def owned(name):
@@ -514,8 +759,10 @@ def lock(name, wait=True):
 def render():
     with lock("render.lock"):
         existing = set(query(["sketchybar", "--query", "bar"])["items"])
+        displays = []
         try:
-            groups, focused = snapshot()
+            displays = geometry()
+            states = inventory(displays)
         except (
             OSError,
             ValueError,
@@ -524,10 +771,18 @@ def render():
             StopIteration,
             subprocess.SubprocessError,
         ):
-            args = []
+            args = bar_properties(displays)
             for name in sorted(existing):
                 if owned(name):
-                    args.extend(["--set", name, "drawing=off"])
+                    args.extend(
+                        [
+                            "--set",
+                            name,
+                            *clear_images(),
+                            "drawing=off",
+                            "popup.drawing=off",
+                        ]
+                    )
                 if name.startswith(PREFIX + "space.") or name in {
                     "space." + str(i) for i in range(1, 8)
                 }:
@@ -544,40 +799,8 @@ def render():
             if args:
                 run(["sketchybar", *args])
             return
-        args, images = plan(groups, focused, existing, inline_budget())
-        try:
-            run(["sketchybar", *args])
-        except subprocess.CalledProcessError:
-            # Isolate lookup failures on the error path only: one missing app
-            # must not replace every other application's native image.
-            fallback = []
-            for name, bundle in images.items():
-                popup = not name.startswith(PREFIX + "app.")
-                prefix = "icon.background.image" if popup else "background.image"
-                try:
-                    run(
-                        [
-                            "sketchybar",
-                            "--set",
-                            name,
-                            *image_properties(bundle, prefix),
-                            "icon.drawing=" + ("on" if popup else "off"),
-                        ]
-                    )
-                except subprocess.CalledProcessError:
-                    fallback.extend(
-                        [
-                            "--set",
-                            name,
-                            prefix + "=",
-                            prefix + ".drawing=off",
-                            "icon=?",
-                            "icon.drawing=on",
-                            "icon.color=" + MUTED,
-                        ]
-                    )
-            if fallback:
-                run(["sketchybar", *fallback])
+        args, _ = plan_all(states, existing)
+        run(["sketchybar", *bar_properties(displays), *args])
 
 
 def trigger():

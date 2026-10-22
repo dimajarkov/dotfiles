@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise shell plugins with isolated command fixtures, never the live desktop."""
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -101,40 +102,22 @@ class Plugins(unittest.TestCase):
         self.assertIn("aerospace_state_change", controller)
         self.assertTrue(any("workspaces.py" in arg for arg in controller))
 
-    def test_charged_battery(self):
-        calls = self.run_plugin(
-            NAME="battery",
-            PMSET_OUTPUT="Now drawing from 'AC Power'\n -InternalBattery-0 (id=123)\t100%; charged; 0:00 remaining present: true",
-        )
-        self.assertIn("label=100%", calls[0])
-        self.assertIn("icon.color=0xffa6da95", calls[0])
-
-    def test_low_battery(self):
-        calls = self.run_plugin(
-            NAME="battery",
-            PMSET_OUTPUT="Now drawing from 'Battery Power'\n -InternalBattery-0 (id=123)\t9%; discharging; 0:30 remaining present: true",
-        )
-        self.assertIn("label=9%", calls[0])
-        self.assertIn("icon.color=0xffed8796", calls[0])
-
-    def test_no_battery_hides_item(self):
-        calls = self.run_plugin(
-            NAME="battery", PMSET_OUTPUT="Now drawing from 'AC Power'"
-        )
-        self.assertEqual(calls[0], ["--set", "battery", "drawing=off"])
-
-    def test_volume_event_decimal(self):
-        calls = self.run_plugin(NAME="volume", SENDER="volume_change", INFO="42.5")
-        self.assertIn("label=42%", calls[0])
-
-    def test_volume_zero(self):
-        calls = self.run_plugin(NAME="volume", SENDER="volume_change", INFO="0")
-        self.assertIn("icon=", calls[0])
-        self.assertIn("label=0%", calls[0])
-
-    def test_volume_query_failure(self):
-        calls = self.run_plugin(NAME="volume", OSASCRIPT_EXIT="1")
-        self.assertIn("label=--", calls[0])
+    def test_status_widths_and_actions(self):
+        config = (CONFIG / "sketchybarrc").read_text()
+        self.assertNotIn("volume", config)
+        self.assertNotIn("volume", (CONFIG / "plugins/status.sh").read_text())
+        for name, width in (
+            ("clock", 60),
+            ("date", 100),
+            ("battery", 84),
+            ("ram", 76),
+            ("cpu", 76),
+        ):
+            self.assertIn(f"--set {name} width={width}", config)
+        self.assertEqual(config.count('click_script="/usr/bin/open -a Calendar"'), 2)
+        self.assertIn("--add bracket datetime date clock", config)
+        self.assertIn("icon.drawing=on", config.split("--set battery", 1)[1])
+        self.assertIn("update_freq=15", config)
 
     def test_shell_syntax(self):
         for path in [CONFIG / "sketchybarrc", *CONFIG.rglob("*.sh")]:
@@ -147,38 +130,25 @@ class Plugins(unittest.TestCase):
 
     def test_date(self):
         calls = self.run_plugin(NAME="date")
-        self.assertRegex(calls[0][-1], r"^label=\d{2} \w{3}$")
+        self.assertRegex(calls[0][-1], r"^label=\w{3} \d{2} \w{3}$")
 
-    def test_display_selects_detected_builtin_not_fixed_index(self):
-        calls = self.run_plugin(
-            "display.sh",
-            OSASCRIPT_OUTPUT=json.dumps(
-                {
-                    "arrangement": 2,
-                    "screen": 1,
-                    "leftArea": [0, 600, 32],
-                    "rightArea": [800, 600, 32],
-                    "origin": 0,
-                    "top": 32,
-                    "width": 1400,
-                }
-            ),
+    def test_display_selection_and_external_only(self):
+        spec = importlib.util.spec_from_file_location(
+            "native_display", CONFIG / "plugins/display.py"
+        )
+        display = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(display)
+        laptop = {"arrangement": 2, "left": 600, "right": 800}
+        external = {"arrangement": 1, "left": 960, "right": 960}
+        self.assertEqual(
+            display.bar_properties([external, laptop]),
+            ["--bar", "display=1,2", "notch_width=200", "hidden=off"],
         )
         self.assertEqual(
-            calls[-1], ["--bar", "display=2", "notch_width=200", "hidden=off"]
+            display.bar_properties([external]),
+            ["--bar", "display=1", "notch_width=0", "hidden=off"],
         )
-
-    def test_clamshell_hides_bar(self):
-        calls = self.run_plugin("display.sh")
-        self.assertEqual(calls[-1], ["--bar", "hidden=on"])
-
-    def test_display_detection_failure_hides_bar(self):
-        calls = self.run_plugin("display.sh", OSASCRIPT_EXIT="1")
-        self.assertEqual(calls[-1], ["--bar", "hidden=on"])
-
-    def test_invalid_display_result_hides_bar(self):
-        calls = self.run_plugin("display.sh", OSASCRIPT_OUTPUT="1,2")
-        self.assertEqual(calls[-1], ["--bar", "hidden=on"])
+        self.assertEqual(display.bar_properties([]), ["--bar", "hidden=on"])
 
 
 if __name__ == "__main__":

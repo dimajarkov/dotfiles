@@ -46,6 +46,8 @@ For localhost work in Zen, acquire the existing space named exactly `development
 Prefer reusing a persistent normal Zen window kept on that space; a dedicated window is a routing target, not a separate workspace or proof of session isolation.
 Zen's [window synchronization](https://docs.zen-browser.app/user-manual/window-sync) can mirror tabs across windows, so keeping a window dedicated does not replace identity checks.
 For job applications, verify the intended account and task before taking an external action.
+Follow the repository-owned [native Zen application route](/Users/dmitrijarkov/docs/.agents/skills/job-application/references/zen-browser.md) for job submissions, including its shared lock and fresh screenshot, window, site and applicant-identity checks.
+That native route uses this installed Zen app through Codex Computer Use and supersedes the retired Chrome-extension gate.
 
 ### Acquire and recover the development window
 
