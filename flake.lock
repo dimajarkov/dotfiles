@@ -274,17 +274,17 @@
     "treehouse-owned": {
       "flake": false,
       "locked": {
-        "lastModified": 1792574628,
-        "narHash": "sha256-hm0EG9LHMnf2QjnpHz3+B6xGLl0HZN1g+OwdXLI/eig=",
+        "lastModified": 1792629262,
+        "narHash": "sha256-N87yHTm1yvIiNuJDxD45qc5pkNxd4RMKMLIptx0yatA=",
         "owner": "dimajarkov",
         "repo": "treehouse",
-        "rev": "f0f75db0941b970e830e75e4dbfd197646476d06",
+        "rev": "0b60a12ff9f3ef22e10fb3c765be1e3c60678971",
         "type": "github"
       },
       "original": {
         "owner": "dimajarkov",
         "repo": "treehouse",
-        "rev": "f0f75db0941b970e830e75e4dbfd197646476d06",
+        "rev": "0b60a12ff9f3ef22e10fb3c765be1e3c60678971",
         "type": "github"
       }
     }
