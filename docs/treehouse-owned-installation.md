@@ -59,3 +59,13 @@ A build or installation receipt alone does not prove a running application or a 
 
 For subsequent upgrades, update only the immutable personal-fork input, rebuild the feature, inspect the new plan and repeat this explicit update.
 This installer never repairs registry aliases, allocates slots, returns leases, destroys worktrees, changes provider state or starts application runtimes.
+
+## Explicit recovery of an independently replaced backing
+
+Normal updates refuse when installed bytes disagree with the saved owner receipt or admission policy.
+After an operator explicitly approves recovery, `--recover-backing-sha256 <exact-observed-digest>` may precede `plan` and `apply`.
+Supply the same approved digest for both commands; the full reviewed plan also binds its inode, bytes, policy, locks, registry and provenance.
+Recovery accepts only backing drift: the wrapper must still match the saved receipt, the prior package manifest and artifact bytes must verify, and policy hashes must still match that prior managed package.
+It preserves the unexpected binary in the private transaction archive, drains its users without signals, and uses the same exclusive maintenance locks, atomic installation and rollback checks as normal updates.
+It does not authenticate or execute the unexpected binary, invent a new prior receipt, change pool state, or authorize a registry repair.
+After successful recovery omit the recovery flag for ordinary subsequent updates.

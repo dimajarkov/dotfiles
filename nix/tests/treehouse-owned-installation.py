@@ -190,6 +190,118 @@ class InstallationTest(unittest.TestCase):
         for name, path in self.routes.items():
             self.assertEqual(self.originals[name], path.read_bytes())
 
+    def recovery_fixture(self):
+        prior = self.root / "prior-profile" / "share/treehouse-owned"
+        prior.mkdir(parents=True)
+        for name, data in self.originals.items():
+            (prior / name).write_bytes(data)
+        manifest = {
+            "schema": "treehouse.owned-artifact.v1",
+            "source": "github:dimajarkov/treehouse/previous",
+            "revision": "previous",
+            "assets": self.expected,
+        }
+        (prior / "manifest.json").write_bytes(installer.encode(manifest))
+        self.installation.current.parent.mkdir(parents=True, mode=0o700)
+        installer.write(
+            self.installation.current,
+            installer.encode(
+                {
+                    **manifest,
+                    "schema": "treehouse.owned-installation.v1",
+                    "profile": str(prior.parent.parent),
+                }
+            ),
+        )
+        unexpected = b"unexpected upstream backing"
+        self.routes["treehouse-bin"].write_bytes(unexpected)
+        self.installation.recovery_backing = installer.digest(unexpected)
+        return prior, unexpected
+
+    def test_explicit_recovery_preserves_unexpected_binary_and_state(self):
+        _, unexpected = self.recovery_fixture()
+        state = (self.pool / "treehouse-state.json").read_bytes()
+        approved = self.installation.plan()
+        receipt = self.installation.apply(approved)
+        self.assertEqual(
+            unexpected,
+            (Path(receipt["archive"]) / "treehouse-bin.original").read_bytes(),
+        )
+        self.assertEqual(state, (self.pool / "treehouse-state.json").read_bytes())
+        self.installation.recovery_backing = None
+        self.installation.plan()
+
+    def test_recovery_refuses_missing_authority_or_changed_owner(self):
+        for kind in [
+            "no-approval",
+            "wrong-digest",
+            "wrapper",
+            "prior-artifact",
+            "policy",
+            "missing-provenance",
+        ]:
+            with self.subTest(kind=kind):
+                self.setUp()
+                prior, _ = self.recovery_fixture()
+                if kind == "no-approval":
+                    self.installation.recovery_backing = None
+                elif kind == "wrong-digest":
+                    self.installation.recovery_backing = "0" * 64
+                elif kind == "wrapper":
+                    self.routes["treehouse"].write_bytes(b"another wrapper")
+                elif kind == "prior-artifact":
+                    (prior / "treehouse-bin").write_bytes(b"altered old package")
+                elif kind == "policy":
+                    policy = {
+                        **self.policy,
+                        "route": {**self.policy["route"], "backing_sha256": "0" * 64},
+                    }
+                    (self.pool / "treehouse-launch-policy.json").write_bytes(
+                        installer.encode(policy)
+                    )
+                else:
+                    self.installation.current.unlink()
+                before = {
+                    str(p): p.read_bytes() for p in self.root.rglob("*") if p.is_file()
+                }
+                with self.assertRaises(RuntimeError):
+                    self.installation.plan()
+                self.assertEqual(
+                    before,
+                    {
+                        str(p): p.read_bytes()
+                        for p in self.root.rglob("*")
+                        if p.is_file()
+                    },
+                )
+
+    def test_recovery_refuses_backing_drift_after_approval(self):
+        self.recovery_fixture()
+        approved = self.installation.plan()
+        self.routes["treehouse-bin"].write_bytes(b"later owner edit")
+        with self.assertRaises(RuntimeError):
+            self.installation.apply(approved)
+        self.assertEqual(b"later owner edit", self.routes["treehouse-bin"].read_bytes())
+
+    def test_interrupted_recovery_restores_exact_observed_baseline(self):
+        _, unexpected = self.recovery_fixture()
+        approved = self.installation.plan()
+        original = installer.replace
+        failed = False
+
+        def fail_once(staged, target):
+            nonlocal failed
+            if target == self.installation.policy and not failed:
+                failed = True
+                raise OSError("synthetic interrupted recovery")
+            return original(staged, target)
+
+        with mock.patch.object(installer, "replace", fail_once):
+            with self.assertRaisesRegex(OSError, "interrupted recovery"):
+                self.installation.apply(approved)
+        self.assertEqual(unexpected, self.routes["treehouse-bin"].read_bytes())
+        self.assertEqual(self.policy, json.loads(self.installation.policy.read_bytes()))
+
     def test_unknown_owner_or_symlink_refuses(self):
         self.routes["treehouse-bin"].write_bytes(b"different owner")
         with self.assertRaisesRegex(RuntimeError, "Unknown installed owner"):

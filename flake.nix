@@ -16,7 +16,7 @@
     hunk-upstream.url = "github:modem-dev/hunk/7991d3034af1d2116e9c77db31265e409a73bd9f";
     # Personal fork: physical identity, guarded repair and launch admission.
     treehouse-owned = {
-      url = "github:dimajarkov/treehouse/f0f75db0941b970e830e75e4dbfd197646476d06";
+      url = "github:dimajarkov/treehouse/0b60a12ff9f3ef22e10fb3c765be1e3c60678971";
       flake = false;
     };
   };

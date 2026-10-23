@@ -85,7 +85,8 @@ def replace(staged, target):
 
 
 class Installation:
-    def __init__(self, profile, home, pool, run=subprocess.run):
+    def __init__(self, profile, home, pool, run=subprocess.run, recovery_backing=None):
+        self.recovery_backing = recovery_backing
         self.profile = profile.resolve()
         self.home = home
         self.pool = pool
@@ -115,6 +116,8 @@ class Installation:
         hashes = {name: value["sha256"] for name, value in routes.items()}
         known = hashes == INITIAL
         provenance = None
+        previous = None
+        policy_hashes = hashes
         if self.current.exists() or self.current.is_symlink():
             previous_bytes, provenance = regular(self.current, private=True)
             previous = json.loads(previous_bytes)
@@ -122,6 +125,40 @@ class Installation:
                 previous["schema"] == "treehouse.owned-installation.v1"
                 and previous["assets"] == hashes
             )
+        recovering = False
+        if self.recovery_backing is not None:
+            # Explicit operator recovery binds an unexpected backing's exact
+            # bytes. The unchanged wrapper, prior immutable package and policy
+            # must independently establish the managed installation's owner.
+            if (
+                previous is None
+                or previous.get("schema") != "treehouse.owned-installation.v1"
+                or len(self.recovery_backing) != 64
+                or any(c not in "0123456789abcdef" for c in self.recovery_backing)
+                or hashes["treehouse-bin"] != self.recovery_backing
+                or previous["assets"]["treehouse"] != hashes["treehouse"]
+                or previous["assets"]["treehouse-bin"] == hashes["treehouse-bin"]
+            ):
+                raise RuntimeError(
+                    "Recovery baseline does not match exact backing drift"
+                )
+            prior_assets = Path(previous["profile"]) / "share/treehouse-owned"
+            prior_manifest = json.loads((prior_assets / "manifest.json").read_bytes())
+            if (
+                prior_manifest.get("schema") != "treehouse.owned-artifact.v1"
+                or prior_manifest["assets"] != previous["assets"]
+                or prior_manifest["revision"] != previous["revision"]
+                or prior_manifest["source"] != previous["source"]
+                or any(
+                    digest((prior_assets / n).read_bytes()) != previous["assets"][n]
+                    for n in self.routes
+                )
+            ):
+                raise RuntimeError(
+                    "Prior managed package cannot establish recovery ownership"
+                )
+            policy_hashes = previous["assets"]
+            recovering = known = True
         if not known:
             raise RuntimeError(
                 "Unknown installed owner provenance; inspect before updating"
@@ -147,7 +184,7 @@ class Installation:
         for name, field in [("treehouse", "wrapper"), ("treehouse-bin", "backing")]:
             if (
                 policy["route"][field] != str(self.routes[name])
-                or policy["route"][field + "_sha256"] != hashes[name]
+                or policy["route"][field + "_sha256"] != policy_hashes[name]
             ):
                 raise RuntimeError("Installed routes and policy disagree")
         locks = {
@@ -170,6 +207,7 @@ class Installation:
             "state": regular(self.state)[1],
             "pool": str(self.pool),
             "provenance": provenance,
+            "recovery_backing_sha256": self.recovery_backing if recovering else None,
         }
 
     def drain(self, links):
@@ -431,6 +469,10 @@ class Installation:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", required=True, type=Path)
+    parser.add_argument(
+        "--recover-backing-sha256",
+        help="Explicitly approved unexpected backing digest; wrapper, prior package and policy must still match",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("plan")
     apply = commands.add_parser("apply")
@@ -446,7 +488,12 @@ def main():
         raise RuntimeError(
             "Expected mounted external Treehouse storage and original symlink"
         )
-    install = Installation(args.profile, home, POOL_PARENT / POOL_NAME)
+    install = Installation(
+        args.profile,
+        home,
+        POOL_PARENT / POOL_NAME,
+        recovery_backing=args.recover_backing_sha256,
+    )
     if args.command == "plan":
         print(encode(install.plan()).decode(), end="")
     else:
