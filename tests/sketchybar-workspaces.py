@@ -23,6 +23,287 @@ w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
 
 
+class ViewportTests(unittest.TestCase):
+    def test_overfull_groups_remain_browsable_and_bounded(self):
+        groups = {str(i): [] for i in range(1, 8)}
+        manifest = {}
+        args, _ = w.plan(groups, "1", set(), 160, 1, manifest)
+        self.assertNotIn("wsc.overflow.d1", sets(args))
+        self.assertIn("wsc.prev.d1", sets(args))
+        panel = manifest["1"]
+        w.viewport_args(manifest, {w.digest("1")[:12]})
+        self.assertLessEqual(sum(row[1] for row in w.viewport_rows(panel)), 104)
+        before = panel["start"]
+        w.viewport_args(manifest, {w.digest("1")[:12]}, ("1", 1))
+        self.assertGreater(panel["start"], before)
+        browsed = panel["start"]
+        w.viewport_args(manifest, {w.digest("1")[:12]})
+        self.assertEqual(panel["start"], browsed)
+        w.viewport_args(manifest, {w.digest("7")[:12]})
+        self.assertIn(w.digest("7")[:12], [r[0] for r in w.viewport_rows(panel)])
+        for _ in range(20):
+            w.viewport_args(manifest, {w.digest("7")[:12]}, ("1", 1))
+        self.assertEqual(panel["start"], len(panel["rows"]) - 2)
+        drawing = w.viewport_args(manifest, {w.digest("7")[:12]})
+        self.assertFalse(any("width=" in arg or "--add" == arg for arg in drawing))
+
+    def test_private_manifest_focus_lane_and_structural_browse_preservation(self):
+        groups = {str(i): [("private.bundle", "Private App", i)] for i in range(1, 8)}
+        panel = {
+            "arrangement": 1,
+            "screen": 2,
+            "identity": 1234,
+            "left": 208,
+            "right": 700,
+            "width": 1200,
+        }
+        other = {**panel, "arrangement": 7, "screen": 1, "identity": 5678}
+        states = [(panel, groups, "1"), (other, groups, "1")]
+        manifest = {}
+        initial, _ = w.plan_all(states, set(), manifest)
+        existing = set(sets(initial))
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+            patch.object(w, "run") as run,
+        ):
+            w.save_viewports(manifest)
+            self.assertEqual(w.load_viewports(), manifest)
+            raw = (
+                Path(temp) / ".cache/sketchybar-workspaces/viewport.lock"
+            ).read_text()
+            self.assertNotIn("Private", raw)
+            self.assertNotIn("private", raw)
+            with patch.object(
+                w, "query", side_effect=AssertionError("scroll inventory")
+            ):
+                w.scroll(1, "next")
+                w.scroll(1, "next")
+            browsed = w.load_viewports()
+            self.assertEqual(browsed["7"]["start"], 0)
+            self.assertGreater(browsed["1"]["start"], 0)
+            with (
+                patch.object(w, "query", return_value=[{"workspace": "1"}]) as query,
+                patch.object(w, "geometry", side_effect=AssertionError("geometry")),
+                patch.object(w, "inventory", side_effect=AssertionError("inventory")),
+            ):
+                w.save_topology(existing)
+                w.select()
+                query.assert_called_once()
+            self.assertEqual(w.load_viewports(), browsed)
+            self.assertFalse(
+                any(
+                    arg.startswith(("width=", "icon.width="))
+                    for arg in run.call_args.args[0]
+                )
+            )
+            with (
+                patch.object(
+                    w,
+                    "query",
+                    side_effect=[{"items": list(existing)}, [{"workspace": "1"}]],
+                ),
+                patch.object(w, "geometry", return_value=[panel, other]),
+                patch.object(w, "inventory", return_value=states),
+            ):
+                w.reconcile()
+            self.assertEqual(w.load_viewports(), browsed)
+            refresh = run.call_args.args[0]
+            self.assertFalse(any(arg.startswith("width=") for arg in refresh))
+            # Hotplug removes the departed panel and does not inherit its offset
+            # when a different physical display reuses the same arrangement ID.
+            replacement = {**panel, "identity": 9999}
+            with (
+                patch.object(
+                    w,
+                    "query",
+                    side_effect=[{"items": list(existing)}, [{"workspace": "1"}]],
+                ),
+                patch.object(w, "geometry", return_value=[replacement]),
+                patch.object(w, "inventory", return_value=[(replacement, groups, "1")]),
+            ):
+                w.reconcile()
+            current = w.load_viewports()
+            self.assertEqual(set(current), {"1"})
+            self.assertEqual(current["1"]["start"], 0)
+            self.assertIn("--remove", run.call_args.args[0])
+
+    def test_scroll_delta_clamps_and_arrows_subscribe_without_workspace_switches(self):
+        manifest = {}
+        args, _ = w.plan(
+            {str(i): [] for i in range(1, 8)}, "1", set(), 160, 1, manifest
+        )
+        self.assertEqual(args.count("mouse.scrolled"), 16)  # headers, gaps, arrows
+        manifest["1"]["screen"] = 1234
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+            patch.object(w, "run") as run,
+        ):
+            w.save_viewports(manifest)
+            with patch.dict(os.environ, {"SCROLL_DELTA": "-9"}):
+                w.scroll(1)
+            self.assertEqual(w.load_viewports()["1"]["start"], 2)  # skip spacer
+            with patch.dict(os.environ, {"SCROLL_DELTA": "3"}):
+                w.scroll(1)
+                w.scroll(1)
+            self.assertEqual(w.load_viewports()["1"]["start"], 0)
+            self.assertTrue(
+                all(call.args[0][0] == "sketchybar" for call in run.call_args_list)
+            )
+            before = run.call_count
+            w.scroll(99)
+            self.assertEqual(run.call_count, before)
+            with w.lock("viewport.lock") as fd:
+                os.write(fd, b'{"1": {"rows": ["unsafe"]}}')
+                os.ftruncate(fd, os.lseek(fd, 0, os.SEEK_CUR))
+            self.assertEqual(w.load_viewports(), {})
+
+    def test_private_manifest_and_inventory_free_scroll_and_focus(self):
+        groups = {
+            f"private-{i}": [("private.bundle", "Private App", i)] for i in range(1, 8)
+        }
+        manifest = {}
+        args, _ = w.plan_all(
+            [({**DISPLAY, "left": 340}, groups, "private-1")], set(), manifest
+        )
+        names = {args[i + 1] for i, arg in enumerate(args) if arg == "--set"}
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+        ):
+            w.save_viewports(manifest)
+            w.save_topology(names)
+            raw = (
+                Path(temp) / ".cache/sketchybar-workspaces/viewport.lock"
+            ).read_text()
+            self.assertNotIn("private", raw.lower())
+            self.assertEqual(w.load_viewports(), manifest)
+            with (
+                patch.object(w, "inventory", side_effect=AssertionError("inventory")),
+                patch.object(w, "geometry", side_effect=AssertionError("geometry")),
+                patch.object(w, "query", side_effect=AssertionError("query")),
+                patch.object(w, "run") as run,
+                patch.dict(os.environ, {"SCROLL_DELTA": "-1"}),
+            ):
+                w.scroll(1)
+                self.assertGreater(w.load_viewports()["1"]["start"], 0)
+                call = run.call_args.args[0]
+                self.assertEqual(call[0], "sketchybar")
+                self.assertFalse(
+                    any(arg.startswith(("width=", "icon.width=")) for arg in call)
+                )
+                self.assertNotIn("--add", call)
+            with (
+                patch.object(
+                    w, "query", return_value=[{"workspace": "private-7"}]
+                ) as query,
+                patch.object(w, "inventory", side_effect=AssertionError("inventory")),
+                patch.object(w, "geometry", side_effect=AssertionError("geometry")),
+                patch.object(w, "run") as run,
+            ):
+                w.select()
+                query.assert_called_once()
+                self.assertIn(
+                    "drawing=on", sets(run.call_args.args[0])[w.header("private-7", 1)]
+                )
+                panel = w.load_viewports()["1"]
+                self.assertIn(
+                    w.digest("private-7")[:12],
+                    [row[0] for row in w.viewport_rows(panel)],
+                )
+            w.invalidate()
+            self.assertEqual(w.load_viewports(), {})
+
+    def test_periodic_refresh_preserves_browse_hotplug_resets_and_removes(self):
+        groups = {str(i): [] for i in range(1, 8)}
+        displays = [
+            {**DISPLAY, "left": 208, "identity": 100},
+            {**DISPLAY, "arrangement": 2, "screen": 2, "left": 208, "identity": 200},
+        ]
+        states = [
+            (displays[0], groups, "1"),
+            (displays[1], {str(i): [] for i in range(8, 15)}, "14"),
+        ]
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+            patch.object(w, "geometry", return_value=displays),
+            patch.object(w, "inventory", return_value=states),
+            patch.object(w, "run") as run,
+        ):
+            names = set()
+
+            def query(args):
+                if args == ["sketchybar", "--query", "bar"]:
+                    return {"items": list(names)}
+                return [{"workspace": "1"}, {"workspace": "14"}]
+
+            with patch.object(w, "query", side_effect=query):
+                w.reconcile()
+                first = run.call_args.args[0]
+                names.update(
+                    first[i + 1] for i, arg in enumerate(first) if arg == "--set"
+                )
+                w.scroll(1, "next")
+                browsed = w.load_viewports()
+                self.assertEqual(
+                    browsed["2"]["rows"][browsed["2"]["start"]][0],
+                    w.digest("14")[:12],
+                )
+                w.reconcile()
+                self.assertEqual(w.load_viewports(), browsed)
+                refresh = run.call_args.args[0]
+                self.assertFalse(any(arg.startswith("width=") for arg in refresh))
+                # An arrangement slot reused by a different physical panel must reset.
+                displays[0]["identity"] = 300
+                w.reconcile()
+                self.assertEqual(w.load_viewports()["1"]["start"], 0)
+                states.pop()
+                displays.pop()
+                w.reconcile()
+                self.assertEqual(set(w.load_viewports()), {"1"})
+                self.assertIn("--remove", run.call_args.args[0])
+
+    def test_width_bounds_popups_and_scroll_subscriptions(self):
+        groups = {str(i): [("bundle", "App", i)] for i in range(1, 10)}
+        for budget in range(28, 701, 13):
+            manifest = {}
+            args, _ = w.plan(groups, "1", set(), budget, 1, manifest)
+            if not manifest:
+                continue
+            panel = manifest["1"]
+            for offset in range(len(groups)):
+                panel["start"] = offset
+                drawing = w.viewport_args(manifest, {w.digest("1")[:12]})
+                self.assertLessEqual(
+                    sum(row[1] for row in w.viewport_rows(panel)) + 56, budget
+                )
+                self.assertNotIn("--reorder", drawing)
+            self.assertEqual(
+                sum(arg == "mouse.scrolled" for arg in args), 2 + len(groups) * 3
+            )
+            for ws in groups:
+                self.assertIn(w.item_id("popup", ws, "bundle", 1), sets(args))
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+        ):
+            for invalid in (b"{", b"[]", b'{"1": {"rows": []}}', b"{}" + b"x" * 262144):
+                with w.lock("viewport.lock") as fd:
+                    os.write(fd, invalid)
+                    os.ftruncate(fd, len(invalid))
+                self.assertEqual(w.load_viewports(), {})
+
+    def test_nonoverflow_unchanged_and_narrow_popup(self):
+        manifest = {}
+        args, _ = w.plan({"1": []}, "1", set(), 500, 1, manifest)
+        self.assertEqual(manifest, {})
+        self.assertNotIn("wsc.prev.d1", sets(args))
+        args, _ = w.plan({str(i): [] for i in range(7)}, "1", set(), 60, 1, manifest)
+        self.assertIn("wsc.overflow.d1", sets(args))
+
+
 class WorkspaceShortcutTests(unittest.TestCase):
     def test_only_main_option_number_bindings_are_read(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -178,8 +459,11 @@ class NativeGeometryTests(unittest.TestCase):
     def test_display_recovery(self):
         with (
             patch.object(w, "geometry", side_effect=[ValueError(), [DISPLAY]]),
+            patch.object(w, "save_topology"),
+            patch.object(w, "save_viewports"),
             patch.object(w, "lock", return_value=contextlib.nullcontext()),
             patch.object(w, "query", return_value={"items": ["apple"]}),
+            patch.object(w, "selection_args", return_value=[]),
             patch.object(w, "inventory", return_value=[(DISPLAY, {}, "")]),
             patch.object(w, "run") as run,
         ):
@@ -237,6 +521,426 @@ def sets(args):
         else:
             index += 1
     return result
+
+
+class SelectionTests(unittest.TestCase):
+    def names(self):
+        return {
+            w.item_id(kind, ws, display=display)
+            for kind in ("space", "group")
+            for ws, display in (("1", 1), ("browse", 1), ("jobs", 2))
+        }
+
+    def colors(self, args):
+        return {
+            name: dict(prop.split("=", 1) for prop in props)
+            for name, props in sets(args).items()
+        }
+
+    def assert_selected(self, args, visible):
+        colors = self.colors(args)
+        for ws, display in (("1", 1), ("browse", 1), ("jobs", 2)):
+            active = ws in visible
+            badge = colors[w.header(ws, display)]
+            group = colors[w.item_id("group", ws, display=display)]
+            self.assertEqual(badge["icon.color"], w.YELLOW if active else w.TEXT)
+            self.assertEqual(
+                badge["icon.background.color"], "0x44eed49f" if active else "0x663d3d3d"
+            )
+            self.assertEqual(
+                badge["icon.background.border_color"], w.YELLOW if active else w.SURFACE
+            )
+            self.assertEqual(
+                group["background.color"], w.ACTIVE if active else w.INACTIVE
+            )
+            self.assertEqual(
+                group["background.border_color"], w.YELLOW if active else w.SURFACE
+            )
+
+    def test_fast_path_live_ids_current_visibility_no_inventory_or_layout(self):
+        names = self.names() | {"apple", "wsc.app.unrelated.d1", "space.1"}
+        calls, held = [], set()
+        real_lock = w.lock
+
+        @contextlib.contextmanager
+        def lock(name, wait=True):
+            self.assertNotEqual(name, "render.lock")
+            calls.append(name)
+            with real_lock(name, wait) as fd:
+                held.add(name)
+                try:
+                    yield fd
+                finally:
+                    held.remove(name)
+
+        def query(args):
+            self.assertIn("apply.lock", held)
+            if args == ["sketchybar", "--query", "bar"]:
+                return {"items": list(names)}
+            self.assertEqual(
+                args,
+                [
+                    w.AEROSPACE,
+                    "list-workspaces",
+                    "--monitor",
+                    "all",
+                    "--visible",
+                    "--json",
+                ],
+            )
+            return [{"workspace": "browse"}, {"workspace": "jobs"}]
+
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+            patch.object(w, "lock", side_effect=lock),
+            patch.object(w, "query", side_effect=query),
+            patch.object(w, "geometry", side_effect=AssertionError("geometry")),
+            patch.object(w, "inventory", side_effect=AssertionError("inventory")),
+            patch.object(w, "render", side_effect=AssertionError("render")),
+            patch.object(w, "run") as run,
+            patch.dict(os.environ, {"FOCUSED_WORKSPACE": "1"}),
+        ):
+            w.select()
+        args = run.call_args.args[0]
+        self.assert_selected(args, {"browse", "jobs"})
+        self.assertEqual(set(sets(args)), self.names())
+        self.assertFalse(
+            any(
+                prop.startswith(("width=", "drawing=", "display=", "icon.width="))
+                for prop in args
+            )
+        )
+        self.assertEqual(calls.count("apply.lock"), 1)
+        self.assertFalse(held)
+
+    def test_cached_topology_removes_bar_query_and_never_persists_metadata(self):
+        names = self.names()
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+        ):
+            w.save_topology(
+                names
+                | {
+                    "private workspace",
+                    "Private App",
+                    "Private window title",
+                    w.item_id("app", "1", "private.bundle", 1),
+                }
+            )
+            self.assertEqual(w.load_topology(), names)
+            raw = (
+                Path(temp) / ".cache/sketchybar-workspaces/topology.lock"
+            ).read_text()
+            self.assertEqual(set(json.loads(raw)), names)
+            self.assertNotIn("private", raw.lower())
+            with (
+                patch.object(
+                    w,
+                    "query",
+                    return_value=[{"workspace": "browse"}, {"workspace": "jobs"}],
+                ) as query,
+                patch.object(w, "geometry", side_effect=AssertionError("geometry")),
+                patch.object(w, "inventory", side_effect=AssertionError("inventory")),
+                patch.object(w, "run") as run,
+            ):
+                w.select()
+            query.assert_called_once_with(
+                [
+                    w.AEROSPACE,
+                    "list-workspaces",
+                    "--monitor",
+                    "all",
+                    "--visible",
+                    "--json",
+                ]
+            )
+            run.assert_called_once()
+            self.assert_selected(run.call_args.args[0], {"browse", "jobs"})
+
+    def test_invalid_topology_never_applies_unvalidated_ids_and_recovers(self):
+        names = self.names()
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+        ):
+            for invalid in (
+                b"partial[",
+                b"null",
+                b"{}",
+                b'["Private app"]',
+                b"[23]",
+                b'"' + b"a" * 65536 + b'"',
+            ):
+                with w.lock("topology.lock") as fd:
+                    os.write(fd, invalid)
+                    os.ftruncate(fd, len(invalid))
+                self.assertIsNone(w.load_topology())
+                with (
+                    patch.object(
+                        w,
+                        "query",
+                        side_effect=[
+                            {"items": list(names)},
+                            [{"workspace": "browse"}, {"workspace": "jobs"}],
+                        ],
+                    ),
+                    patch.object(w, "run") as run,
+                ):
+                    w.select()
+                self.assert_selected(run.call_args.args[0], {"browse", "jobs"})
+                self.assertEqual(w.load_topology(), names)
+            w.invalidate()
+            self.assertIsNone(w.load_topology())
+            with (
+                patch.object(
+                    w,
+                    "query",
+                    side_effect=subprocess.CalledProcessError(1, "sketchybar"),
+                ),
+                patch.object(w, "run") as run,
+                self.assertRaises(subprocess.CalledProcessError),
+            ):
+                w.select()
+            run.assert_not_called()
+            self.assertIsNone(w.load_topology())
+        config = (SOURCE.parent.parent / "sketchybarrc").read_text()
+        self.assertIn('python3 "$PLUGIN_DIR/workspaces.py" invalidate', config)
+
+    def test_successful_structure_replaces_topology_after_removal_and_hotplug(self):
+        first = [
+            (DISPLAY, {"1": [], "browse": []}, "1"),
+            ({**DISPLAY, "arrangement": 2}, {"jobs": []}, "jobs"),
+        ]
+        second = [({**DISPLAY, "arrangement": 3}, {"1": []}, "1")]
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+            patch.object(w, "geometry", return_value=[DISPLAY]),
+            patch.object(w, "inventory", side_effect=[first, second]),
+            patch.object(
+                w,
+                "query",
+                side_effect=lambda args: (
+                    {"items": list(self.names())}
+                    if args[0] == "sketchybar"
+                    else [{"workspace": "1"}, {"workspace": "jobs"}]
+                ),
+            ),
+            patch.object(w, "run") as run,
+        ):
+            w.render()
+            self.assertEqual(w.load_topology(), self.names())
+            w.render()
+            expected = {w.header("1", 3), w.item_id("group", "1", display=3)}
+            self.assertEqual(w.load_topology(), expected)
+            self.assertTrue(all(name not in expected for name in self.names()))
+            with patch.object(w, "query", return_value=[{"workspace": "1"}]) as query:
+                w.select()
+            self.assertEqual(set(sets(run.call_args.args[0])), expected)
+            query.assert_called_once()
+
+    def test_rapid_stale_callbacks_always_read_latest_and_clear_old_selection(self):
+        current = {"1", "jobs"}
+
+        def query(args):
+            if args[0] == "sketchybar":
+                return {"items": list(self.names())}
+            return [{"workspace": ws} for ws in current]
+
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+            patch.object(w, "query", side_effect=query),
+            patch.object(w, "run") as run,
+        ):
+            for workspace in ["browse", "1"] * 10 + ["browse"]:
+                current = {workspace, "jobs"}
+                # Delayed callback payload deliberately claims the opposite.
+                with patch.dict(
+                    os.environ,
+                    {"FOCUSED_WORKSPACE": "1" if workspace == "browse" else "browse"},
+                ):
+                    w.select()
+                self.assert_selected(run.call_args.args[0], current)
+            current = set()
+            w.select()
+            self.assert_selected(run.call_args.args[0], set())
+
+    def test_notifications_coalesce_without_losing_changes_during_query_or_write(self):
+        import concurrent.futures
+        import threading
+
+        for phase in ("query", "write"):
+            with self.subTest(phase=phase):
+                paused, resume = threading.Event(), threading.Event()
+                current, writes, queries = {"1", "jobs"}, [], []
+
+                def pause():
+                    paused.set()
+                    if not resume.wait(3):
+                        raise AssertionError("notifications blocked behind selection")
+
+                def query(args):
+                    if args[0] == "sketchybar":
+                        return {"items": list(self.names())}
+                    snapshot = [{"workspace": ws} for ws in current]
+                    queries.append(snapshot)
+                    if phase == "query" and len(queries) == 1:
+                        pause()
+                    return snapshot
+
+                def write(args):
+                    writes.append(args)
+                    if phase == "write" and len(writes) == 1:
+                        pause()
+
+                with (
+                    tempfile.TemporaryDirectory() as temp,
+                    patch.object(w.Path, "home", return_value=Path(temp)),
+                    patch.object(w, "query", side_effect=query),
+                    patch.object(w, "run", side_effect=write),
+                    concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool,
+                ):
+                    owner = pool.submit(w.select)
+                    self.assertTrue(paused.wait(3))
+                    try:
+                        current = {"browse", "jobs"}
+                        # All duplicate callers return while the owner is still
+                        # paused, rather than queueing 20 IPC query/apply passes.
+                        callbacks = [pool.submit(w.select) for _ in range(20)]
+                        for callback in callbacks:
+                            callback.result(timeout=1)
+                    finally:
+                        resume.set()
+                    owner.result(timeout=3)
+                    self.assertEqual(len(queries), 2)
+                    self.assertEqual(len(writes), 2)
+                    self.assert_selected(writes[-1], current)
+                    # A notification after worker handoff elects a new owner.
+                    current = {"1", "jobs"}
+                    w.select()
+                    self.assert_selected(writes[-1], current)
+                    self.assertEqual(len(writes), 3)
+
+    def test_slow_structural_snapshot_cannot_revert_new_selection(self):
+        import concurrent.futures
+        import threading
+
+        collecting, resume = threading.Event(), threading.Event()
+        names = self.names()
+        writes = []
+
+        def inventory(_displays):
+            collecting.set()
+            if not resume.wait(3):
+                raise AssertionError("focus lane blocked behind inventory")
+            return [
+                (DISPLAY, {"1": [], "browse": []}, "1"),
+                ({**DISPLAY, "arrangement": 2}, {"jobs": []}, "jobs"),
+            ]
+
+        def query(args):
+            if args[0] == "sketchybar":
+                return {"items": list(names)}
+            return [{"workspace": "browse"}, {"workspace": "jobs"}]
+
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+            patch.object(w, "query", side_effect=query),
+            patch.object(w, "geometry", return_value=[DISPLAY]),
+            patch.object(w, "inventory", side_effect=inventory),
+            patch.object(w, "run", side_effect=lambda args: writes.append(args)),
+            concurrent.futures.ThreadPoolExecutor() as pool,
+        ):
+            pending = pool.submit(w.render)
+            self.assertTrue(collecting.wait(3))
+            try:
+                w.select()  # succeeds before the structural inventory resumes
+                self.assert_selected(writes[-1], {"browse", "jobs"})
+                w.render()  # duplicate full pass is dropped, not queued
+            finally:
+                resume.set()
+            pending.result(timeout=3)
+        self.assertEqual(len(writes), 2)
+        self.assert_selected(writes[-1], {"browse", "jobs"})
+
+    def test_native_callback_routes_to_independent_selection_item(self):
+        config = (SOURCE.parent.parent / "sketchybarrc").read_text()
+        self.assertIn(r'script="python3 \"$PLUGIN_DIR/workspaces.py\" select"', config)
+        self.assertIn(
+            "--subscribe workspace_selection aerospace_workspace_change front_app_switched",
+            config,
+        )
+        self.assertNotIn(
+            "--subscribe workspace_controller aerospace_workspace_change", config
+        )
+        with (
+            patch.object(sys, "argv", ["workspaces.py", "select"]),
+            patch.object(w, "select") as select,
+            patch.object(w, "render", side_effect=AssertionError("full render")),
+        ):
+            self.assertEqual(w.main(), 0)
+            select.assert_called_once()
+
+
+class LatencyProbeTests(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location(
+            "latency", Path(__file__).with_name("sketchybar-latency.py")
+        )
+        self.probe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.probe)
+
+    def test_odd_and_even_bursts_time_an_actual_final_switch(self):
+        p = self.probe
+        for count in (1, 2, 11, 12):
+            with (
+                self.subTest(count=count),
+                patch.object(p, "switch") as switch,
+                patch.object(p, "matches", return_value=True),
+                patch.object(p.w, "query", return_value=[]),
+                patch.object(p.time, "monotonic", side_effect=[0, 0.1, 0.2, 7]),
+                patch("builtins.print"),
+            ):
+                p.burst_probe(count, "first", "second", {"arrangement": 1}, [], 250)
+                targets = [call.args[0] for call in switch.call_args_list]
+                self.assertEqual(len(targets), count + 1)
+                self.assertNotEqual(targets[-1], targets[-2])
+
+    def test_readiness_waits_for_missing_items_before_any_switch(self):
+        p = self.probe
+        states = [(DISPLAY, {"1": []}, "1")]
+        names = [w.header("1", 1), w.item_id("group", "1", display=1)]
+        with (
+            patch.object(
+                p,
+                "query",
+                side_effect=[
+                    json.JSONDecodeError("reload", "", 0),
+                    {"items": []},
+                    {"items": names},
+                ],
+            ),
+            patch.object(p, "matches", return_value=True),
+            patch.object(
+                p, "switch", side_effect=AssertionError("readiness changed workspace")
+            ),
+            patch.object(p.time, "sleep") as sleep,
+        ):
+            p.wait_ready(states)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_readiness_is_bounded(self):
+        p = self.probe
+        with (
+            patch.object(p, "query", return_value={"items": []}),
+            patch.object(p.time, "monotonic", side_effect=[0, 9]),
+            self.assertRaisesRegex(AssertionError, "not ready before timing"),
+        ):
+            p.wait_ready([(DISPLAY, {"1": []}, "1")])
 
 
 class AppIconTests(unittest.TestCase):
@@ -407,7 +1111,9 @@ class MultiDisplayTests(unittest.TestCase):
         for name in props:
             did = 7 if name.endswith(".d7") else 1
             self.assertIn("display=" + str(did), props[name])
-        self.assertEqual(len(images), 4)  # two popups, inline glyph, overflow entry
+        self.assertEqual(
+            len(images), 5
+        )  # two popups, two inline glyphs, overflow entry
         existing = set(props) | {"apple"}
         refresh, _ = w.plan_all(states, existing)
         self.assertNotIn("--add", refresh)
@@ -520,22 +1226,21 @@ class MembershipTests(unittest.TestCase):
         self.assertNotIn("wsc.overflow", sets(zero))
         self.assertTrue(all("drawing=off" in sets(zero)[w.header(ws)] for ws in groups))
 
-    def test_allocation_stays_within_horizontal_budget(self):
-        groups = {
-            "1": [(str(i), "App", i + 1) for i in range(50)],
-            "2": [],
-            "3": [("other", "Other", 99)],
-        }
-        minimum = sum(w.group_width(apps, 0) for apps in groups.values())
-        for budget in range(minimum, 1600):
-            counts = w.allocation(groups, budget, "3")
-            self.assertLessEqual(
-                sum(w.group_width(apps, counts[ws]) for ws, apps in groups.items()),
-                budget,
+    def test_large_workspace_scrolls_every_icon_within_horizontal_budget(self):
+        groups = {"1": [(str(i), "App", i + 1) for i in range(50)], "2": []}
+        for budget in (120, 160, 300, 600, 1000):
+            manifest = {}
+            args, _ = w.plan(groups, "1", set(), budget, 1, manifest)
+            self.assertEqual(
+                sum(name.startswith("wsc.app.") for name in sets(args)), 50
             )
-        counts = w.allocation(groups, minimum, "3")
-        # Replacing a +1 disclosure with one app glyph costs less, not more.
-        self.assertEqual(counts["3"], 1)
+            panel = manifest["1"]
+            for start in range(len(panel["rows"])):
+                panel["start"] = start
+                self.assertLessEqual(
+                    sum(row[1] for row in w.viewport_rows(panel)) + 56, budget
+                )
+            self.assertFalse(any(arg.startswith("icon=+") for arg in args))
 
     def test_brackets_use_explicit_membership_and_fixed_gaps(self):
         groups, _ = snapshot([window()])
@@ -675,21 +1380,25 @@ class MembershipTests(unittest.TestCase):
                 for app in range(20)
             ]
         )
-        counts = w.allocation(groups, 600, "1")
-        total_width = sum(
-            w.group_width(apps, counts[ws]) for ws, apps in groups.items()
-        )
-        self.assertLessEqual(total_width, 600)
-        self.assertGreater(counts["1"], counts["2"])
-        args, _ = w.plan(groups, "1", {"apple"}, 600)
+        manifest = {}
+        args, _ = w.plan(groups, "1", {"apple"}, 600, 1, manifest)
         props = sets(args)
         self.assertEqual(sum(name.startswith("wsc.popup.") for name in props), 140)
-        for ws, apps in groups.items():
-            self.assertIn(
-                "icon=+" + str(len(apps) - counts[ws]), props[w.item_id("more", ws)]
-            )
-            self.assertIn("popup.align=left", props[w.header(ws)])
-        self.assertTrue(all(counts[ws] == 0 for ws in groups if ws != "1"))
+        self.assertEqual(sum(name.startswith("wsc.app.") for name in props), 140)
+        self.assertFalse(any(name.startswith("wsc.more.") for name in props))
+        self.assertFalse(any(prop.startswith("icon=+") for prop in args))
+        for ws in groups:
+            self.assertIn("popup.align=left", props[w.header(ws, 1)])
+        panel = manifest["1"]
+        reachable = set()
+        for index in range(len(panel["rows"])):
+            panel["start"] = index
+            shown = w.viewport_rows(panel)
+            self.assertLessEqual(sum(row[1] for row in shown) + 56, 600)
+            reachable.update(name for _, _, names in shown for name in names)
+        self.assertTrue(
+            {name for name in props if name.startswith("wsc.app.")} <= reachable
+        )
 
     def test_display_budget_and_fallback(self):
         for left in (20, 300, 650, 900):
@@ -703,7 +1412,9 @@ class MembershipTests(unittest.TestCase):
         with (
             patch.object(w, "lock", return_value=contextlib.nullcontext()),
             patch.object(w, "query", return_value={"items": list(existing)}),
+            patch.object(w, "save_topology"),
             patch.object(w, "geometry", return_value=[DISPLAY]),
+            patch.object(w, "save_viewports"),
             patch.object(w, "inventory", side_effect=ValueError),
             patch.object(w, "run") as run,
         ):
@@ -716,8 +1427,11 @@ class MembershipTests(unittest.TestCase):
         with (
             patch.object(w, "lock", return_value=contextlib.nullcontext()),
             patch.object(w, "query", return_value={"items": list(existing)}),
+            patch.object(w, "save_topology"),
+            patch.object(w, "selection_args", return_value=[]),
             patch.object(w, "geometry", return_value=[DISPLAY]),
             patch.object(w, "inventory", return_value=[(DISPLAY, groups, "1")]),
+            patch.object(w, "save_viewports"),
             patch.object(w, "inline_budget", return_value=600),
             patch.object(w, "run") as run,
         ):
@@ -729,6 +1443,7 @@ class MembershipTests(unittest.TestCase):
         with (
             patch.object(w, "lock", return_value=contextlib.nullcontext()),
             patch.object(w, "query", return_value={"items": ["apple"]}),
+            patch.object(w, "selection_args", return_value=[]),
             patch.object(w, "geometry", return_value=[DISPLAY]),
             patch.object(w, "inventory", return_value=[(DISPLAY, groups, "1")]),
             patch.object(
@@ -756,6 +1471,56 @@ class MembershipTests(unittest.TestCase):
                 pass
             self.assertFalse((Path(temp) / "target").exists())
 
+    def test_watch_focus_burst_selects_immediately_without_full_refresh(self):
+        real_popen = subprocess.Popen
+        children, handlers, triggers, selections = [], {}, [], []
+
+        def spawn(args, **kwargs):
+            child = real_popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import time; print("
+                    + repr(
+                        json.dumps(
+                            {
+                                "_event": "focused-workspace-changed",
+                                "workspace": "window-detected",
+                            }
+                        )
+                        + "\n"
+                    )
+                    + " * 40, flush=True); time.sleep(30)",
+                ],
+                **kwargs,
+            )
+            children.append(child)
+            return child
+
+        def select():
+            selections.append(w.time.monotonic())
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+
+        with (
+            patch.object(w, "lock", return_value=contextlib.nullcontext()),
+            patch.object(
+                w.signal,
+                "signal",
+                side_effect=lambda sig, handler: handlers.update({sig: handler}),
+            ),
+            patch.object(w.subprocess, "Popen", side_effect=spawn),
+            patch.object(
+                w, "trigger", side_effect=lambda: triggers.append(w.time.monotonic())
+            ),
+            patch.object(w, "select", side_effect=select),
+        ):
+            w.watch()
+        self.assertEqual(len(selections), 1)
+        self.assertEqual(len(triggers), 2)  # startup + disconnect, no focus render
+        self.assertLess(selections[0] - triggers[0], 0.19)
+        self.assertIsNotNone(children[0].poll())
+        self.assertTrue(children[0].stdout.closed)
+
     def test_watch_real_child_debounces_and_reaps(self):
         real_popen = subprocess.Popen
         children, handlers, triggers = [], {}, []
@@ -766,7 +1531,9 @@ class MembershipTests(unittest.TestCase):
                 [
                     sys.executable,
                     "-c",
-                    'import time; print("event\\n" * 40, flush=True); time.sleep(30)',
+                    "import time; print("
+                    + repr(json.dumps({"_event": "window-detected"}) + "\n")
+                    + " * 40, flush=True); time.sleep(30)",
                 ],
                 **kwargs,
             )
@@ -787,9 +1554,11 @@ class MembershipTests(unittest.TestCase):
             ),
             patch.object(w.subprocess, "Popen", side_effect=spawn),
             patch.object(w, "trigger", side_effect=trigger),
+            patch.object(w, "select") as select,
         ):
             w.watch()
         self.assertEqual(len(children), 1)
+        select.assert_called()
         self.assertEqual(len(triggers), 3)  # startup, coalesced burst, trailing refresh
         self.assertGreaterEqual(triggers[1] - triggers[0], 0.19)
         self.assertIsNotNone(children[0].poll())

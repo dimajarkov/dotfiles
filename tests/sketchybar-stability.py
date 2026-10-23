@@ -26,20 +26,21 @@ def state():
 
 
 def measure(refreshes=8):
-    states = state()
     names = []
-    for display, groups, visible in states:
-        budget = controller.inline_budget(display)
-        counts = controller.allocation(groups, budget, visible)
-        compact = (
-            sum(controller.group_width(apps, counts[ws]) for ws, apps in groups.items())
-            > budget
-        )
-        names.extend(
-            [controller.PREFIX + "overflow.d" + str(display["arrangement"])]
-            if compact and budget >= controller.MORE_WIDTH
-            else [controller.header(ws, display["arrangement"]) for ws in groups]
-        )
+    # Measure the currently browsed strip, not an assumed all-workspaces layout.
+    # This deliberately does not reset the viewport or select a workspace.
+    bar = controller.query(["sketchybar", "--query", "bar"])
+    for name in bar["items"]:
+        if not name.startswith(
+            tuple(
+                "wsc." + kind + "."
+                for kind in ("space", "app", "gap", "prev", "next", "overflow")
+            )
+        ):
+            continue
+        item = controller.query(["sketchybar", "--query", name])
+        if item["geometry"]["drawing"] == "on":
+            names.append(name)
     assert names, "No safe workspace items: temporal probe is not applicable"
     frames = set()
     samples = 0

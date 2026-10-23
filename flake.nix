@@ -116,6 +116,8 @@
           cp ${./home/.aerospace.toml} home/.aerospace.toml
           cp ${./tests/sketchybar-workspaces.py} tests/sketchybar-workspaces.py
           cp ${./tests/sketchybar-stability.py} tests/sketchybar-stability.py
+          # Lint only: the opt-in latency probe deliberately switches desktops.
+          cp ${./tests/sketchybar-latency.py} tests/sketchybar-latency.py
           cp ${./tests/sketchybar-live.py} tests/sketchybar-live.py
           python3 tests/sketchybar.py
           python3 tests/sketchybar-metrics.py

@@ -24,9 +24,12 @@ No custom helpers are compiled.
   Multiple windows of an application produce one icon per workspace, while an application present in several workspaces appears in each relevant group.
 - Workspace numbers activate that workspace; application icons focus one of its windows.
   Right-click a workspace for its complete application-name/icon popup.
-  When the inline list exceeds its width budget, a `+N` disclosure opens that same complete list rather than silently dropping apps.
-  Each monitor's visible workspace gets first priority for inline icons; other groups retain stable ordering.
-  If even the compact groups cannot fit, one `+N` workspace disclosure provides every workspace and app in a complete monochrome-icon popup.
+  Every application's real monochrome glyph stays in the inline strip; application icons are never replaced by `+N` counters.
+  When the combined workspace-and-application strip exceeds a panel's safe width, left/right arrows and wheel scrolling over its items browse a display-local horizontal viewport without selecting another workspace.
+  Individual header/icon slots scroll, so even one workspace containing more apps than the viewport remains fully reachable.
+  A real workspace selection change brings that workspace's header back into view; duplicate focus notifications and periodic refreshes preserve manual browsing.
+  Right-click application popups remain complete, independently of the viewport.
+  Only when the panel cannot fit even its widest workspace header plus both arrows does one `+N` workspace disclosure provide every workspace and app in a complete monochrome-icon popup.
   Terminals (including WezTerm and Herdr) share a generic terminal shape; ChatGPT uses the OpenAI logo.
   Other apps use the pinned app-name map with a neutral default logo. Missing map/font files degrade to a generic Hack Nerd Font window glyph, never raw ligature text or native app images.
 - System Settings, CPU/RAM percentages, battery icon and percentage, and coordinated date/time controls repeat on every bar.
@@ -41,12 +44,14 @@ No custom helpers are compiled.
   Workspace widths are bounded by the usable left area, with a safety gutter, fixed-size inline slots and explicit inter-group spacers.
   Left-side budgets are computed independently for each panel. Native panels too narrow for the bounded status controls are excluded rather than allowing overlap.
   Geometry validation failure excludes only the affected display; complete native-query failure hides all bars rather than assuming the current laptop's dimensions.
-- AeroSpace subscription events update membership and focus, with a five-second recovery reconciliation for missing close/move events.
-- A single serialized renderer reconciles the complete membership snapshot without collecting window titles.
+- Focus has a separate color-and-viewport lane: the native workspace-change callback works even before the watcher subscribes; subscription focus events apply immediately, without debounce, geometry, window inventory or the structural render lock. Both query current visible workspaces across all monitors, rather than trusting old event payloads. Validated hashed badge/bracket IDs scope the updates; badge background/border/icon and group background/border change in one batch, with drawing-only viewport updates when needed and no width, order or geometry writes. Successful structural applies save only those opaque topology IDs in the owner-private cache, removing the bar-inventory IPC query from steady-state selection. Reload invalidates that cache; missing/malformed topology falls back to live bar IDs, and successful structural removal/hotplug replaces it. A failed selection write invalidates it for rediscovery on the next notification.
+- One non-queuing structural renderer reconciles membership every five seconds and on structural events, without collecting window titles. Window-detected bursts use a 200ms quiet period (one-second cap); focus events never request a full inventory. A short shared apply lock covers current-selection queries and atomic writes only. Full renders override their old snapshot colors with current visibility under that same lock, preventing stale selection reverts. Duplicate native/front-app/subscription notifications elect one selection worker rather than queueing IPC passes. A counter-only notification file records changes during an in-flight query/write; the worker drains the latest generation and releases its election under the notification lock, avoiding a lost final wakeup. No app inventory, names, titles or raw selection snapshots are cached.
+  The same owner-private lock cache holds a validated viewport manifest containing only opaque item/hash IDs, fixed widths, native panel identity, browse offsets and the last visible header's opaque hash.
+  The hash detects actual selection changes without undoing manual scrolling on duplicate notifications; removed panels are discarded and replacement display identities reset their browse offsets.
 - Native `NSScreenNumber`/SketchyBar `DirectDisplayID` identity maps each panel to SketchyBar's arrangement ID.
   AeroSpace is mapped separately through its `monitor-appkit-nsscreen-screens-id` into the native `NSScreen.screens` order, then queried with its own monitor ID.
   Neither the two tools' display IDs nor names are assumed interchangeable. Workspace items, brackets and popups have display-local IDs and explicit display associations; shared applications or workspace names cannot duplicate groups across panels.
-- Display changes, wake and a 30-second reconciliation refresh that selection, including recovery after transient native-query failures. Display and workspace controllers use the same serialized renderer and one native inventory per pass, preventing interleaved panel selection/item assignment.
+- Display changes, wake and a 30-second reconciliation refresh display geometry, including recovery after transient native-query failures. Display and workspace controllers use the same non-queuing structural renderer and one native inventory per pass, preventing interleaved panel item assignment.
   Native auxiliary rectangles are validated before coordinate conversion; unavailable notch geometry excludes that panel rather than removing camera protection.
   Removed or rearranged displays have their stale items removed; remaining external panels stay available without a built-in screen. Missing/ambiguous AeroSpace mapping clears workspace content only on the affected panel.
 - AeroSpace reserves a 42-point top gap on external monitors: the 32-point bar plus 10 points of breathing room.
@@ -76,6 +81,8 @@ After dependencies are activated, editing the linked shell configuration only ne
 ```sh
 sketchybar --reload
 aerospace reload-config
+# The subscription process is independent of bar reloads: restart after code updates.
+launchctl kickstart -k "gui/$(id -u)/org.nix-community.home.sketchybar-aerospace"
 ```
 
 For the initial installation on this machine, only the Nix package, configuration link and evaluated Home Manager LaunchAgent were applied.
@@ -95,6 +102,9 @@ python3 tests/sketchybar-workspaces.py
 python3 tests/sketchybar-metrics.py
 python3 tests/sketchybar-live.py
 python3 tests/sketchybar-stability.py
+# Opt-in only: switches desktops temporarily, then restores all visible workspaces.
+python3 tests/sketchybar-latency.py --samples 6
+python3 tests/sketchybar-latency.py --samples 6 --burst 12
 python3.11 tests/aerospace-sketchybar.py
 python3.11 tests/aerospace-sketchybar.py --live
 nix build .#checks.aarch64-darwin.sketchybar-configuration
@@ -111,11 +121,12 @@ If AeroSpace is stopped, selection is cleared and workspace state is marked unav
 Design sources and sizing/event limitations are recorded in [workspace icon research](research/sketchybar-workspace-icons.md) and [thin rail research](research/sketchybar-thin-rail.md).
 The synthetic suites cover membership deduplication, moves/removals, ordering, overflow disclosure, monochrome logos, terminal/OpenAI overrides, missing-map/font fallback, stale-image migration, safe quoting, unavailable-state recovery, and subscription lifecycle. Multi-panel cases cover independent AeroSpace/AppKit/SketchyBar IDs, empty groups, per-panel visible selection/budgets, scoped popups/brackets, external-only operation, rearrangement and isolated geometry failure/recovery.
 After rollout, the read-only live check compares each monitor's assigned AeroSpace membership with rendered glyph items (font, value, color and disabled native images), verifies visible-workspace selection and exact display associations, and checks flush 32-point horizontal frames, notch exclusion and non-overlap (excluding intentional bracket backgrounds).
-The temporal stability probe repeats eight unchanged refreshes while sampling every monitor's workspace header positions (or its compact overflow), temporarily suspending and then restoring the controller's automatic updates.
+The temporal stability probe repeats eight unchanged refreshes while sampling every monitor's currently drawn workspace/icon strip (or its ultra-narrow overflow), preserving manual browse offsets while temporarily suspending and then restoring the controller's automatic updates.
 Do not run the updated live suites against the built-in-only configuration before rollout; the stability probe mutates controller updates and renders the new configuration. The read-only check will correctly reject the old single-panel configuration.
 Do not repeatedly send item `width` settings: SketchyBar 2.23 queues width animations even for `dynamic`.
 Fixed horizontal widths are assigned only at item creation. Explicit spacer items provide group gaps because constant-width items ignore background padding when advancing.
 Reload and subscription-disconnect checks also verify one owned watcher and successful reconnection.
+The opt-in latency probe measures command-to-all-highlight-properties convergence, targeting p95 ≤250ms; this is an acceptance target, not a verified timing claim. `--burst 12` alternates switches without highlight waits, then checks final convergence and every monitor's active/inactive badge/group colors for six seconds (including periodic reconciliation). A bounded readiness gate waits for membership and selection after reload before the first switch; timed samples never retry missing items or hide slow results. Odd/even burst lengths both time an actual final switch. Both probes restore the original visible workspaces and focused workspace even on failure. The flake lints the latency probe but never runs it automatically. Synthetic regressions cover the inventory-free focus lane, delayed callback payloads, rapid alternation, a paused stale full render, non-queuing structural passes and immediate subscription focus handling.
 These checks are separate from rendered visual acceptance.
 SketchyBar 2.23.0 serializes even vertical positions as `top`; the live test therefore checks actual item rectangles, not just the serialized position.
 

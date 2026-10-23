@@ -24,12 +24,14 @@ class Plugins(unittest.TestCase):
             **os.environ,
             "PATH": f"{self.directory}:/usr/bin:/bin",
             "CONFIG_DIR": str(CONFIG),
+            "HOME": str(self.directory),
             "CALLS": str(self.calls),
             "NAME": "",
             "SENDER": "",
             "INFO": "",
             "FOCUSED_WORKSPACE": "",
         }
+        (self.directory / "python3").symlink_to(os.sys.executable)
         fixture = self.directory / "fixture"
         fixture.write_text(
             f"#!{os.sys.executable}\n"

@@ -5,6 +5,8 @@ export CONFIG_DIR="${CONFIG_DIR:-$HOME/.config/sketchybar}"
 export PATH="/opt/homebrew/bin:$PATH"
 source "$CONFIG_DIR/colors.sh"
 PLUGIN_DIR="$CONFIG_DIR/plugins"
+# Cached hashed item topology belongs to this bar generation, never a prior reload.
+python3 "$PLUGIN_DIR/workspaces.py" invalidate
 
 # Flush native top strip. Floating-window level stays below the revealed menu.
 # Default items have no display association: status controls repeat on every bar.
@@ -30,13 +32,17 @@ sketchybar --add event aerospace_workspace_change \
   --set apple icon= icon.font="SF Pro:Bold:17.0" icon.color="$MAUVE" \
   icon.width=24 label.drawing=off click_script="/usr/bin/open -a 'System Settings'"
 
-# One serialized controller owns workspace headers, application images and popups.
-# Native events provide fast updates; reconciliation covers missing close/move events.
-sketchybar --add item workspace_controller left \
+# Separate event items keep native focus callbacks independent of a running full
+# reconciliation. Both lanes share only the short apply lock, not inventory work.
+sketchybar --add item workspace_selection left \
+  --set workspace_selection drawing=off updates=on \
+  script="python3 \"$PLUGIN_DIR/workspaces.py\" select" \
+  --subscribe workspace_selection aerospace_workspace_change front_app_switched \
+  --add item workspace_controller left \
   --set workspace_controller drawing=off updates=on update_freq=5 \
   script="python3 \"$PLUGIN_DIR/workspaces.py\" render" \
-  --subscribe workspace_controller aerospace_workspace_change aerospace_state_change \
-  space_windows_change front_app_switched display_change system_woke \
+  --subscribe workspace_controller aerospace_state_change \
+  space_windows_change display_change system_woke \
   --add item display_controller left \
   --set display_controller drawing=off updates=on update_freq=30 \
   script="/bin/bash \"$PLUGIN_DIR/display.sh\"" \

@@ -39,7 +39,6 @@ EVENTS = (
     "focused-workspace-changed",
     "focused-monitor-changed",
     "window-detected",
-    "binding-triggered",
 )
 
 
@@ -235,28 +234,7 @@ def header_width(workspace):
 
 
 def group_width(apps, count, workspace=""):
-    return (
-        header_width(workspace)
-        + GROUP_GAP
-        + count * APP_WIDTH
-        + (MORE_WIDTH if count < len(apps) else 0)
-    )
-
-
-def allocation(groups, budget, focused=""):
-    counts = {ws: 0 for ws in groups}
-    used = sum(group_width(apps, 0, ws) for ws, apps in groups.items())
-    # Fill the focused group first, then the remaining groups in stable order.
-    for ws in sorted(groups, key=lambda ws: ws != focused):
-        while counts[ws] < len(groups[ws]):
-            extra = group_width(groups[ws], counts[ws] + 1, ws) - group_width(
-                groups[ws], counts[ws], ws
-            )
-            if used + extra > budget:
-                break
-            counts[ws] += 1
-            used += extra
-    return counts
+    return header_width(workspace) + GROUP_GAP + count * APP_WIDTH
 
 
 def command(*args):
@@ -370,7 +348,7 @@ def icon_properties(bundle, name):
     ]
 
 
-def plan(groups, focused, existing, budget, display=None):
+def plan(groups, focused, existing, budget, display=None, viewports=None):
     # Constant widths are set at creation only, avoiding refresh animations.
     def hname(ws):
         return header(ws, display)
@@ -382,10 +360,28 @@ def plan(groups, focused, existing, budget, display=None):
         PREFIX + "overflow" + (".d" + str(display) if display is not None else "")
     )
     args, desired, order, icons = [], set(), ["apple"], {}
-    counts = allocation(groups, budget, focused)
+    counts = {ws: len(apps) for ws, apps in groups.items()}
     compact = (
         sum(group_width(apps, counts[ws], ws) for ws, apps in groups.items()) > budget
     )
+
+    scrolling = (
+        compact
+        and display is not None
+        and all(header_width(ws) <= budget - 2 * MORE_WIDTH for ws in groups)
+    )
+    viewport = {
+        "rows": [],
+        "budget": budget - 2 * MORE_WIDTH,
+        "start": 0,
+        "selected": "",
+    }
+    if scrolling:
+        if viewports is not None:
+            viewports[str(display)] = viewport
+
+    def scroll_script(action="scroll"):
+        return command(sys.executable, Path(__file__).resolve(), action, str(display))
 
     def add(name, position, props, width_override=None):
         desired.add(name)
@@ -410,6 +406,41 @@ def plan(groups, focused, existing, budget, display=None):
         args.extend(["--set", name, *props])
         if display is not None:
             args.append("display=" + str(display))
+        if scrolling and position == "left":
+            args.extend(
+                [
+                    "--set",
+                    name,
+                    "script=" + scroll_script(),
+                    "--subscribe",
+                    name,
+                    "mouse.scrolled",
+                ]
+            )
+
+    if scrolling:
+        for direction, glyph in (("prev", "‹"), ("next", "›")):
+            name = PREFIX + direction + ".d" + str(display)
+            add(
+                name,
+                "left",
+                [
+                    "drawing=on",
+                    "icon=" + glyph,
+                    "icon.color=" + TEXT,
+                    "icon.width=28",
+                    "icon.align=center",
+                    "label.drawing=off",
+                    "padding_left=0",
+                    "padding_right=0",
+                    "background.padding_left=0",
+                    "background.padding_right=0",
+                    "click_script=" + scroll_script(direction),
+                ],
+                MORE_WIDTH,
+            )
+            if direction == "prev":
+                order.append(name)
 
     for ws, apps in groups.items():
         start = len(order)
@@ -463,7 +494,7 @@ def plan(groups, focused, existing, budget, display=None):
             width_override=header_width(ws),
         )
         order.append(h)
-        for index, (bundle, name, window_id) in enumerate(apps):
+        for bundle, name, window_id in apps:
             row = [
                 "background.height=" + str(ROW_HEIGHT),
                 "background.color=" + CLEAR,
@@ -498,49 +529,20 @@ def plan(groups, focused, existing, budget, display=None):
                 ],
             )
             icons[popup_id] = app_icon(bundle, name)
-            if index < counts[ws]:
-                app_id = iname("app", ws, bundle)
-                add(
-                    app_id,
-                    "left",
-                    row
-                    + icon_properties(bundle, name)
-                    + [
-                        "drawing=" + ("off" if compact else "on"),
-                        "label.drawing=off",
-                        "click_script=" + focus,
-                    ],
-                )
-                icons[app_id] = app_icon(bundle, name)
-                order.append(app_id)
-        hidden = len(apps) - counts[ws]
-        if hidden:
-            disclosure = iname("more", ws)
+            app_id = iname("app", ws, bundle)
             add(
-                disclosure,
+                app_id,
                 "left",
-                [
+                row
+                + icon_properties(bundle, name)
+                + [
                     "drawing=" + ("off" if compact else "on"),
-                    "icon=+" + str(hidden),
-                    "icon.drawing=on",
-                    "icon.font=SF Pro:Bold:11.0",
-                    "icon.color=" + TEXT,
-                    "icon.width=28",
-                    "icon.align=center",
-                    "icon.padding_left=0",
-                    "icon.padding_right=0",
                     "label.drawing=off",
-                    "background.height=" + str(ROW_HEIGHT),
-                    "background.color=" + CLEAR,
-                    "background.drawing=on",
-                    "background.padding_left=0",
-                    "background.padding_right=0",
-                    "padding_left=0",
-                    "padding_right=0",
-                    "click_script=" + toggle,
+                    "click_script=" + focus,
                 ],
             )
-            order.append(disclosure)
+            icons[app_id] = app_icon(bundle, name)
+            order.append(app_id)
         # Bracket membership is captured at creation, not a live regex binding.
         # Rebuild only when inline membership changes; unchanged refreshes keep
         # the background window and every constant-width item untouched.
@@ -596,7 +598,16 @@ def plan(groups, focused, existing, budget, display=None):
             ],
         )
         order.append(gap)
-    if compact and budget >= MORE_WIDTH:
+        if scrolling:
+            for member in members:
+                width = header_width(ws) if member == h else APP_WIDTH
+                key = digest(ws)[:12] if member == h else digest(member)[:12]
+                viewport["rows"].append([key, width, [member, bracket]])
+            viewport["rows"].append([digest(gap)[:12], GROUP_GAP, [gap]])
+    if scrolling:
+        order.append(PREFIX + "next.d" + str(display))
+        args.extend(viewport_args({str(display): viewport}, {digest(focused)[:12]}))
+    if compact and not scrolling and budget >= MORE_WIDTH:
         # Unusually narrow panels / many workspace IDs: keep every workspace and
         # application reachable in one complete popup rather than cross the notch.
         add(
@@ -670,14 +681,23 @@ def plan(groups, focused, existing, budget, display=None):
     return args, icons
 
 
-def plan_all(states, existing):
+def plan_all(states, existing, viewports=None):
     """Merge independent panel plans into one atomic update and global ordering."""
     args, icons, order = [], {}, ["apple"]
     displays = {d["arrangement"] for d, _, _ in states}
     for display, groups, visible in states:
         local, app_icons = plan(
-            groups, visible, existing, inline_budget(display), display["arrangement"]
+            groups,
+            visible,
+            existing,
+            inline_budget(display),
+            display["arrangement"],
+            viewports,
         )
+        if viewports is not None and str(display["arrangement"]) in viewports:
+            viewports[str(display["arrangement"])]["screen"] = display.get(
+                "identity", display["screen"]
+            )
         split = local.index("--reorder")
         args.extend(local[:split])
         order.extend(name for name in local[split + 1 :] if owned(name))
@@ -748,59 +768,356 @@ def lock(name, wait=True):
             except BlockingIOError:
                 if time.monotonic() >= deadline:
                     raise TimeoutError("controller busy")
-                time.sleep(0.05)
-        yield
+                time.sleep(0.005)
+        yield fd
     finally:
         if fd is not None:
             os.close(fd)
         os.close(directory)
 
 
-def render():
-    with lock("render.lock"):
-        existing = set(query(["sketchybar", "--query", "bar"])["items"])
-        displays = []
-        try:
-            displays = geometry()
-            states = inventory(displays)
-        except (
-            OSError,
-            ValueError,
-            KeyError,
-            TypeError,
-            StopIteration,
-            subprocess.SubprocessError,
+def selection_item(name):
+    return (
+        re.fullmatch(r"wsc\.(space|group)\.([a-f0-9]{12})[a-f0-9]{12}\.d[0-9]+", name)
+        if isinstance(name, str)
+        else None
+    )
+
+
+def load_topology():
+    """Only validated hashed badge/bracket IDs; no apps, titles or selection."""
+    with lock("topology.lock") as fd:
+        data = os.read(fd, 65537)
+    if len(data) > 65536:
+        return None
+    try:
+        names = json.loads(data)
+    except (ValueError, UnicodeError):
+        return None
+    if not isinstance(names, list) or not all(selection_item(name) for name in names):
+        return None
+    return set(names)
+
+
+def save_topology(names):
+    # None invalidates the topology at reload; an empty list is a valid empty bar.
+    data = json.dumps(
+        sorted({name for name in names if selection_item(name)})
+        if names is not None
+        else None
+    ).encode()
+    with lock("topology.lock") as fd:
+        os.write(fd, data)
+        os.ftruncate(fd, len(data))
+
+
+def viewport_rows(panel):
+    """Contiguous header/icon slots; arrows are reserved outside this budget."""
+    rows, used = [], 0
+    for row in panel["rows"][panel["start"] :]:
+        if used + row[1] > panel["budget"]:
+            break
+        rows.append(row)
+        used += row[1]
+    return rows
+
+
+def viewport_args(panels, visible, step=None):
+    args = []
+    for display, panel in panels.items():
+        rows = panel["rows"]
+        selected = next((row[0] for row in rows if row[0] in visible), "")
+        # Duplicate focus notifications and periodic inventory must not undo browsing.
+        if selected != panel["selected"]:
+            panel["selected"] = selected
+            if selected and selected not in {row[0] for row in viewport_rows(panel)}:
+                panel["start"] = next(
+                    i for i, row in enumerate(rows) if row[0] == selected
+                )
+        last = len(rows) - 1
+        while last > 0 and all(
+            name.startswith(PREFIX + "gap.") for name in rows[last][2]
         ):
-            args = bar_properties(displays)
-            for name in sorted(existing):
-                if owned(name):
-                    args.extend(
-                        [
-                            "--set",
-                            name,
-                            *clear_images(),
-                            "drawing=off",
-                            "popup.drawing=off",
-                        ]
+            last -= 1
+        if step and step[0] == display:
+            target = max(0, min(last, panel["start"] + step[1]))
+            while 0 < target < last and all(
+                name.startswith(PREFIX + "gap.") for name in rows[target][2]
+            ):
+                target += step[1]
+            panel["start"] = target
+        shown = {row[0] for row in viewport_rows(panel)}
+        drawn = {name for key, _, names in rows if key in shown for name in names}
+        for name in sorted({name for _, _, names in rows for name in names}):
+            args.extend(
+                ["--set", name, "drawing=" + ("on" if name in drawn else "off")]
+            )
+            if name.startswith(PREFIX + "space.") and name not in drawn:
+                args.append("popup.drawing=off")
+        for direction, available in (
+            ("prev", panel["start"] > 0),
+            ("next", rows[last][0] not in shown),
+        ):
+            args.extend(
+                [
+                    "--set",
+                    PREFIX + direction + ".d" + display,
+                    "icon.color=" + (TEXT if available else MUTED),
+                ]
+            )
+    return args
+
+
+def load_viewports():
+    """Opaque IDs, widths and browse offsets only, in the existing private cache."""
+    with lock("viewport.lock") as fd:
+        data = os.read(fd, 262145)
+    if len(data) > 262144:
+        return {}
+    try:
+        panels = json.loads(data)
+        if not isinstance(panels, dict):
+            return {}
+        for display, panel in panels.items():
+            if not re.fullmatch(r"[1-9][0-9]*", display):
+                return {}
+            if set(panel) != {"rows", "budget", "start", "selected", "screen"}:
+                return {}
+            if any(type(panel[k]) is not int for k in ("budget", "start", "screen")):
+                return {}
+            rows = panel["rows"]
+            if (
+                not isinstance(rows, list)
+                or not rows
+                or not 0 <= panel["start"] < len(rows)
+            ):
+                return {}
+            if not 1 <= panel["budget"] <= 100000 or panel["screen"] < 1:
+                return {}
+            if not re.fullmatch(r"(?:[a-f0-9]{12})?", panel["selected"]):
+                return {}
+            for key, width, names in rows:
+                if (
+                    not re.fullmatch(r"[a-f0-9]{12}", key)
+                    or type(width) is not int
+                    or not 0 < width <= panel["budget"]
+                ):
+                    return {}
+                if not isinstance(names, list) or not names:
+                    return {}
+                if not all(
+                    isinstance(name, str)
+                    and re.fullmatch(
+                        r"wsc\.(?:space|group|app|gap)\.[a-f0-9]{24}\.d" + display, name
                     )
-                if name.startswith(PREFIX + "space.") or name in {
-                    "space." + str(i) for i in range(1, 8)
-                }:
-                    args.extend(
-                        [
-                            "--set",
-                            name,
-                            "background.color=" + CLEAR,
-                            "icon.color=" + MUTED,
-                            "popup.drawing=off",
-                            "drawing=off",
-                        ]
-                    )
-            if args:
-                run(["sketchybar", *args])
+                    for name in names
+                ):
+                    return {}
+        return panels
+    except (ValueError, TypeError, KeyError):
+        return {}
+
+
+def save_viewports(panels):
+    data = json.dumps(panels).encode()
+    with lock("viewport.lock") as fd:
+        os.write(fd, data)
+        os.ftruncate(fd, len(data))
+
+
+def scroll(display, action="scroll"):
+    if display is None:
+        return
+    # SketchyBar's positive wheel delta means up/left, toward earlier tabs.
+    delta = (
+        -float(os.environ.get("SCROLL_DELTA", "0"))
+        if action == "scroll"
+        else (1 if action == "next" else -1)
+    )
+    if not delta:
+        return
+    with lock("apply.lock"):
+        panels = load_viewports()
+        if str(display) not in panels:
             return
-        args, _ = plan_all(states, existing)
-        run(["sketchybar", *bar_properties(displays), *args])
+        # No AeroSpace command: browsing never changes workspace selection.
+        visible = {panel["selected"] for panel in panels.values()}
+        args = viewport_args(panels, visible, (str(display), 1 if delta > 0 else -1))
+        if args:
+            run(["sketchybar", *args])
+            save_viewports(panels)
+
+
+def invalidate():
+    with lock("apply.lock"):
+        save_topology(None)
+        save_viewports({})
+
+
+def selection_args(names, viewports=None):
+    """Resolve current visibility, never a delayed event/inventory focus snapshot.
+
+    AeroSpace workspace IDs are globally unique. Their hashes in the live bar's
+    display-local names let us update all visible monitors without native geometry
+    or an app inventory. Caller holds apply.lock across this query and the write.
+    """
+    visible = {
+        digest(row["workspace"])[:12]
+        for row in query(
+            [AEROSPACE, "list-workspaces", "--monitor", "all", "--visible", "--json"]
+        )
+    }
+    args = []
+    for name in sorted(names):
+        match = selection_item(name)
+        if not match:
+            continue
+        kind, workspace = match.groups()
+        active = workspace in visible
+        props = (
+            [
+                "icon.background.color=" + ("0x44eed49f" if active else "0x663d3d3d"),
+                "icon.background.border_color=" + (YELLOW if active else SURFACE),
+                "icon.color=" + (YELLOW if active else TEXT),
+            ]
+            if kind == "space"
+            else [
+                "background.color=" + (ACTIVE if active else INACTIVE),
+                "background.border_color=" + (YELLOW if active else SURFACE),
+            ]
+        )
+        args.extend(["--set", name, *props])
+    if viewports is None:
+        viewports = load_viewports()
+        args.extend(viewport_args(viewports, visible))
+        if viewports:
+            save_viewports(viewports)
+    else:
+        args.extend(viewport_args(viewports, visible))
+    return args
+
+
+def selection_generation(fd, bump=False):
+    """A notification counter only: never persist workspace/app state."""
+    os.lseek(fd, 0, os.SEEK_SET)
+    generation = int(os.read(fd, 64) or b"0")
+    if bump:
+        generation += 1
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, str(generation).encode())
+        os.ftruncate(fd, os.lseek(fd, 0, os.SEEK_CUR))
+    return generation
+
+
+def select():
+    # Many native/front-app/subscription callbacks can describe one switch.
+    # Elect one worker, not one queued current-state query per callback. The
+    # generation check and worker handoff share a tiny notification lock, so a
+    # notification arriving during an in-flight query/write cannot be dropped.
+    with contextlib.ExitStack() as worker:
+        with lock("selection-notify.lock") as fd:
+            generation = selection_generation(fd, bump=True)
+            try:
+                worker.enter_context(lock("selection-worker.lock", wait=False))
+            except TimeoutError:
+                return  # elected worker will observe our newer generation
+        while True:
+            # No render lock, debounce, geometry, inventory or event snapshots.
+            with lock("apply.lock"):
+                names = load_topology()
+                cached = names is not None
+                if not cached:
+                    names = query(["sketchybar", "--query", "bar"])["items"]
+                args = selection_args(names)
+                try:
+                    if args:
+                        run(["sketchybar", *args])
+                except subprocess.SubprocessError:
+                    save_topology(None)  # next notification rediscovers live IDs
+                    save_viewports({})
+                    raise
+                if not cached:
+                    save_topology(names)
+            with lock("selection-notify.lock") as fd:
+                latest = selection_generation(fd)
+                if latest == generation:
+                    # Release election while still excluding notifications: the
+                    # next caller either wakes us or becomes the next worker.
+                    worker.close()
+                    return
+                generation = latest
+
+
+def render():
+    # A running structural pass already reconciles everything; never queue copies.
+    try:
+        with lock("render.lock", wait=False):
+            reconcile()
+    except TimeoutError:
+        pass
+
+
+def reconcile():
+    existing = set(query(["sketchybar", "--query", "bar"])["items"])
+    displays = []
+    try:
+        displays = geometry()
+        states = inventory(displays)
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        StopIteration,
+        subprocess.SubprocessError,
+    ):
+        args = bar_properties(displays)
+        for name in sorted(existing):
+            if owned(name):
+                args.extend(
+                    [
+                        "--set",
+                        name,
+                        *clear_images(),
+                        "drawing=off",
+                        "popup.drawing=off",
+                    ]
+                )
+            if name.startswith(PREFIX + "space.") or name in {
+                "space." + str(i) for i in range(1, 8)
+            }:
+                args.extend(
+                    [
+                        "--set",
+                        name,
+                        "background.color=" + CLEAR,
+                        "icon.color=" + MUTED,
+                        "popup.drawing=off",
+                        "drawing=off",
+                    ]
+                )
+        if args:
+            with lock("apply.lock"):
+                run(["sketchybar", *args])
+                save_topology([])
+                save_viewports({})
+        return
+    viewports = {}
+    args, _ = plan_all(states, existing, viewports)
+    names = {args[i + 1] for i, arg in enumerate(args) if arg == "--set"}
+    # Inventory/geometry run outside this short lock. Override their stale
+    # colors in the same atomic batch, so a slow render cannot revert focus.
+    with lock("apply.lock"):
+        previous = load_viewports() if viewports else {}
+        for panel, viewport in viewports.items():
+            old = previous.get(panel, {})
+            if old.get("screen") == viewport.get("screen"):
+                viewport["start"] = min(old.get("start", 0), len(viewport["rows"]) - 1)
+                viewport["selected"] = old.get("selected", "")
+        selection = selection_args(names, viewports)
+        run(["sketchybar", *bar_properties(displays), *args, *selection])
+        save_topology(names)
+        save_viewports(viewports)
 
 
 def trigger():
@@ -835,12 +1152,37 @@ def watch():
                     selector.register(child.stdout, selectors.EVENT_READ)
                     last_trigger = time.monotonic()
                     dirty_at = None
+                    pending = b""
                     while not stopped and child.poll() is None:
-                        if selector.select(0.1):
+                        if selector.select(0.05):
                             data = os.read(child.stdout.fileno(), 65536)
                             if not data:
                                 break
-                            dirty_at = time.monotonic()
+                            pending += data
+                            lines = pending.split(b"\n")
+                            pending = lines.pop()
+                            # Event contents are invalidations, never selection
+                            # snapshots. Drain a burst in one current-state query.
+                            if lines:
+                                try:
+                                    select()
+                                except (
+                                    OSError,
+                                    ValueError,
+                                    KeyError,
+                                    TypeError,
+                                    subprocess.SubprocessError,
+                                    TimeoutError,
+                                ):
+                                    pass  # periodic reconciliation recovers
+                            for line in lines:
+                                with contextlib.suppress(ValueError, UnicodeError):
+                                    event = json.loads(line)
+                                    if (
+                                        isinstance(event, dict)
+                                        and event.get("_event") == "window-detected"
+                                    ):
+                                        dirty_at = time.monotonic()
                         now = time.monotonic()
                         if now - last_trigger >= 5 or (
                             dirty_at is not None
@@ -872,10 +1214,17 @@ def watch():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("render", "watch"))
+    parser.add_argument(
+        "action",
+        choices=("render", "watch", "select", "invalidate", "scroll", "prev", "next"),
+    )
+    parser.add_argument("display", nargs="?", type=int)
     args = parser.parse_args()
     try:
-        globals()[args.action]()
+        if args.action in {"scroll", "prev", "next"}:
+            scroll(args.display, args.action)
+        else:
+            globals()[args.action]()
     except (
         OSError,
         ValueError,

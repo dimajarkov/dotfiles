@@ -32,7 +32,11 @@ def normalize(value):
         and width - right >= 452
     ):
         raise ValueError("invalid display safe geometry")
+    identity = value.get("identity", value["screen"])
+    if type(identity) is not int or identity <= 0:
+        raise ValueError("invalid native display identity")
     return {
+        "identity": identity,
         "arrangement": value["arrangement"],
         "screen": value["screen"],
         "left": left,
@@ -67,7 +71,7 @@ function run(argv) {
       const f = s.frame;
       const top = s.respondsToSelector("safeAreaInsets") ? s.safeAreaInsets.top : 0;
       function area(a) { return [a.origin.x, a.size.width, a.size.height]; }
-      result.push({arrangement: d["arrangement-id"], screen: i + 1,
+      result.push({identity: id, arrangement: d["arrangement-id"], screen: i + 1,
         width: f.size.width, origin: f.origin.x, top: top,
         leftArea: top > 0 ? area(s.auxiliaryTopLeftArea) : null,
         rightArea: top > 0 ? area(s.auxiliaryTopRightArea) : null});
