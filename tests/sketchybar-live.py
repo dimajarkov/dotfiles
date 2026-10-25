@@ -55,8 +55,9 @@ def check():
         # The date/time bracket intentionally surrounds two item rectangles.
         if name == "datetime":
             continue
-        if name.startswith(
-            tuple(controller.PREFIX + k + "." for k in ("popup", "entry", "group"))
+        # Popup actions are not inline rectangles, regardless of their namespace.
+        if item["geometry"]["position"] == "popup" or name.startswith(
+            controller.PREFIX + "group."
         ):
             continue
         bounds = {

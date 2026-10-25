@@ -14,6 +14,9 @@ import subprocess
 import time
 
 TEXT = "0xffe8e6e1"
+GREEN = "0xffa6da95"
+AMBER = "0xffeed49f"
+RED = "0xffed8796"
 
 
 def run(args):
@@ -71,6 +74,18 @@ def percentage(value):
     return f"{value:.0f}%"
 
 
+def cpu_color(value):
+    # Match the displayed rounded percentage at the threshold boundaries.
+    displayed = int(percentage(value)[:-1])
+    return RED if displayed >= 90 else AMBER if displayed >= 70 else GREEN
+
+
+def memory_pressure_color(sample):
+    # XNU exports dispatch pressure flags here, not its internal 0-based enum.
+    # Unknown/unavailable telemetry stays neutral rather than claiming health.
+    return {"1": GREEN, "2": AMBER, "4": RED}.get(sample.strip(), TEXT)
+
+
 def battery_properties(sample):
     match = re.search(r"InternalBattery[^\n]*?\s(\d+)%;", sample)
     if not match:
@@ -104,10 +119,13 @@ def main(name):
         )
         return
     cpu = ram = "--"
+    cpu_tint = ram_tint = TEXT
     try:
         before = cpu_ticks()
         time.sleep(0.2)
-        cpu = percentage(cpu_percent(before, cpu_ticks()))
+        value = cpu_percent(before, cpu_ticks())
+        cpu = percentage(value)
+        cpu_tint = cpu_color(value)
     except (OSError, ValueError, AttributeError):
         pass
     try:
@@ -119,8 +137,25 @@ def main(name):
         )
     except (OSError, ValueError, subprocess.SubprocessError):
         pass
+    if ram != "--":
+        try:
+            ram_tint = memory_pressure_color(
+                run(["/usr/sbin/sysctl", "-n", "kern.memorystatus_vm_pressure_level"])
+            )
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
     subprocess.run(
-        ["sketchybar", "--set", "cpu", "label=" + cpu, "--set", "ram", "label=" + ram],
+        [
+            "sketchybar",
+            "--set",
+            "cpu",
+            "label=" + cpu,
+            "label.color=" + cpu_tint,
+            "--set",
+            "ram",
+            "label=" + ram,
+            "label.color=" + ram_tint,
+        ],
         timeout=3,
         check=True,
     )

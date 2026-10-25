@@ -6,6 +6,7 @@ import contextlib
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -15,10 +16,12 @@ import signal
 import stat
 import subprocess
 import time
+import unicodedata
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from display import bar_properties, geometry
+from workspace_labels import Store
 
 AEROSPACE = "/opt/homebrew/bin/aerospace"
 ROW_HEIGHT = 24
@@ -222,19 +225,30 @@ def workspace_badge(workspace):
     )
 
 
-def workspace_title(workspace):
+def workspace_title(workspace, aliases=None):
+    if aliases and workspace in aliases:
+        return aliases[workspace]
     return "" if workspace == workspace_badge(workspace) else workspace
 
 
-def header_width(workspace):
+def header_width(workspace, aliases=None):
     # Separate fixed-width shortcut badge and conservatively sized name label.
     badge = HEADER_WIDTH if workspace_badge(workspace) else 0
-    title = workspace_title(workspace)
-    return max(HEADER_WIDTH, badge + (len(title) * 8 + 12 if title else 0))
+    title = workspace_title(workspace, aliases)
+    if aliases and workspace in aliases:
+        # Friendly labels may contain wide Unicode glyphs. Reserve conservatively
+        # rather than allowing text to escape the fixed-width viewport slot.
+        cells = sum(
+            2 if unicodedata.east_asian_width(c) in {"W", "F"} else 1 for c in title
+        )
+        text_width = cells * 12
+    else:
+        text_width = len(title) * 8
+    return max(HEADER_WIDTH, badge + (text_width + 12 if title else 0))
 
 
-def group_width(apps, count, workspace=""):
-    return header_width(workspace) + GROUP_GAP + count * APP_WIDTH
+def group_width(apps, count, workspace="", aliases=None):
+    return header_width(workspace, aliases) + GROUP_GAP + count * APP_WIDTH
 
 
 def command(*args):
@@ -270,6 +284,21 @@ TERMINAL_BUNDLES = {
     "com.herdr",
     "app.herdr",
 }
+
+
+def menu_command(action, host=None):
+    args = [
+        sys.executable,
+        Path(__file__).resolve().with_name("workspace_menus.py"),
+        action,
+    ]
+    if host is not None:
+        args.append(host)
+    return command(*args)
+
+
+def dismiss_before(action):
+    return menu_command("close") + " && " + action
 
 
 def load_icon_map():
@@ -348,8 +377,17 @@ def icon_properties(bundle, name):
     ]
 
 
-def plan(groups, focused, existing, budget, display=None, viewports=None):
-    # Constant widths are set at creation only, avoiding refresh animations.
+def plan(
+    groups,
+    focused,
+    existing,
+    budget,
+    display=None,
+    viewports=None,
+    aliases=None,
+    widths=None,
+):
+    # Fixed widths are set at creation or once when a saved label changes size.
     def hname(ws):
         return header(ws, display)
 
@@ -360,15 +398,18 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
         PREFIX + "overflow" + (".d" + str(display) if display is not None else "")
     )
     args, desired, order, icons = [], set(), ["apple"], {}
+    popup_order = []
+    aliases = aliases or {}
     counts = {ws: len(apps) for ws, apps in groups.items()}
     compact = (
-        sum(group_width(apps, counts[ws], ws) for ws, apps in groups.items()) > budget
+        sum(group_width(apps, counts[ws], ws, aliases) for ws, apps in groups.items())
+        > budget
     )
 
     scrolling = (
         compact
         and display is not None
-        and all(header_width(ws) <= budget - 2 * MORE_WIDTH for ws in groups)
+        and all(header_width(ws, aliases) <= budget - 2 * MORE_WIDTH for ws in groups)
     )
     viewport = {
         "rows": [],
@@ -380,11 +421,16 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
         if viewports is not None:
             viewports[str(display)] = viewport
 
-    def scroll_script(action="scroll"):
-        return command(sys.executable, Path(__file__).resolve(), action, str(display))
+    def scroll_script(action="event"):
+        args = [sys.executable, Path(__file__).resolve(), action]
+        if display is not None:
+            args.append(str(display))
+        return command(*args)
 
     def add(name, position, props, width_override=None):
         desired.add(name)
+        if position.startswith("popup."):
+            popup_order.append(name)
         if name not in existing:
             args.extend(["--add", "item", name, position])
             if position == "left":
@@ -403,9 +449,29 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
                         + str(width if width_override is None else width_override),
                     ]
                 )
+        if (
+            width_override is not None
+            and (name.startswith(PREFIX + "space.") or name.startswith("space."))
+            and widths is not None
+        ):
+            if name in existing and widths.get(name) != width_override:
+                args.extend(["--set", name, "width=" + str(width_override)])
+            widths[name] = width_override
         args.extend(["--set", name, *props])
         if display is not None:
             args.append("display=" + str(display))
+        if name == overflow or name.startswith((PREFIX + "space.", "space.")):
+            args.extend(
+                [
+                    "--set",
+                    name,
+                    "script=" + scroll_script(),
+                    "--subscribe",
+                    name,
+                    "mouse.exited",
+                    "mouse.exited.global",
+                ]
+            )
         if scrolling and position == "left":
             args.extend(
                 [
@@ -416,6 +482,53 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
                     name,
                     "mouse.scrolled",
                 ]
+            )
+
+    def label_actions(ws, parent, fallback=False):
+        label = aliases.get(ws, ws)
+        for action, kind, text in (
+            (
+                "rename",
+                "renameentry" if fallback else "rename",
+                "Rename " + label + "…" if fallback else "Rename label…",
+            ),
+            (
+                "reset",
+                "resetentry" if fallback else "reset",
+                "Reset " + label if fallback else "Reset label",
+            ),
+        ):
+            if action == "reset" and ws not in aliases:
+                continue
+            add(
+                iname(kind, ws),
+                "popup." + parent,
+                [
+                    "drawing=on",
+                    "icon.drawing=off",
+                    "label.drawing=on",
+                    "label=" + text,
+                    "label.font=SF Pro:Regular:12.0",
+                    "label.color=" + MUTED,
+                    "label.padding_left=8",
+                    "label.padding_right=8",
+                    "background.drawing=on",
+                    "background.color=" + INACTIVE,
+                    "background.padding_left=0",
+                    "background.padding_right=0",
+                    "background.corner_radius=0",
+                    "background.height=" + str(ROW_HEIGHT),
+                    "click_script="
+                    + dismiss_before(
+                        command(
+                            sys.executable,
+                            Path(__file__).resolve().with_name("workspace_labels.py"),
+                            action,
+                            ws,
+                            workspace_badge(ws),
+                        )
+                    ),
+                ],
             )
 
     if scrolling:
@@ -445,12 +558,12 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
     for ws, apps in groups.items():
         start = len(order)
         h = hname(ws)
-        toggle = command("sketchybar", "--set", h, "popup.drawing=toggle")
+        toggle = menu_command("toggle", h)
         click = (
             'if [ "$BUTTON" = right ]; then '
             + toggle
             + "; else "
-            + command(AEROSPACE, "workspace", ws)
+            + dismiss_before(command(AEROSPACE, "workspace", ws))
             + "; fi"
         )
         add(
@@ -473,8 +586,8 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
                 "icon.background.border_width=1",
                 "icon.background.border_color="
                 + (YELLOW if ws == focused else SURFACE),
-                "label=" + workspace_title(ws),
-                "label.drawing=" + ("on" if workspace_title(ws) else "off"),
+                "label=" + workspace_title(ws, aliases),
+                "label.drawing=" + ("on" if workspace_title(ws, aliases) else "off"),
                 "label.font=SF Pro:Semibold:11.0",
                 "label.color=" + TEXT,
                 "label.padding_left=6",
@@ -488,10 +601,11 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
                 "background.color=" + CLEAR,
                 "icon.color=" + (YELLOW if ws == focused else TEXT),
                 "popup.align=left",
+                "popup.horizontal=off",
                 "popup.height=" + str(ROW_HEIGHT),
                 "click_script=" + click,
             ],
-            width_override=header_width(ws),
+            width_override=header_width(ws, aliases),
         )
         order.append(h)
         for bundle, name, window_id in apps:
@@ -508,7 +622,9 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
                 "icon.padding_right=0",
                 "drawing=on",
             ]
-            focus = command(AEROSPACE, "focus", "--window-id", window_id)
+            focus = dismiss_before(
+                command(AEROSPACE, "focus", "--window-id", window_id)
+            )
             popup_id = iname("popup", ws, bundle)
             add(
                 popup_id,
@@ -522,10 +638,7 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
                     "label=" + name,
                     "label.color=" + TEXT,
                     "label.font=SF Pro:Regular:12.0",
-                    "click_script="
-                    + focus
-                    + "; "
-                    + command("sketchybar", "--set", h, "popup.drawing=off"),
+                    "click_script=" + focus,
                 ],
             )
             icons[popup_id] = app_icon(bundle, name)
@@ -543,6 +656,7 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
             )
             icons[app_id] = app_icon(bundle, name)
             order.append(app_id)
+        label_actions(ws, h)
         # Bracket membership is captured at creation, not a live regex binding.
         # Rebuild only when inline membership changes; unchanged refreshes keep
         # the background window and every constant-width item untouched.
@@ -600,7 +714,7 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
         order.append(gap)
         if scrolling:
             for member in members:
-                width = header_width(ws) if member == h else APP_WIDTH
+                width = header_width(ws, aliases) if member == h else APP_WIDTH
                 key = digest(ws)[:12] if member == h else digest(member)[:12]
                 viewport["rows"].append([key, width, [member, bracket]])
             viewport["rows"].append([digest(gap)[:12], GROUP_GAP, [gap]])
@@ -619,8 +733,8 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
                 "icon.width=28",
                 "label.drawing=off",
                 "popup.align=left",
-                "click_script="
-                + command("sketchybar", "--set", overflow, "popup.drawing=toggle"),
+                "popup.horizontal=off",
+                "click_script=" + menu_command("toggle", overflow),
             ],
         )
         order.append(overflow)
@@ -634,11 +748,9 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
                     "icon.drawing=on",
                     "label.drawing=on",
                     "icon=" + WORKSPACE_SHORTCUTS.get(ws, ws),
-                    "label=Workspace " + ws,
+                    "label=Workspace " + aliases.get(ws, ws),
                     "click_script="
-                    + command(AEROSPACE, "workspace", ws)
-                    + "; "
-                    + command("sketchybar", "--set", overflow, "popup.drawing=off"),
+                    + dismiss_before(command(AEROSPACE, "workspace", ws)),
                 ],
             )
             for bundle, name, window_id in apps:
@@ -649,21 +761,20 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
                     icon_properties(bundle, name)
                     + [
                         "drawing=on",
-                        "label=" + ws + " · " + name,
+                        "label=" + aliases.get(ws, ws) + " · " + name,
                         "label.drawing=on",
                         "click_script="
-                        + command(AEROSPACE, "focus", "--window-id", window_id)
-                        + "; "
-                        + command("sketchybar", "--set", overflow, "popup.drawing=off"),
+                        + dismiss_before(
+                            command(AEROSPACE, "focus", "--window-id", window_id)
+                        ),
                     ],
                 )
                 icons[entry] = app_icon(bundle, name)
+            label_actions(ws, overflow, fallback=True)
     for name in sorted(existing - desired):
         if owned(name) and (display is None or name.endswith(".d" + str(display))):
             args.extend(["--remove", name])
-    order.extend(
-        iname("popup", ws, app[0]) for ws, apps in groups.items() for app in apps
-    )
+    order.extend(popup_order)
     order.extend(
         name
         for name in (
@@ -681,7 +792,7 @@ def plan(groups, focused, existing, budget, display=None, viewports=None):
     return args, icons
 
 
-def plan_all(states, existing, viewports=None):
+def plan_all(states, existing, viewports=None, aliases=None, widths=None):
     """Merge independent panel plans into one atomic update and global ordering."""
     args, icons, order = [], {}, ["apple"]
     displays = {d["arrangement"] for d, _, _ in states}
@@ -693,6 +804,8 @@ def plan_all(states, existing, viewports=None):
             inline_budget(display),
             display["arrangement"],
             viewports,
+            aliases,
+            widths,
         )
         if viewports is not None and str(display["arrangement"]) in viewports:
             viewports[str(display["arrangement"])]["screen"] = display.get(
@@ -749,9 +862,17 @@ def lock(name, wait=True):
         info = os.fstat(directory)
         if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             raise PermissionError("controller cache must be owner-private")
-        fd = os.open(
-            name, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=directory
-        )
+        # Concurrent first-use O_CREAT|O_NOFOLLOW returned ENOENT on macOS.
+        # Elect one creator explicitly, then open the already-published inode.
+        try:
+            fd = os.open(
+                name,
+                os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=directory,
+            )
+        except FileExistsError:
+            fd = os.open(name, os.O_RDWR | os.O_NOFOLLOW, dir_fd=directory)
         info = os.fstat(fd)
         if (
             info.st_uid != os.getuid()
@@ -928,12 +1049,17 @@ def save_viewports(panels):
 def scroll(display, action="scroll"):
     if display is None:
         return
-    # SketchyBar's positive wheel delta means up/left, toward earlier tabs.
-    delta = (
-        -float(os.environ.get("SCROLL_DELTA", "0"))
-        if action == "scroll"
-        else (1 if action == "next" else -1)
-    )
+    # Our Nix-owned native handler emits horizontal steps separately, preserving
+    # SCROLL_DELTA for vertical controls. Positive means up/left (earlier tabs).
+    # Choose one dominant axis defensively, never double-step on diagonal input.
+    if action == "scroll":
+        x = float(os.environ.get("SCROLL_DELTA_X", "0"))
+        y = float(os.environ.get("SCROLL_DELTA", "0"))
+        if not all(map(math.isfinite, (x, y))):
+            return
+        delta = -(x if abs(x) > abs(y) else y)
+    else:
+        delta = 1 if action == "next" else -1
     if not delta:
         return
     with lock("apply.lock"):
@@ -948,7 +1074,48 @@ def scroll(display, action="scroll"):
             save_viewports(panels)
 
 
+def event(display=None, menu_controller=None):
+    sender = os.environ.get("SENDER", "")
+    if sender == "mouse.scrolled":
+        scroll(display)
+    elif sender in {"mouse.exited", "mouse.exited.global"}:
+        if menu_controller is None:
+            from workspace_menus import Menus
+
+            menu_controller = Menus()
+        menu_controller.exit(os.environ.get("NAME", ""))
+
+
+def load_widths():
+    """Only opaque header IDs and last applied fixed widths, never label text."""
+    with lock("widths.lock") as fd:
+        data = os.read(fd, 65537)
+    try:
+        widths = json.loads(data)
+        if len(data) > 65536 or not isinstance(widths, dict):
+            return {}
+        if not all(
+            selection_item(name)
+            and name.startswith(PREFIX + "space.")
+            and type(width) is int
+            and 1 <= width <= 4096
+            for name, width in widths.items()
+        ):
+            return {}
+        return widths
+    except (ValueError, UnicodeError):
+        return {}
+
+
+def save_widths(widths):
+    with lock("widths.lock") as fd:
+        data = json.dumps(widths).encode()
+        os.write(fd, data)
+        os.ftruncate(fd, len(data))
+
+
 def invalidate():
+    save_widths({})
     with lock("apply.lock"):
         save_topology(None)
         save_viewports({})
@@ -1102,8 +1269,28 @@ def reconcile():
                 save_topology([])
                 save_viewports({})
         return
+    try:
+        aliases = Store().read()["labels"]
+    except (OSError, ValueError):
+        aliases = {}  # Preserve unreadable state; edit actions show a value-safe error.
+    widths = load_widths()
+    headers = {
+        header(ws, display["arrangement"])
+        for display, groups, _ in states
+        for ws in groups
+    }
+    widths = {
+        name: width
+        for name, width in widths.items()
+        if name in headers and name in existing
+    }
+    for name in sorted(headers & existing - widths.keys()):
+        width = query(["sketchybar", "--query", name])["geometry"]["width"]
+        if type(width) is not int or not 1 <= width <= 4096:
+            raise ValueError("unavailable header geometry")
+        widths[name] = width
     viewports = {}
-    args, _ = plan_all(states, existing, viewports)
+    args, _ = plan_all(states, existing, viewports, aliases, widths)
     names = {args[i + 1] for i, arg in enumerate(args) if arg == "--set"}
     # Inventory/geometry run outside this short lock. Override their stale
     # colors in the same atomic batch, so a slow render cannot revert focus.
@@ -1118,6 +1305,7 @@ def reconcile():
         run(["sketchybar", *bar_properties(displays), *args, *selection])
         save_topology(names)
         save_viewports(viewports)
+        save_widths(widths)
 
 
 def trigger():
@@ -1216,12 +1404,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "action",
-        choices=("render", "watch", "select", "invalidate", "scroll", "prev", "next"),
+        choices=(
+            "render",
+            "watch",
+            "select",
+            "invalidate",
+            "scroll",
+            "prev",
+            "next",
+            "event",
+        ),
     )
     parser.add_argument("display", nargs="?", type=int)
     args = parser.parse_args()
     try:
-        if args.action in {"scroll", "prev", "next"}:
+        if args.action == "event":
+            event(args.display)
+        elif args.action in {"scroll", "prev", "next"}:
             scroll(args.display, args.action)
         else:
             globals()[args.action]()

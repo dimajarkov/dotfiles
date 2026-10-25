@@ -102,6 +102,7 @@
           ${pkgs.python3}/bin/python3 ${./nix/tests/treehouse-owned-installation.py}
           touch "$out"
         '';
+        sketchybar-trackpad = pkgs.callPackage ./nix/packages/sketchybar.nix {};
         sketchybar-configuration = pkgs.runCommand "sketchybar-configuration-check" {
           nativeBuildInputs = [ pkgs.python3 pkgs.ruff ];
         } ''
@@ -112,9 +113,12 @@
           cp -R ${./home/.config/sketchybar} home/.config/sketchybar
           cp ${./tests/sketchybar.py} tests/sketchybar.py
           cp ${./tests/sketchybar-metrics.py} tests/sketchybar-metrics.py
+          cp ${./tests/sketchybar-scroll-native.py} tests/sketchybar-scroll-native.py
           cp ${./tests/aerospace-sketchybar.py} tests/aerospace-sketchybar.py
           cp ${./home/.aerospace.toml} home/.aerospace.toml
           cp ${./tests/sketchybar-workspaces.py} tests/sketchybar-workspaces.py
+          cp ${./tests/sketchybar-labels.py} tests/sketchybar-labels.py
+          cp ${./tests/sketchybar-menus.py} tests/sketchybar-menus.py
           cp ${./tests/sketchybar-stability.py} tests/sketchybar-stability.py
           # Lint only: the opt-in latency probe deliberately switches desktops.
           cp ${./tests/sketchybar-latency.py} tests/sketchybar-latency.py
@@ -123,6 +127,8 @@
           python3 tests/sketchybar-metrics.py
           python3 tests/aerospace-sketchybar.py
           python3 tests/sketchybar-workspaces.py
+          python3 tests/sketchybar-labels.py
+          python3 tests/sketchybar-menus.py
           ruff check home/.config/sketchybar/plugins/*.py tests/sketchybar*.py tests/aerospace-sketchybar.py
           ruff format --check home/.config/sketchybar/plugins/*.py tests/sketchybar*.py tests/aerospace-sketchybar.py
           touch "$out"

@@ -2,6 +2,7 @@
 
 SketchyBar is owned by Nix through `programs.sketchybar` in `home.nix`, including its user LaunchAgent.
 Do not install a second copy with Homebrew.
+The package override in `nix/packages/sketchybar.nix` applies the repository's scoped trackpad patch to the pinned SketchyBar source.
 The writable configuration lives in `home/.config/sketchybar`, linked at `~/.config/sketchybar`.
 
 ## Appearance and interaction
@@ -23,9 +24,22 @@ No custom helpers are compiled.
 - Each screen shows only its own assigned AeroSpace workspaces, including empty workspaces.
   Multiple windows of an application produce one icon per workspace, while an application present in several workspaces appears in each relevant group.
 - Workspace numbers activate that workspace; application icons focus one of its windows.
-  Right-click a workspace for its complete application-name/icon popup.
+  Right-click a workspace for its complete application-name/icon popup, followed by `Rename label…` and, when customized, `Reset label` actions.
+  These actions also exist for empty workspaces and in the narrow-panel `+N` fallback.
+  Workspace menus are mutually exclusive across all displays and fallback locations.
+  Moving from a workspace header into its dropdown keeps it open; leaving their combined region dismisses it.
+  App, workspace, Rename and Reset selections close all workspace menus before starting their action, without affecting unrelated popups.
+  The native text dialog edits only the displayed label, not the AeroSpace workspace ID: shortcut badges, ordering, app routing, monitor assignments and click targets stay canonical.
+  Labels support spaces and Unicode, are trimmed and normalized, and must contain 1-40 characters without control/formatting characters or ambiguous duplicate workspace labels/names.
+  Save persists the label; Cancel, Escape, Command-Period and dialog timeout leave it unchanged.
+  Reset restores the original workspace name, or the original badge-only appearance for numeric workspaces.
   Every application's real monochrome glyph stays in the inline strip; application icons are never replaced by `+N` counters.
-  When the combined workspace-and-application strip exceeds a panel's safe width, left/right arrows and wheel scrolling over its items browse a display-local horizontal viewport without selecting another workspace.
+  When the combined workspace-and-application strip exceeds a panel's safe width, left/right arrows, mouse-wheel scrolling, and horizontal or vertical two-finger trackpad scrolling over its items browse a display-local horizontal viewport without selecting another workspace.
+  Trackpad handling is native and limited to subscribed workspace-strip items: fractional line deltas accumulate, the dominant axis produces one browse step per display per 150ms at most, and inertial momentum is ignored.
+  Fractional input and throttling follow the display viewport across hovered item boundaries, using each item's explicit native display association; separate displays retain independent state.
+  New gestures reset fractional input without clearing that display's throttle deadline.
+  Positive horizontal deltas browse toward earlier tabs, matching positive vertical/up deltas; the OS natural-scrolling setting controls gesture direction.
+  Other bar controls and global scroll events retain upstream vertical behavior; no global event listener or additional app is installed.
   Individual header/icon slots scroll, so even one workspace containing more apps than the viewport remains fully reachable.
   A real workspace selection change brings that workspace's header back into view; duplicate focus notifications and periodic refreshes preserve manual browsing.
   Right-click application popups remain complete, independently of the viewport.
@@ -35,8 +49,15 @@ No custom helpers are compiled.
 - System Settings, CPU/RAM percentages, battery icon and percentage, and coordinated date/time controls repeat on every bar.
   Audio controls are omitted.
   Status controls have fixed widths to bound the right-side footprint and retain the Calendar actions.
+  Both CPU and RAM percentages show usage, not availability.
   CPU is aggregate whole-machine busy percentage sampled every 15 seconds, not summed per-process CPU.
+  Its number is green below 70%, amber from 70% to 89%, and red at 90% or above, matching the displayed rounded percentage.
+  These are capacity-headroom indicators, not temperature or hardware-danger warnings; a brief busy sample is normal during intensive work.
   RAM is active, wired and physical compressor pages as a percentage of physical memory; it is not an exact Activity Monitor total.
+  Its number uses macOS memory pressure rather than arbitrary usage thresholds: green for normal, amber for warning, red for critical.
+  Pressure comes from the read-only `kern.memorystatus_vm_pressure_level` sysctl, whose [XNU handler](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_memorystatus_notify.c) returns dispatch pressure flags (1, 2 and 4), not the internal pressure enum.
+  A high RAM percentage alone does not mean memory is unhealthy, because macOS can reclaim caches and compress memory.
+  Missing or unrecognized pressure leaves a valid RAM reading neutral; unavailable usage shows neutral `--`, clearing any previous warning color.
   Logical compressed pages are not counted again, and inactive/cache pages are not added to this measure.
   Unavailable telemetry shows `--` rather than a misleading zero.
   Charging adds a bolt alongside the battery icon; date/time show weekday, day, month and a 24-hour clock.
@@ -63,6 +84,25 @@ No custom helpers are compiled.
   Do not change this to `topmost=on` (status-window level), or `off` (which moves a top bar below a visible menu).
 - AeroSpace retains its existing `start-at-login = false` setting.
   SketchyBar starts independently at login and recovers its highlights when AeroSpace becomes available.
+
+Workspace popup hosts subscribe to both native `mouse.exited` and `mouse.exited.global` events through the same item dispatcher as `mouse.scrolled`, preserving horizontal and vertical scrolling.
+Opening, closing and exit hit tests share the short apply lock; an open operation closes the other owned hosts and opens its target in one native batch.
+Exit events are invalidations rather than trustworthy pointer snapshots: fresh CG cursor position and native host/dropdown rectangles prevent delayed global notifications from closing the current menu while it is under the pointer.
+Child geometry is read in one batched query and never cached or logged.
+The installed-version [event routing](https://github.com/FelixKratz/SketchyBar/blob/031cdff653ff80b7d253e1de659088de827d68d1/src/event.c#L163-L231) suppresses host exits into its own popup when global exits are subscribed, and routes popup-to-another-bar-item exits back to the host.
+The vertical dropdown hit region follows the corresponding [native popup bounds calculation](https://github.com/FelixKratz/SketchyBar/blob/031cdff653ff80b7d253e1de659088de827d68d1/src/popup.c#L111-L232), including its border and empty space beside shorter rows.
+Actual pointer crossing, native popup dismissal latency and selection focus behavior still require approved Computer Use or human acceptance after rollout.
+
+## Workspace label state
+
+Workspace labels live in `~/.local/state/sketchybar/workspace-labels/workspace-labels.json`, outside the repository and disposable controller caches.
+The versioned owner-private state uses a 0700 directory, 0600 files, atomic replacement, locking and stale-edit detection.
+Symlinks and unsafe permissions are rejected rather than followed or silently repaired.
+Labels survive bar reloads, watcher restarts, AeroSpace reloads/restarts and login without changing AeroSpace's deliberate manual-start policy.
+Unreadable or corrupt state is preserved and falls back to canonical labels; an edit attempt shows a generic actionable error rather than logging private labels.
+The separate naming helper holds no renderer/apply lock while waiting for input, admits one naming operation at a time and requests structural reconciliation only after a successful change.
+No AeroSpace rename, move or workspace-switch command is used by the naming helper.
+Native dialog placement, focus return, right-click hit testing and rendered long-label appearance still require approved Computer Use or human acceptance after rollout.
 
 ## Apply and reload
 
@@ -99,6 +139,8 @@ sketchybar --query bar
 launchctl print "gui/$(id -u)/org.nix-community.home.sketchybar"
 python3 tests/sketchybar.py
 python3 tests/sketchybar-workspaces.py
+python3 tests/sketchybar-labels.py
+python3 tests/sketchybar-menus.py
 python3 tests/sketchybar-metrics.py
 python3 tests/sketchybar-live.py
 python3 tests/sketchybar-stability.py
@@ -108,7 +150,17 @@ python3 tests/sketchybar-latency.py --samples 6 --burst 12
 python3.11 tests/aerospace-sketchybar.py
 python3.11 tests/aerospace-sketchybar.py --live
 nix build .#checks.aarch64-darwin.sketchybar-configuration
+# Builds the patched native binary and runs the deterministic native-event harness.
+nix build .#checks.aarch64-darwin.sketchybar-trackpad
 ```
+
+The native trackpad regression extracts and compiles the actual patched `event_mouse_scrolled` and item-environment code with deterministic CoreGraphics/bar stubs.
+It covers horizontal gestures in both directions, fractional accumulation across hovered-item boundaries, zero input, dominant-axis diagonal handling, per-display throttling and isolation, gesture resets, ignored momentum, vertical fallback, and unchanged non-workspace controls.
+The unpatched pinned source fails its horizontal-only case because upstream reads only vertical Axis1.
+Horizontal workspace dispatches set `SCROLL_DELTA_X` to a signed browse step and `SCROLL_DELTA=0`; vertical dispatches retain `SCROLL_DELTA` and set `SCROLL_DELTA_X=0`.
+The Python controller accepts either axis and never asks AeroSpace to switch desktops while scrolling.
+This harness proves native event routing and environment transport, not physical gesture delivery or rendered hit-testing; those still require native rollout QA.
+Changing the native patch requires rebuilding and restarting the Nix-owned SketchyBar service, not merely a configuration reload.
 
 Service logs are under `~/Library/Logs/sketchybar/`.
 The additional `org.nix-community.home.sketchybar-aerospace` LaunchAgent owns one reconnecting AeroSpace event subscription, independently of bar reloads.
@@ -124,7 +176,8 @@ After rollout, the read-only live check compares each monitor's assigned AeroSpa
 The temporal stability probe repeats eight unchanged refreshes while sampling every monitor's currently drawn workspace/icon strip (or its ultra-narrow overflow), preserving manual browse offsets while temporarily suspending and then restoring the controller's automatic updates.
 Do not run the updated live suites against the built-in-only configuration before rollout; the stability probe mutates controller updates and renders the new configuration. The read-only check will correctly reject the old single-panel configuration.
 Do not repeatedly send item `width` settings: SketchyBar 2.23 queues width animations even for `dynamic`.
-Fixed horizontal widths are assigned only at item creation. Explicit spacer items provide group gaps because constant-width items ignore background padding when advancing.
+Fixed horizontal widths are assigned at item creation and once when a saved workspace label changes the affected header's width.
+The private width cache stores only opaque header IDs and numeric widths; missing entries are recovered from live item geometry before deciding whether a write is necessary. Explicit spacer items provide group gaps because constant-width items ignore background padding when advancing.
 Reload and subscription-disconnect checks also verify one owned watcher and successful reconnection.
 The opt-in latency probe measures command-to-all-highlight-properties convergence, targeting p95 ≤250ms; this is an acceptance target, not a verified timing claim. `--burst 12` alternates switches without highlight waits, then checks final convergence and every monitor's active/inactive badge/group colors for six seconds (including periodic reconciliation). A bounded readiness gate waits for membership and selection after reload before the first switch; timed samples never retry missing items or hide slow results. Odd/even burst lengths both time an actual final switch. Both probes restore the original visible workspaces and focused workspace even on failure. The flake lints the latency probe but never runs it automatically. Synthetic regressions cover the inventory-free focus lane, delayed callback payloads, rapid alternation, a paused stale full render, non-queuing structural passes and immediate subscription focus handling.
 These checks are separate from rendered visual acceptance.

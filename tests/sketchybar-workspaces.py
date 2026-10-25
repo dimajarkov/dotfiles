@@ -68,6 +68,14 @@ class ViewportTests(unittest.TestCase):
             patch.object(w, "run") as run,
         ):
             w.save_viewports(manifest)
+            w.save_widths(
+                {
+                    name: int(prop.split("=", 1)[1])
+                    for name, props in sets(initial).items()
+                    for prop in props
+                    if prop.startswith("width=") and w.selection_item(name)
+                }
+            )
             self.assertEqual(w.load_viewports(), manifest)
             raw = (
                 Path(temp) / ".cache/sketchybar-workspaces/viewport.lock"
@@ -158,6 +166,54 @@ class ViewportTests(unittest.TestCase):
                 os.write(fd, b'{"1": {"rows": ["unsafe"]}}')
                 os.ftruncate(fd, os.lseek(fd, 0, os.SEEK_CUR))
             self.assertEqual(w.load_viewports(), {})
+
+    def test_trackpad_horizontal_and_diagonal_browse_only(self):
+        manifest = {}
+        args, icons = w.plan(
+            {str(i): [("bundle", "App", i)] for i in range(1, 8)},
+            "1",
+            set(),
+            160,
+            1,
+            manifest,
+        )
+        manifest["1"]["screen"] = 1234
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(w.Path, "home", return_value=Path(temp)),
+            patch.object(w, "query", side_effect=AssertionError("query")),
+            patch.object(w, "inventory", side_effect=AssertionError("inventory")),
+            patch.object(w, "geometry", side_effect=AssertionError("geometry")),
+            patch.object(w, "run") as run,
+        ):
+            w.save_viewports(manifest)
+            for x, y, expected in (
+                (-1, 0, 1),
+                (1, 0, 0),
+                (-2, 1, 1),
+                (0, 0, 1),
+                (0, -1, 3),
+                ("nan", 0, 3),
+            ):
+                with patch.dict(
+                    os.environ, {"SCROLL_DELTA_X": str(x), "SCROLL_DELTA": str(y)}
+                ):
+                    w.scroll(1)
+                self.assertEqual(w.load_viewports()["1"]["start"], expected)
+            self.assertTrue(
+                all(call.args[0][0] == "sketchybar" for call in run.call_args_list)
+            )
+            self.assertFalse(
+                any(
+                    arg.startswith(("width=", "icon=", "icon.width="))
+                    for call in run.call_args_list
+                    for arg in call.args[0]
+                )
+            )
+            self.assertEqual(
+                len(icons), 14
+            )  # all seven inline icons and complete popups
+            self.assertNotIn("wsc.overflow.d1", sets(args))
 
     def test_private_manifest_and_inventory_free_scroll_and_focus(self):
         groups = {
@@ -461,8 +517,11 @@ class NativeGeometryTests(unittest.TestCase):
             patch.object(w, "geometry", side_effect=[ValueError(), [DISPLAY]]),
             patch.object(w, "save_topology"),
             patch.object(w, "save_viewports"),
+            patch.object(w, "load_widths", return_value={}),
+            patch.object(w, "save_widths"),
             patch.object(w, "lock", return_value=contextlib.nullcontext()),
             patch.object(w, "query", return_value={"items": ["apple"]}),
+            patch.object(w, "load_widths", return_value={}),
             patch.object(w, "selection_args", return_value=[]),
             patch.object(w, "inventory", return_value=[(DISPLAY, {}, "")]),
             patch.object(w, "run") as run,
@@ -724,6 +783,8 @@ class SelectionTests(unittest.TestCase):
                 "query",
                 side_effect=lambda args: (
                     {"items": list(self.names())}
+                    if args[-1] == "bar"
+                    else {"geometry": {"width": 28}}
                     if args[0] == "sketchybar"
                     else [{"workspace": "1"}, {"workspace": "jobs"}]
                 ),
@@ -843,7 +904,11 @@ class SelectionTests(unittest.TestCase):
 
         def query(args):
             if args[0] == "sketchybar":
-                return {"items": list(names)}
+                return (
+                    {"items": list(names)}
+                    if args[-1] == "bar"
+                    else {"geometry": {"width": 28}}
+                )
             return [{"workspace": "browse"}, {"workspace": "jobs"}]
 
         with (
@@ -1221,7 +1286,9 @@ class MembershipTests(unittest.TestCase):
         self.assertIn("icon.color=" + w.TEXT, props[entry])
         self.assertIn("icon.background.image.drawing=off", props[entry])
         self.assertIn(entry, images)
-        self.assertIn("popup.drawing=toggle", " ".join(props["wsc.overflow"]))
+        self.assertIn(
+            "workspace_menus.py toggle wsc.overflow", " ".join(props["wsc.overflow"])
+        )
         zero, _ = w.plan(groups, "1", {"apple"}, 0)
         self.assertNotIn("wsc.overflow", sets(zero))
         self.assertTrue(all("drawing=off" in sets(zero)[w.header(ws)] for ws in groups))
@@ -1289,7 +1356,9 @@ class MembershipTests(unittest.TestCase):
         click = next(p.split("=", 1)[1] for p in props if p.startswith("click_script="))
         self.assertIn(shlex.quote(ws), click)
         # Exercise the shell parser with a fake AeroSpace function, not eval.
-        click = click.replace(w.AEROSPACE, "capture")
+        click = click.replace(w.AEROSPACE, "capture").replace(
+            w.menu_command("close"), ":"
+        )
         output = subprocess.check_output(
             [
                 "/bin/sh",
@@ -1300,7 +1369,11 @@ class MembershipTests(unittest.TestCase):
         )
         self.assertEqual(output.splitlines(), ["workspace", ws])
         app_props = sets(args)[w.item_id("app", ws, bundle)]
-        self.assertIn("click_script=" + w.AEROSPACE + " focus --window-id 1", app_props)
+        self.assertIn(
+            "click_script="
+            + w.dismiss_before(w.command(w.AEROSPACE, "focus", "--window-id", 1)),
+            app_props,
+        )
 
     def test_monochrome_icons_geometry_selection(self):
         groups, _ = snapshot([window()])
@@ -1411,10 +1484,20 @@ class MembershipTests(unittest.TestCase):
         existing = {"apple", "space.1", w.item_id("app", "1", "org.test.App")}
         with (
             patch.object(w, "lock", return_value=contextlib.nullcontext()),
-            patch.object(w, "query", return_value={"items": list(existing)}),
+            patch.object(
+                w,
+                "query",
+                side_effect=lambda args: (
+                    {"items": list(existing)}
+                    if args[-1] == "bar"
+                    else {"geometry": {"width": 28}}
+                ),
+            ),
             patch.object(w, "save_topology"),
             patch.object(w, "geometry", return_value=[DISPLAY]),
             patch.object(w, "save_viewports"),
+            patch.object(w, "load_widths", return_value={}),
+            patch.object(w, "save_widths"),
             patch.object(w, "inventory", side_effect=ValueError),
             patch.object(w, "run") as run,
         ):
@@ -1426,12 +1509,22 @@ class MembershipTests(unittest.TestCase):
         self.assertIn("background.color=" + w.CLEAR, args)
         with (
             patch.object(w, "lock", return_value=contextlib.nullcontext()),
-            patch.object(w, "query", return_value={"items": list(existing)}),
+            patch.object(
+                w,
+                "query",
+                side_effect=lambda args: (
+                    {"items": list(existing)}
+                    if args[-1] == "bar"
+                    else {"geometry": {"width": 28}}
+                ),
+            ),
             patch.object(w, "save_topology"),
             patch.object(w, "selection_args", return_value=[]),
             patch.object(w, "geometry", return_value=[DISPLAY]),
             patch.object(w, "inventory", return_value=[(DISPLAY, groups, "1")]),
             patch.object(w, "save_viewports"),
+            patch.object(w, "load_widths", return_value={}),
+            patch.object(w, "save_widths"),
             patch.object(w, "inline_budget", return_value=600),
             patch.object(w, "run") as run,
         ):
@@ -1443,6 +1536,7 @@ class MembershipTests(unittest.TestCase):
         with (
             patch.object(w, "lock", return_value=contextlib.nullcontext()),
             patch.object(w, "query", return_value={"items": ["apple"]}),
+            patch.object(w, "load_widths", return_value={}),
             patch.object(w, "selection_args", return_value=[]),
             patch.object(w, "geometry", return_value=[DISPLAY]),
             patch.object(w, "inventory", return_value=[(DISPLAY, groups, "1")]),

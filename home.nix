@@ -69,6 +69,7 @@ in {
 
   programs.sketchybar = {
     enable = true;
+    package = pkgs.callPackage ./nix/packages/sketchybar.nix {};
     extraPackages = [ pkgs.python3 ];
   };
   launchd.agents.sketchybar-aerospace = {

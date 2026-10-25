@@ -58,6 +58,61 @@ class Metrics(unittest.TestCase):
             with self.assertRaises(ValueError):
                 m.percentage(value)
 
+    def test_metric_colors_follow_cpu_load_and_native_memory_pressure(self):
+        for busy, color in (
+            (0, "0xffa6da95"),
+            (69, "0xffa6da95"),
+            (70, "0xffeed49f"),
+            (89, "0xffeed49f"),
+            (90, "0xffed8796"),
+            (100, "0xffed8796"),
+        ):
+            for pressure, ram_color in (
+                ("1", "0xffa6da95"),
+                ("2", "0xffeed49f"),
+                ("4", "0xffed8796"),
+                ("99", m.TEXT),
+                ("invalid", m.TEXT),
+            ):
+
+                def native(args):
+                    if args == ["/usr/bin/vm_stat"]:
+                        return vm()
+                    if args[-1] == "hw.memsize":
+                        return str(16384 * 1000)
+                    if args[-1] == "kern.memorystatus_vm_pressure_level":
+                        return pressure
+                    raise AssertionError(args)
+
+                with (
+                    self.subTest(busy=busy, pressure=pressure),
+                    patch.object(
+                        m,
+                        "cpu_ticks",
+                        side_effect=[(0, 0, 0, 0), (busy, 0, 100 - busy, 0)],
+                    ),
+                    patch.object(m.time, "sleep"),
+                    patch.object(m, "run", side_effect=native),
+                    patch.object(m.subprocess, "run") as output,
+                ):
+                    m.main("metrics")
+                    args = output.call_args.args[0]
+                    split = args.index("ram")
+                    self.assertIn("label.color=" + color, args[:split])
+                    self.assertIn("label.color=" + ram_color, args[split:])
+                    self.assertIn("label=35%", args[split:])
+
+    def test_pressure_failure_preserves_ram_reading_and_resets_color(self):
+        with (
+            patch.object(m, "cpu_ticks", side_effect=OSError()),
+            patch.object(m, "run", side_effect=[vm(), str(16384 * 1000), OSError()]),
+            patch.object(m.subprocess, "run") as output,
+        ):
+            m.main("metrics")
+            args = output.call_args.args[0]
+            self.assertIn("label=35%", args)
+            self.assertEqual(args.count("label.color=" + m.TEXT), 2)
+
     def test_battery_charge_discharge_full_and_missing(self):
         for value, state, bolt in (
             (9, "discharging", False),
@@ -106,9 +161,11 @@ class Metrics(unittest.TestCase):
                         "--set",
                         "cpu",
                         "label=--",
+                        "label.color=" + m.TEXT,
                         "--set",
                         "ram",
                         "label=--",
+                        "label.color=" + m.TEXT,
                     ],
                 )
         with (

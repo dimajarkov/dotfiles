@@ -1,0 +1,156 @@
+--- a/src/event.c
++++ b/src/event.c
+@@ -236,6 +236,63 @@
+   int delta_y;
+ } g_scroll_info;
+ 
++// Opt in only subscribed workspace items. Other controls and global scroll events
++// keep the upstream vertical-only contract, including its existing debounce.
++static bool workspace_scroll(void* context, struct bar_item* item,
++                             uint32_t modifier) {
++  if (!item || !item->name || strncmp(item->name, "wsc.", 4)
++      || !(item->update_mask & UPDATE_MOUSE_SCROLLED)) return false;
++
++  // Each viewport is explicitly associated with exactly one display. Key by its
++  // native display mask, not the hovered item's window: scrolling can move items
++  // under a stationary pointer. Ambiguous/unassigned items keep legacy behavior.
++  uint32_t display = item->associated_display;
++  if (!display || (display & (display - 1))) return false;
++  unsigned index = 0;
++  while ((display >>= 1)) ++index;
++  static struct workspace_scroll_state {
++    uint64_t timestamp, emitted;
++    double x, y;
++  } states[32];
++  struct workspace_scroll_state* state = &states[index];
++  uint64_t now = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW_APPROX);
++  int phase = CGEventGetIntegerValueField(context, kCGScrollWheelEventScrollPhase);
++  if (now > state->timestamp + 2*SCROLL_TIMEOUT || (phase & kCGScrollPhaseBegan))
++    state->x = state->y = 0;
++  // Gesture boundaries reset fractions, never the per-display throttle deadline.
++  state->timestamp = now;
++  // Ignore inertial tails: a deliberate gesture browses, momentum cannot run away.
++  if (CGEventGetIntegerValueField(context, kCGScrollWheelEventMomentumPhase)
++      || (phase & (kCGScrollPhaseEnded | kCGScrollPhaseCancelled))) {
++    state->x = state->y = 0;
++    return true;
++  }
++
++  bool continuous = CGEventGetIntegerValueField(context, kCGScrollWheelEventIsContinuous);
++  double x = continuous
++    ? CGEventGetDoubleValueField(context, kCGScrollWheelEventFixedPtDeltaAxis2)
++    : CGEventGetIntegerValueField(context, kCGScrollWheelEventDeltaAxis2);
++  double y = continuous
++    ? CGEventGetDoubleValueField(context, kCGScrollWheelEventFixedPtDeltaAxis1)
++    : CGEventGetIntegerValueField(context, kCGScrollWheelEventDeltaAxis1);
++  // A reversal cancels pending motion instead of replaying an old direction.
++  if (x * state->x < 0) state->x = 0;
++  if (y * state->y < 0) state->y = 0;
++  state->x += x;
++  state->y += y;
++  double ax = state->x < 0 ? -state->x : state->x;
++  double ay = state->y < 0 ? -state->y : state->y;
++  if ((ax < 1.0 && ay < 1.0) || now < state->emitted + SCROLL_TIMEOUT) return true;
++
++  // One dominant axis per dispatch, never two steps for a diagonal gesture.
++  if (ax > ay) bar_item_on_scroll_x(item, state->x > 0 ? 1 : -1, modifier);
++  else bar_item_on_scroll(item, state->y > 0 ? 1 : -1, modifier);
++  state->x = state->y = 0;
++  state->emitted = now;
++  if (item->needs_update) bar_manager_refresh(&g_bar_manager, false, false);
++  return true;
++}
++
+ static void event_mouse_scrolled(void* context) {
+   CGPoint point = CGEventGetLocation(context);
+   uint32_t wid = get_wid_from_cg_event(context);
+@@ -243,6 +300,10 @@
+     = CGEventGetIntegerValueField(context,
+         kCGScrollWheelEventDeltaAxis1);
+   uint32_t modifier_keys = CGEventGetFlags(context);
++  struct bar_item* bar_item = bar_manager_get_item_by_wid(&g_bar_manager, wid, NULL);
++  if (!bar_item || bar_item->type == BAR_COMPONENT_GROUP)
++    bar_item = bar_manager_get_item_by_point(&g_bar_manager, point, NULL);
++  if (workspace_scroll(context, bar_item, modifier_keys)) return;
+ 
+   uint64_t event_time = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW_APPROX);
+   if (g_scroll_info.timestamp + SCROLL_TIMEOUT > event_time) {
+@@ -255,14 +316,6 @@
+       = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW_APPROX);
+   }
+ 
+-  struct bar_item* bar_item = bar_manager_get_item_by_wid(&g_bar_manager,
+-                                                          wid,
+-                                                          NULL           );
+-
+-  if (!bar_item || bar_item->type == BAR_COMPONENT_GROUP) {
+-    bar_item = bar_manager_get_item_by_point(&g_bar_manager, point, NULL);
+-  }
+-
+   if (!bar_item) {
+     struct bar* bar = bar_manager_get_bar_by_wid(&g_bar_manager, wid);
+     if (bar) {
+--- a/src/bar_item.c
++++ b/src/bar_item.c
+@@ -256,7 +256,8 @@
+   env_vars_destroy(&env_vars);
+ }
+ 
+-void bar_item_on_scroll(struct bar_item* bar_item, int scroll_delta, uint32_t modifier) {
++static void bar_item_on_scroll_axis(struct bar_item* bar_item, int scroll_delta,
++                                    int scroll_delta_x, uint32_t modifier) {
+   if (!bar_item) return;
+ 
+   struct env_vars env_vars;
+@@ -264,10 +265,12 @@
+   char info_str[256];
+   snprintf(info_str, 256, "{\n"
+                           "\t\"delta\": %d,\n"
++                          "\t\"delta_x\": %d,\n"
+                           "\t\"modifier\": \"%s\",\n"
+                           "\t\"modfier_code\": %u\n"
+                           "}\n",
+                           scroll_delta,
++                          scroll_delta_x,
+                           get_modifier_description(modifier),
+                           modifier                           );
+ 
+@@ -279,7 +282,13 @@
+                string_copy("SCROLL_DELTA"),
+                string_copy(delta_ver_str));
+ 
++  char delta_hor_str[32];
++  snprintf(delta_hor_str, 32, "%d", scroll_delta_x);
+   env_vars_set(&env_vars,
++               string_copy("SCROLL_DELTA_X"),
++               string_copy(delta_hor_str));
++
++  env_vars_set(&env_vars,
+                string_copy("MODIFIER"),
+                string_copy(get_modifier_description(modifier)));
+ 
+@@ -294,6 +303,14 @@
+   env_vars_destroy(&env_vars);
+ }
+ 
++void bar_item_on_scroll(struct bar_item* bar_item, int scroll_delta, uint32_t modifier) {
++  bar_item_on_scroll_axis(bar_item, scroll_delta, 0, modifier);
++}
++
++void bar_item_on_scroll_x(struct bar_item* bar_item, int scroll_delta, uint32_t modifier) {
++  bar_item_on_scroll_axis(bar_item, 0, scroll_delta, modifier);
++}
++
+ void bar_item_mouse_entered(struct bar_item* bar_item) {
+   if (bar_item->update_mask & UPDATE_MOUSE_ENTERED && !bar_item->mouse_over) {
+     bar_item_update(bar_item, COMMAND_SUBSCRIBE_MOUSE_ENTERED, true, NULL);
+--- a/src/bar_item.h
++++ b/src/bar_item.h
+@@ -108,6 +108,7 @@
+ 
+ void bar_item_on_click(struct bar_item* bar_item, uint32_t type, uint32_t mouse_button_code, uint32_t modifier, CGPoint point);
+ void bar_item_on_scroll(struct bar_item* bar_item, int scroll_delta, uint32_t modifier);
++void bar_item_on_scroll_x(struct bar_item* bar_item, int scroll_delta, uint32_t modifier);
+ void bar_item_on_drag(struct bar_item* bar_item, CGPoint point);
+ void bar_item_mouse_entered(struct bar_item* bar_item);
+ void bar_item_mouse_exited(struct bar_item* bar_item);
