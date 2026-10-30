@@ -25,7 +25,7 @@ No custom helpers are compiled.
   Multiple windows of an application produce one icon per workspace, while an application present in several workspaces appears in each relevant group.
 - Workspace numbers activate that workspace; application icons focus one of its windows.
   Right-click a workspace for its complete application-name/icon popup, followed by `Rename label…` and, when customized, `Reset label` actions.
-  These actions also exist for empty workspaces and in the narrow-panel `+N` fallback.
+  These actions also exist for empty workspaces after selecting a workspace from Extras.
   Workspace menus are mutually exclusive across all displays and fallback locations.
   Moving from a workspace header into its dropdown keeps it open; leaving their combined region dismisses it.
   App, workspace, Rename and Reset selections close all workspace menus before starting their action, without affecting unrelated popups.
@@ -33,17 +33,14 @@ No custom helpers are compiled.
   Labels support spaces and Unicode, are trimmed and normalized, and must contain 1-40 characters without control/formatting characters or ambiguous duplicate workspace labels/names.
   Save persists the label; Cancel, Escape, Command-Period and dialog timeout leave it unchanged.
   Reset restores the original workspace name, or the original badge-only appearance for numeric workspaces.
-  Every application's real monochrome glyph stays in the inline strip; application icons are never replaced by `+N` counters.
-  When the combined workspace-and-application strip exceeds a panel's safe width, left/right arrows, mouse-wheel scrolling, and horizontal or vertical two-finger trackpad scrolling over its items browse a display-local horizontal viewport without selecting another workspace.
-  Trackpad handling is native and limited to subscribed workspace-strip items: fractional line deltas accumulate, the dominant axis produces one browse step per display per 150ms at most, and inertial momentum is ignored.
-  Fractional input and throttling follow the display viewport across hovered item boundaries, using each item's explicit native display association; separate displays retain independent state.
-  New gestures reset fractional input without clearing that display's throttle deadline.
-  Positive horizontal deltas browse toward earlier tabs, matching positive vertical/up deltas; the OS natural-scrolling setting controls gesture direction.
-  Other bar controls and global scroll events retain upstream vertical behavior; no global event listener or additional app is installed.
-  Individual header/icon slots scroll, so even one workspace containing more apps than the viewport remains fully reachable.
-  A real workspace selection change brings that workspace's header back into view; duplicate focus notifications and periodic refreshes preserve manual browsing.
-  Right-click application popups remain complete, independently of the viewport.
-  Only when the panel cannot fit even its widest workspace header plus both arrows does one `+N` workspace disclosure provide every workspace and app in a complete monochrome-icon popup.
+  Each display shows at most four workspace groups, or fewer when their headers and app icons require more room.
+  The visible workspace takes priority; remaining groups keep shortcut order.
+  An `Extras N ▾` dropdown lists the remaining workspaces by shortcut and label, including empty workspaces.
+  Clicking an entry closes the dropdown, activates that workspace and brings its group into the bar.
+  Extras disappears when every workspace fits inline.
+  Narrow panels use a compact disclosure when the full Extras label cannot fit.
+  Oversized groups show the app icons that fit; their right-click menu retains the complete app list.
+  Workspace navigation uses direct selection instead of cycling arrows or scroll gestures.
   Terminals (including WezTerm and Herdr) share a generic terminal shape; ChatGPT uses the OpenAI logo.
   Other apps use the pinned app-name map with a neutral default logo. Missing map/font files degrade to a generic Hack Nerd Font window glyph, never raw ligature text or native app images.
 - System Settings, CPU/RAM percentages, battery icon and percentage, and coordinated date/time controls repeat on every bar.

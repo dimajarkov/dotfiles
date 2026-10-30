@@ -3,6 +3,7 @@
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -10,6 +11,27 @@ import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class MonitorAssignmentTests(unittest.TestCase):
+    def test_workspace_split_for_each_registered_monitor_and_laptop_only(self):
+        config = tomllib.loads((ROOT / "home/.aerospace.toml").read_text())
+        assignments = config["workspace-to-monitor-force-assignment"]
+        builtin = "Built-in Retina Display"
+        for external in ["LS49C95xU", "LEN S24e-10", "DELL U3225QE", None]:
+            monitors = [builtin] + ([external] if external else [])
+            for workspace in ["1", "2", "3", "browse", "os-finances", "warrior-v2", "jobs"]:
+                with self.subTest(external=external, workspace=workspace):
+                    patterns = assignments[workspace]
+                    if isinstance(patterns, str):
+                        patterns = [patterns]
+                    selected = next(
+                        (monitor for pattern in patterns for monitor in monitors
+                         if re.search(pattern, monitor, re.IGNORECASE)),
+                        None,
+                    )
+                    expected = builtin if workspace in {"1", "2", "3"} else external or builtin
+                    self.assertEqual(selected, expected)
 
 
 class GapTests(unittest.TestCase):

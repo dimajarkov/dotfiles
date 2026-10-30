@@ -27,7 +27,8 @@ AEROSPACE = "/opt/homebrew/bin/aerospace"
 ROW_HEIGHT = 24
 HEADER_WIDTH = 28
 APP_WIDTH = 24
-MORE_WIDTH = 28
+MORE_WIDTH = 92
+MAX_WORKSPACES = 4
 GROUP_GAP = 8
 INACTIVE = "0x552e2e2e"
 ACTIVE = "0x66787874"
@@ -401,28 +402,29 @@ def plan(
     popup_order = []
     aliases = aliases or {}
     counts = {ws: len(apps) for ws, apps in groups.items()}
-    compact = (
-        sum(group_width(apps, counts[ws], ws, aliases) for ws, apps in groups.items())
-        > budget
-    )
-
-    scrolling = (
-        compact
-        and display is not None
-        and all(header_width(ws, aliases) <= budget - 2 * MORE_WIDTH for ws in groups)
-    )
+    # A grouped manifest lets the fast focus lane promote a hidden workspace
+    # without querying windows or rebuilding the bar.
+    grouped = bool(groups) and budget > MORE_WIDTH
     viewport = {
         "rows": [],
-        "budget": budget - 2 * MORE_WIDTH,
+        "budget": max(1, budget - MORE_WIDTH)
+        if (
+            len(groups) > MAX_WORKSPACES
+            or sum(
+                group_width(apps, counts[ws], ws, aliases)
+                for ws, apps in groups.items()
+            )
+            > budget
+        )
+        else budget,
         "start": 0,
         "selected": "",
     }
-    if scrolling:
-        if viewports is not None:
-            viewports[str(display)] = viewport
+    if grouped and viewports is not None and display is not None:
+        viewports[str(display)] = viewport
 
-    def scroll_script(action="event"):
-        args = [sys.executable, Path(__file__).resolve(), action]
+    def event_script():
+        args = [sys.executable, Path(__file__).resolve(), "event"]
         if display is not None:
             args.append(str(display))
         return command(*args)
@@ -460,27 +462,20 @@ def plan(
         args.extend(["--set", name, *props])
         if display is not None:
             args.append("display=" + str(display))
+        if name == overflow and widths is not None:
+            if name in existing and widths.get(name) != width_override:
+                args.extend(["--set", name, "width=" + str(width_override)])
+            widths[name] = width_override
         if name == overflow or name.startswith((PREFIX + "space.", "space.")):
             args.extend(
                 [
                     "--set",
                     name,
-                    "script=" + scroll_script(),
+                    "script=" + event_script(),
                     "--subscribe",
                     name,
                     "mouse.exited",
                     "mouse.exited.global",
-                ]
-            )
-        if scrolling and position == "left":
-            args.extend(
-                [
-                    "--set",
-                    name,
-                    "script=" + scroll_script(),
-                    "--subscribe",
-                    name,
-                    "mouse.scrolled",
                 ]
             )
 
@@ -531,30 +526,6 @@ def plan(
                 ],
             )
 
-    if scrolling:
-        for direction, glyph in (("prev", "‹"), ("next", "›")):
-            name = PREFIX + direction + ".d" + str(display)
-            add(
-                name,
-                "left",
-                [
-                    "drawing=on",
-                    "icon=" + glyph,
-                    "icon.color=" + TEXT,
-                    "icon.width=28",
-                    "icon.align=center",
-                    "label.drawing=off",
-                    "padding_left=0",
-                    "padding_right=0",
-                    "background.padding_left=0",
-                    "background.padding_right=0",
-                    "click_script=" + scroll_script(direction),
-                ],
-                MORE_WIDTH,
-            )
-            if direction == "prev":
-                order.append(name)
-
     for ws, apps in groups.items():
         start = len(order)
         h = hname(ws)
@@ -570,7 +541,7 @@ def plan(
             h,
             "left",
             [
-                "drawing=" + ("off" if compact else "on"),
+                "drawing=" + "off",
                 "icon=" + workspace_badge(ws),
                 "icon.drawing=" + ("on" if workspace_badge(ws) else "off"),
                 "icon.font=SF Pro:Bold:11.0",
@@ -649,7 +620,7 @@ def plan(
                 row
                 + icon_properties(bundle, name)
                 + [
-                    "drawing=" + ("off" if compact else "on"),
+                    "drawing=" + "off",
                     "label.drawing=off",
                     "click_script=" + focus,
                 ],
@@ -686,7 +657,7 @@ def plan(
             [
                 "--set",
                 bracket,
-                "drawing=" + ("off" if compact else "on"),
+                "drawing=" + "off",
                 "background.drawing=on",
                 "background.height=24",
                 "background.corner_radius=0",
@@ -703,7 +674,7 @@ def plan(
             gap,
             "left",
             [
-                "drawing=" + ("off" if compact else "on"),
+                "drawing=" + "off",
                 "icon.drawing=off",
                 "label.drawing=off",
                 "background.drawing=off",
@@ -712,30 +683,34 @@ def plan(
             ],
         )
         order.append(gap)
-        if scrolling:
-            for member in members:
-                width = header_width(ws, aliases) if member == h else APP_WIDTH
-                key = digest(ws)[:12] if member == h else digest(member)[:12]
-                viewport["rows"].append([key, width, [member, bracket]])
-            viewport["rows"].append([digest(gap)[:12], GROUP_GAP, [gap]])
-    if scrolling:
-        order.append(PREFIX + "next.d" + str(display))
-        args.extend(viewport_args({str(display): viewport}, {digest(focused)[:12]}))
-    if compact and not scrolling and budget >= MORE_WIDTH:
-        # Unusually narrow panels / many workspace IDs: keep every workspace and
-        # application reachable in one complete popup rather than cross the notch.
+        if grouped:
+            viewport["rows"].append(
+                [
+                    digest(ws)[:12],
+                    min(group_width(apps, counts[ws], ws, aliases), viewport["budget"]),
+                    [*members, bracket, gap],
+                    header_width(ws, aliases),
+                ]
+            )
+    if groups and budget >= 28:
         add(
             overflow,
             "left",
             [
                 "drawing=on",
-                "icon=+" + str(len(groups)),
-                "icon.width=28",
-                "label.drawing=off",
+                "icon.drawing=" + ("off" if budget >= MORE_WIDTH else "on"),
+                "icon=▾",
+                "label=Extras ▾",
+                "label.drawing=" + ("on" if budget >= MORE_WIDTH else "off"),
+                "label.font=SF Pro:Semibold:11.0",
+                "label.color=" + TEXT,
+                "label.padding_left=6",
+                "label.padding_right=6",
                 "popup.align=left",
                 "popup.horizontal=off",
                 "click_script=" + menu_command("toggle", overflow),
             ],
+            min(MORE_WIDTH, budget),
         )
         order.append(overflow)
         for ws, apps in groups.items():
@@ -747,30 +722,42 @@ def plan(
                     "drawing=on",
                     "icon.drawing=on",
                     "label.drawing=on",
-                    "icon=" + WORKSPACE_SHORTCUTS.get(ws, ws),
+                    "icon=" + workspace_badge(ws),
+                    "icon.font=SF Pro:Bold:11.0",
+                    "icon.color=" + TEXT,
+                    "label.font=SF Pro:Regular:12.0",
+                    "label.color=" + TEXT,
                     "label=Workspace " + aliases.get(ws, ws),
                     "click_script="
                     + dismiss_before(command(AEROSPACE, "workspace", ws)),
                 ],
             )
-            for bundle, name, window_id in apps:
-                entry = iname("entry", ws, bundle)
-                add(
-                    entry,
-                    "popup." + overflow,
-                    icon_properties(bundle, name)
-                    + [
-                        "drawing=on",
-                        "label=" + aliases.get(ws, ws) + " · " + name,
-                        "label.drawing=on",
-                        "click_script="
-                        + dismiss_before(
-                            command(AEROSPACE, "focus", "--window-id", window_id)
-                        ),
-                    ],
-                )
-                icons[entry] = app_icon(bundle, name)
-            label_actions(ws, overflow, fallback=True)
+            # If no header can fit, retain direct app and label actions too.
+            if budget <= MORE_WIDTH:
+                for bundle, name, window_id in apps:
+                    entry = iname("entry", ws, bundle)
+                    add(
+                        entry,
+                        "popup." + overflow,
+                        icon_properties(bundle, name)
+                        + [
+                            "drawing=on",
+                            "label=" + aliases.get(ws, ws) + " · " + name,
+                            "label.drawing=on",
+                            "click_script="
+                            + dismiss_before(
+                                command(AEROSPACE, "focus", "--window-id", window_id)
+                            ),
+                        ],
+                    )
+                    icons[entry] = app_icon(bundle, name)
+            if (
+                budget <= MORE_WIDTH
+                or header_width(ws, aliases) + GROUP_GAP > viewport["budget"]
+            ):
+                label_actions(ws, overflow, fallback=True)
+    if grouped:
+        args.extend(viewport_args({str(display): viewport}, {digest(focused)[:12]}))
     for name in sorted(existing - desired):
         if owned(name) and (display is None or name.endswith(".d" + str(display))):
             args.extend(["--remove", name])
@@ -933,64 +920,74 @@ def save_topology(names):
 
 
 def viewport_rows(panel):
-    """Contiguous header/icon slots; arrows are reserved outside this budget."""
-    rows, used = [], 0
-    for row in panel["rows"][panel["start"] :]:
-        if used + row[1] > panel["budget"]:
-            break
-        rows.append(row)
-        used += row[1]
-    return rows
+    """At most four groups, prioritizing the visible workspace on this panel."""
+    rows = panel["rows"]
+    selected = next((row for row in rows if row[0] == panel["selected"]), None)
+    chosen = (
+        [selected] if selected and selected[3] + GROUP_GAP <= panel["budget"] else []
+    )
+    used = sum(row[1] for row in chosen)
+    for row in rows:
+        if row in chosen:
+            continue
+        if (
+            len(chosen) < MAX_WORKSPACES
+            and row[3] + GROUP_GAP <= panel["budget"]
+            and used + row[1] <= panel["budget"]
+        ):
+            chosen.append(row)
+            used += row[1]
+    return [row for row in rows if row in chosen]
 
 
 def viewport_args(panels, visible, step=None):
     args = []
     for display, panel in panels.items():
         rows = panel["rows"]
-        selected = next((row[0] for row in rows if row[0] in visible), "")
-        # Duplicate focus notifications and periodic inventory must not undo browsing.
-        if selected != panel["selected"]:
-            panel["selected"] = selected
-            if selected and selected not in {row[0] for row in viewport_rows(panel)}:
-                panel["start"] = next(
-                    i for i, row in enumerate(rows) if row[0] == selected
-                )
-        last = len(rows) - 1
-        while last > 0 and all(
-            name.startswith(PREFIX + "gap.") for name in rows[last][2]
-        ):
-            last -= 1
-        if step and step[0] == display:
-            target = max(0, min(last, panel["start"] + step[1]))
-            while 0 < target < last and all(
-                name.startswith(PREFIX + "gap.") for name in rows[target][2]
-            ):
-                target += step[1]
-            panel["start"] = target
+        panel["selected"] = next((row[0] for row in rows if row[0] in visible), "")
         shown = {row[0] for row in viewport_rows(panel)}
-        drawn = {name for key, _, names in rows if key in shown for name in names}
-        for name in sorted({name for _, _, names in rows for name in names}):
-            args.extend(
-                ["--set", name, "drawing=" + ("on" if name in drawn else "off")]
-            )
-            if name.startswith(PREFIX + "space.") and name not in drawn:
-                args.append("popup.drawing=off")
-        for direction, available in (
-            ("prev", panel["start"] > 0),
-            ("next", rows[last][0] not in shown),
-        ):
+        for key, _, names, header_size in rows:
+            # Very large groups keep as many inline apps as fit. The complete
+            # app inventory remains available through the workspace's popup.
+            used = 0
+            header_name = names[0]
+            fits_header = header_size <= panel["budget"]
+            for name in names:
+                draw = key in shown and fits_header
+                if name == header_name:
+                    used += header_size
+                elif name.startswith(PREFIX + "app."):
+                    used += APP_WIDTH
+                    draw = draw and used + GROUP_GAP <= panel["budget"]
+                args.extend(["--set", name, "drawing=" + ("on" if draw else "off")])
+                if name == header_name and not draw:
+                    args.append("popup.drawing=off")
+            suffix = ".d" + display if display != "None" else ""
+            entry = PREFIX + "entry." + key + digest("")[:12] + suffix
             args.extend(
                 [
                     "--set",
-                    PREFIX + direction + ".d" + display,
-                    "icon.color=" + (TEXT if available else MUTED),
+                    entry,
+                    "drawing=" + ("off" if key in shown and fits_header else "on"),
                 ]
             )
+        hidden = len(rows) - len(shown)
+        overflow = PREFIX + "overflow" + (".d" + display if display != "None" else "")
+        args.extend(
+            [
+                "--set",
+                overflow,
+                "drawing=" + ("on" if hidden else "off"),
+                "label=Extras " + str(hidden) + " ▾",
+            ]
+        )
+        if not hidden:
+            args.append("popup.drawing=off")
     return args
 
 
 def load_viewports():
-    """Opaque IDs, widths and browse offsets only, in the existing private cache."""
+    """Opaque group IDs and widths only, in the existing private cache."""
     with lock("viewport.lock") as fd:
         data = os.read(fd, 262145)
     if len(data) > 262144:
@@ -1017,9 +1014,11 @@ def load_viewports():
                 return {}
             if not re.fullmatch(r"(?:[a-f0-9]{12})?", panel["selected"]):
                 return {}
-            for key, width, names in rows:
+            for key, width, names, header_size in rows:
                 if (
                     not re.fullmatch(r"[a-f0-9]{12}", key)
+                    or type(header_size) is not int
+                    or not 1 <= header_size <= 4096
                     or type(width) is not int
                     or not 0 < width <= panel["budget"]
                 ):
@@ -1095,8 +1094,11 @@ def load_widths():
         if len(data) > 65536 or not isinstance(widths, dict):
             return {}
         if not all(
-            selection_item(name)
-            and name.startswith(PREFIX + "space.")
+            (
+                selection_item(name)
+                and name.startswith(PREFIX + "space.")
+                or re.fullmatch(r"wsc\.overflow(?:\.d[1-9][0-9]*)?", name)
+            )
             and type(width) is int
             and 1 <= width <= 4096
             for name, width in widths.items()
@@ -1282,7 +1284,8 @@ def reconcile():
     widths = {
         name: width
         for name, width in widths.items()
-        if name in headers and name in existing
+        if name in existing
+        and (name in headers or re.fullmatch(r"wsc\.overflow\.d[1-9][0-9]*", name))
     }
     for name in sorted(headers & existing - widths.keys()):
         width = query(["sketchybar", "--query", name])["geometry"]["width"]

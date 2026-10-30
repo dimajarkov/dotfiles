@@ -24,340 +24,73 @@ spec.loader.exec_module(w)
 
 
 class ViewportTests(unittest.TestCase):
-    def test_overfull_groups_remain_browsable_and_bounded(self):
-        groups = {str(i): [] for i in range(1, 8)}
+    def test_four_workspaces_and_extras_partition_for_every_selection(self):
+        groups = {str(i): [] for i in range(1, 10)}
         manifest = {}
-        args, _ = w.plan(groups, "1", set(), 160, 1, manifest)
-        self.assertNotIn("wsc.overflow.d1", sets(args))
-        self.assertIn("wsc.prev.d1", sets(args))
-        panel = manifest["1"]
-        w.viewport_args(manifest, {w.digest("1")[:12]})
-        self.assertLessEqual(sum(row[1] for row in w.viewport_rows(panel)), 104)
-        before = panel["start"]
-        w.viewport_args(manifest, {w.digest("1")[:12]}, ("1", 1))
-        self.assertGreater(panel["start"], before)
-        browsed = panel["start"]
-        w.viewport_args(manifest, {w.digest("1")[:12]})
-        self.assertEqual(panel["start"], browsed)
-        w.viewport_args(manifest, {w.digest("7")[:12]})
-        self.assertIn(w.digest("7")[:12], [r[0] for r in w.viewport_rows(panel)])
-        for _ in range(20):
-            w.viewport_args(manifest, {w.digest("7")[:12]}, ("1", 1))
-        self.assertEqual(panel["start"], len(panel["rows"]) - 2)
-        drawing = w.viewport_args(manifest, {w.digest("7")[:12]})
-        self.assertFalse(any("width=" in arg or "--add" == arg for arg in drawing))
-
-    def test_private_manifest_focus_lane_and_structural_browse_preservation(self):
-        groups = {str(i): [("private.bundle", "Private App", i)] for i in range(1, 8)}
-        panel = {
-            "arrangement": 1,
-            "screen": 2,
-            "identity": 1234,
-            "left": 208,
-            "right": 700,
-            "width": 1200,
-        }
-        other = {**panel, "arrangement": 7, "screen": 1, "identity": 5678}
-        states = [(panel, groups, "1"), (other, groups, "1")]
-        manifest = {}
-        initial, _ = w.plan_all(states, set(), manifest)
-        existing = set(sets(initial))
-        with (
-            tempfile.TemporaryDirectory() as temp,
-            patch.object(w.Path, "home", return_value=Path(temp)),
-            patch.object(w, "run") as run,
-        ):
-            w.save_viewports(manifest)
-            w.save_widths(
-                {
-                    name: int(prop.split("=", 1)[1])
-                    for name, props in sets(initial).items()
-                    for prop in props
-                    if prop.startswith("width=") and w.selection_item(name)
-                }
-            )
-            self.assertEqual(w.load_viewports(), manifest)
-            raw = (
-                Path(temp) / ".cache/sketchybar-workspaces/viewport.lock"
-            ).read_text()
-            self.assertNotIn("Private", raw)
-            self.assertNotIn("private", raw)
-            with patch.object(
-                w, "query", side_effect=AssertionError("scroll inventory")
-            ):
-                w.scroll(1, "next")
-                w.scroll(1, "next")
-            browsed = w.load_viewports()
-            self.assertEqual(browsed["7"]["start"], 0)
-            self.assertGreater(browsed["1"]["start"], 0)
-            with (
-                patch.object(w, "query", return_value=[{"workspace": "1"}]) as query,
-                patch.object(w, "geometry", side_effect=AssertionError("geometry")),
-                patch.object(w, "inventory", side_effect=AssertionError("inventory")),
-            ):
-                w.save_topology(existing)
-                w.select()
-                query.assert_called_once()
-            self.assertEqual(w.load_viewports(), browsed)
-            self.assertFalse(
-                any(
-                    arg.startswith(("width=", "icon.width="))
-                    for arg in run.call_args.args[0]
-                )
-            )
-            with (
-                patch.object(
-                    w,
-                    "query",
-                    side_effect=[{"items": list(existing)}, [{"workspace": "1"}]],
-                ),
-                patch.object(w, "geometry", return_value=[panel, other]),
-                patch.object(w, "inventory", return_value=states),
-            ):
-                w.reconcile()
-            self.assertEqual(w.load_viewports(), browsed)
-            refresh = run.call_args.args[0]
-            self.assertFalse(any(arg.startswith("width=") for arg in refresh))
-            # Hotplug removes the departed panel and does not inherit its offset
-            # when a different physical display reuses the same arrangement ID.
-            replacement = {**panel, "identity": 9999}
-            with (
-                patch.object(
-                    w,
-                    "query",
-                    side_effect=[{"items": list(existing)}, [{"workspace": "1"}]],
-                ),
-                patch.object(w, "geometry", return_value=[replacement]),
-                patch.object(w, "inventory", return_value=[(replacement, groups, "1")]),
-            ):
-                w.reconcile()
-            current = w.load_viewports()
-            self.assertEqual(set(current), {"1"})
-            self.assertEqual(current["1"]["start"], 0)
-            self.assertIn("--remove", run.call_args.args[0])
-
-    def test_scroll_delta_clamps_and_arrows_subscribe_without_workspace_switches(self):
-        manifest = {}
-        args, _ = w.plan(
-            {str(i): [] for i in range(1, 8)}, "1", set(), 160, 1, manifest
+        args, _ = w.plan(groups, "1", set(), 600, 1, manifest)
+        self.assertNotIn("mouse.scrolled", args)
+        self.assertFalse(
+            any(n.startswith(("wsc.prev.", "wsc.next.")) for n in sets(args))
         )
-        self.assertEqual(args.count("mouse.scrolled"), 16)  # headers, gaps, arrows
-        manifest["1"]["screen"] = 1234
-        with (
-            tempfile.TemporaryDirectory() as temp,
-            patch.object(w.Path, "home", return_value=Path(temp)),
-            patch.object(w, "run") as run,
-        ):
-            w.save_viewports(manifest)
-            with patch.dict(os.environ, {"SCROLL_DELTA": "-9"}):
-                w.scroll(1)
-            self.assertEqual(w.load_viewports()["1"]["start"], 2)  # skip spacer
-            with patch.dict(os.environ, {"SCROLL_DELTA": "3"}):
-                w.scroll(1)
-                w.scroll(1)
-            self.assertEqual(w.load_viewports()["1"]["start"], 0)
-            self.assertTrue(
-                all(call.args[0][0] == "sketchybar" for call in run.call_args_list)
-            )
-            before = run.call_count
-            w.scroll(99)
-            self.assertEqual(run.call_count, before)
-            with w.lock("viewport.lock") as fd:
-                os.write(fd, b'{"1": {"rows": ["unsafe"]}}')
-                os.ftruncate(fd, os.lseek(fd, 0, os.SEEK_CUR))
-            self.assertEqual(w.load_viewports(), {})
-
-    def test_trackpad_horizontal_and_diagonal_browse_only(self):
-        manifest = {}
-        args, icons = w.plan(
-            {str(i): [("bundle", "App", i)] for i in range(1, 8)},
-            "1",
-            set(),
-            160,
-            1,
-            manifest,
-        )
-        manifest["1"]["screen"] = 1234
-        with (
-            tempfile.TemporaryDirectory() as temp,
-            patch.object(w.Path, "home", return_value=Path(temp)),
-            patch.object(w, "query", side_effect=AssertionError("query")),
-            patch.object(w, "inventory", side_effect=AssertionError("inventory")),
-            patch.object(w, "geometry", side_effect=AssertionError("geometry")),
-            patch.object(w, "run") as run,
-        ):
-            w.save_viewports(manifest)
-            for x, y, expected in (
-                (-1, 0, 1),
-                (1, 0, 0),
-                (-2, 1, 1),
-                (0, 0, 1),
-                (0, -1, 3),
-                ("nan", 0, 3),
-            ):
-                with patch.dict(
-                    os.environ, {"SCROLL_DELTA_X": str(x), "SCROLL_DELTA": str(y)}
-                ):
-                    w.scroll(1)
-                self.assertEqual(w.load_viewports()["1"]["start"], expected)
-            self.assertTrue(
-                all(call.args[0][0] == "sketchybar" for call in run.call_args_list)
-            )
-            self.assertFalse(
-                any(
-                    arg.startswith(("width=", "icon=", "icon.width="))
-                    for call in run.call_args_list
-                    for arg in call.args[0]
-                )
-            )
-            self.assertEqual(
-                len(icons), 14
-            )  # all seven inline icons and complete popups
-            self.assertNotIn("wsc.overflow.d1", sets(args))
-
-    def test_private_manifest_and_inventory_free_scroll_and_focus(self):
-        groups = {
-            f"private-{i}": [("private.bundle", "Private App", i)] for i in range(1, 8)
-        }
-        manifest = {}
-        args, _ = w.plan_all(
-            [({**DISPLAY, "left": 340}, groups, "private-1")], set(), manifest
-        )
-        names = {args[i + 1] for i, arg in enumerate(args) if arg == "--set"}
-        with (
-            tempfile.TemporaryDirectory() as temp,
-            patch.object(w.Path, "home", return_value=Path(temp)),
-        ):
-            w.save_viewports(manifest)
-            w.save_topology(names)
-            raw = (
-                Path(temp) / ".cache/sketchybar-workspaces/viewport.lock"
-            ).read_text()
-            self.assertNotIn("private", raw.lower())
-            self.assertEqual(w.load_viewports(), manifest)
-            with (
-                patch.object(w, "inventory", side_effect=AssertionError("inventory")),
-                patch.object(w, "geometry", side_effect=AssertionError("geometry")),
-                patch.object(w, "query", side_effect=AssertionError("query")),
-                patch.object(w, "run") as run,
-                patch.dict(os.environ, {"SCROLL_DELTA": "-1"}),
-            ):
-                w.scroll(1)
-                self.assertGreater(w.load_viewports()["1"]["start"], 0)
-                call = run.call_args.args[0]
-                self.assertEqual(call[0], "sketchybar")
-                self.assertFalse(
-                    any(arg.startswith(("width=", "icon.width=")) for arg in call)
-                )
-                self.assertNotIn("--add", call)
-            with (
-                patch.object(
-                    w, "query", return_value=[{"workspace": "private-7"}]
-                ) as query,
-                patch.object(w, "inventory", side_effect=AssertionError("inventory")),
-                patch.object(w, "geometry", side_effect=AssertionError("geometry")),
-                patch.object(w, "run") as run,
-            ):
-                w.select()
-                query.assert_called_once()
-                self.assertIn(
-                    "drawing=on", sets(run.call_args.args[0])[w.header("private-7", 1)]
-                )
-                panel = w.load_viewports()["1"]
-                self.assertIn(
-                    w.digest("private-7")[:12],
-                    [row[0] for row in w.viewport_rows(panel)],
-                )
-            w.invalidate()
-            self.assertEqual(w.load_viewports(), {})
-
-    def test_periodic_refresh_preserves_browse_hotplug_resets_and_removes(self):
-        groups = {str(i): [] for i in range(1, 8)}
-        displays = [
-            {**DISPLAY, "left": 208, "identity": 100},
-            {**DISPLAY, "arrangement": 2, "screen": 2, "left": 208, "identity": 200},
-        ]
-        states = [
-            (displays[0], groups, "1"),
-            (displays[1], {str(i): [] for i in range(8, 15)}, "14"),
-        ]
-        with (
-            tempfile.TemporaryDirectory() as temp,
-            patch.object(w.Path, "home", return_value=Path(temp)),
-            patch.object(w, "geometry", return_value=displays),
-            patch.object(w, "inventory", return_value=states),
-            patch.object(w, "run") as run,
-        ):
-            names = set()
-
-            def query(args):
-                if args == ["sketchybar", "--query", "bar"]:
-                    return {"items": list(names)}
-                return [{"workspace": "1"}, {"workspace": "14"}]
-
-            with patch.object(w, "query", side_effect=query):
-                w.reconcile()
-                first = run.call_args.args[0]
-                names.update(
-                    first[i + 1] for i, arg in enumerate(first) if arg == "--set"
-                )
-                w.scroll(1, "next")
-                browsed = w.load_viewports()
-                self.assertEqual(
-                    browsed["2"]["rows"][browsed["2"]["start"]][0],
-                    w.digest("14")[:12],
-                )
-                w.reconcile()
-                self.assertEqual(w.load_viewports(), browsed)
-                refresh = run.call_args.args[0]
-                self.assertFalse(any(arg.startswith("width=") for arg in refresh))
-                # An arrangement slot reused by a different physical panel must reset.
-                displays[0]["identity"] = 300
-                w.reconcile()
-                self.assertEqual(w.load_viewports()["1"]["start"], 0)
-                states.pop()
-                displays.pop()
-                w.reconcile()
-                self.assertEqual(set(w.load_viewports()), {"1"})
-                self.assertIn("--remove", run.call_args.args[0])
-
-    def test_width_bounds_popups_and_scroll_subscriptions(self):
-        groups = {str(i): [("bundle", "App", i)] for i in range(1, 10)}
-        for budget in range(28, 701, 13):
-            manifest = {}
-            args, _ = w.plan(groups, "1", set(), budget, 1, manifest)
-            if not manifest:
-                continue
-            panel = manifest["1"]
-            for offset in range(len(groups)):
-                panel["start"] = offset
-                drawing = w.viewport_args(manifest, {w.digest("1")[:12]})
-                self.assertLessEqual(
-                    sum(row[1] for row in w.viewport_rows(panel)) + 56, budget
-                )
-                self.assertNotIn("--reorder", drawing)
-            self.assertEqual(
-                sum(arg == "mouse.scrolled" for arg in args), 2 + len(groups) * 3
-            )
+        for selected in groups:
+            props = sets(w.viewport_args(manifest, {w.digest(selected)[:12]}))
+            shown = w.viewport_rows(manifest["1"])
+            self.assertEqual(len(shown), 4)
+            self.assertIn(w.digest(selected)[:12], {r[0] for r in shown})
             for ws in groups:
-                self.assertIn(w.item_id("popup", ws, "bundle", 1), sets(args))
+                inline = props[w.header(ws, 1)][-1] == "drawing=on"
+                entry = props[w.item_id("entry", ws, display=1)][-1] == "drawing=on"
+                self.assertNotEqual(inline, entry)
+            self.assertIn("label=Extras 5 ▾", props["wsc.overflow.d1"])
+
+    def test_narrow_panels_and_large_groups_stay_in_budget(self):
+        groups = {str(i): [(str(j), "App", j + 1) for j in range(50)] for i in range(7)}
+        for budget in (120, 160, 300, 600):
+            manifest = {}
+            args, _ = w.plan(groups, "6", set(), budget, 1, manifest)
+            shown = w.viewport_rows(manifest["1"])
+            self.assertLessEqual(len(shown), 4)
+            self.assertLessEqual(sum(row[1] for row in shown) + w.MORE_WIDTH, budget)
+            props = sets(args)
+            drawn_apps = [
+                n
+                for n, p in props.items()
+                if n.startswith("wsc.app.") and p[-1] == "drawing=on"
+            ]
+            if shown:
+                self.assertLessEqual(
+                    len(drawn_apps) * w.APP_WIDTH
+                    + w.HEADER_WIDTH
+                    + w.GROUP_GAP
+                    + w.MORE_WIDTH,
+                    budget,
+                )
+            self.assertEqual(sum(n.startswith("wsc.popup.") for n in props), 350)
+
+    def test_hidden_workspace_promoted_without_inventory_and_cache_is_private(self):
+        groups = {"secret " + str(i): [] for i in range(8)}
+        manifest = {}
+        w.plan_all([(DISPLAY, groups, "secret 0")], set(), manifest)
         with (
             tempfile.TemporaryDirectory() as temp,
             patch.object(w.Path, "home", return_value=Path(temp)),
         ):
-            for invalid in (b"{", b"[]", b'{"1": {"rows": []}}', b"{}" + b"x" * 262144):
-                with w.lock("viewport.lock") as fd:
-                    os.write(fd, invalid)
-                    os.ftruncate(fd, len(invalid))
-                self.assertEqual(w.load_viewports(), {})
+            w.save_viewports(manifest)
+            cached = w.load_viewports()
+            self.assertEqual(cached, manifest)
+            self.assertNotIn("secret", json.dumps(cached))
+            with patch.object(w, "query") as query:
+                props = sets(w.viewport_args(cached, {w.digest("secret 7")[:12]}))
+            query.assert_not_called()
+            self.assertEqual(props[w.header("secret 7", 1)][-1], "drawing=on")
 
-    def test_nonoverflow_unchanged_and_narrow_popup(self):
-        manifest = {}
-        args, _ = w.plan({"1": []}, "1", set(), 500, 1, manifest)
-        self.assertEqual(manifest, {})
-        self.assertNotIn("wsc.prev.d1", sets(args))
-        args, _ = w.plan({str(i): [] for i in range(7)}, "1", set(), 60, 1, manifest)
-        self.assertIn("wsc.overflow.d1", sets(args))
+    def test_all_fit_hides_extras_and_small_fallback_still_discloses(self):
+        groups = {str(i): [] for i in range(4)}
+        args, _ = w.plan(groups, "0", set(), 160, 1)
+        self.assertIn("drawing=off", sets(args)["wsc.overflow.d1"])
+        args, _ = w.plan(groups, "0", set(), 50, 1)
+        self.assertIn("icon=▾", sets(args)["wsc.overflow.d1"])
+        self.assertEqual(sum(n.startswith("wsc.entry.") for n in sets(args)), 4)
 
 
 class WorkspaceShortcutTests(unittest.TestCase):
@@ -518,10 +251,12 @@ class NativeGeometryTests(unittest.TestCase):
             patch.object(w, "save_topology"),
             patch.object(w, "save_viewports"),
             patch.object(w, "load_widths", return_value={}),
+            patch.object(w, "load_viewports", return_value={}),
             patch.object(w, "save_widths"),
             patch.object(w, "lock", return_value=contextlib.nullcontext()),
             patch.object(w, "query", return_value={"items": ["apple"]}),
             patch.object(w, "load_widths", return_value={}),
+            patch.object(w, "load_viewports", return_value={}),
             patch.object(w, "selection_args", return_value=[]),
             patch.object(w, "inventory", return_value=[(DISPLAY, {}, "")]),
             patch.object(w, "run") as run,
@@ -799,7 +534,15 @@ class SelectionTests(unittest.TestCase):
             self.assertTrue(all(name not in expected for name in self.names()))
             with patch.object(w, "query", return_value=[{"workspace": "1"}]) as query:
                 w.select()
-            self.assertEqual(set(sets(run.call_args.args[0])), expected)
+            self.assertEqual(
+                set(sets(run.call_args.args[0])),
+                expected
+                | {
+                    w.item_id("gap", "1", display=3),
+                    w.item_id("entry", "1", display=3),
+                    "wsc.overflow.d3",
+                },
+            )
             query.assert_called_once()
 
     def test_rapid_stale_callbacks_always_read_latest_and_clear_old_selection(self):
@@ -1172,13 +915,13 @@ class MultiDisplayTests(unittest.TestCase):
         first, images = w.plan_all(states, {"apple"})
         props = sets(first)
         self.assertIn("wsc.overflow.d7", props)
-        self.assertNotIn("wsc.overflow.d1", props)
+        self.assertIn("drawing=off", props["wsc.overflow.d1"])
         for name in props:
             did = 7 if name.endswith(".d7") else 1
             self.assertIn("display=" + str(did), props[name])
         self.assertEqual(
             len(images), 5
-        )  # two popups, two inline glyphs, overflow entry
+        )  # two popups, two inline glyphs, narrow fallback app
         existing = set(props) | {"apple"}
         refresh, _ = w.plan_all(states, existing)
         self.assertNotIn("--add", refresh)
@@ -1277,15 +1020,10 @@ class MembershipTests(unittest.TestCase):
         groups, _ = snapshot([window()])
         args, images = w.plan(groups, "1", {"apple"}, 80)
         props = sets(args)
-        self.assertIn("icon=+7", props["wsc.overflow"])
+        self.assertIn("icon=▾", props["wsc.overflow"])
         for ws in groups:
             self.assertIn("drawing=off", props[w.header(ws)])
             self.assertIn("label=Workspace " + ws, props[w.item_id("entry", ws)])
-        entry = w.item_id("entry", "1", "org.test.App")
-        self.assertIn("icon=" + w.app_icon("org.test.App", "Test")[0], props[entry])
-        self.assertIn("icon.color=" + w.TEXT, props[entry])
-        self.assertIn("icon.background.image.drawing=off", props[entry])
-        self.assertIn(entry, images)
         self.assertIn(
             "workspace_menus.py toggle wsc.overflow", " ".join(props["wsc.overflow"])
         )
@@ -1293,21 +1031,10 @@ class MembershipTests(unittest.TestCase):
         self.assertNotIn("wsc.overflow", sets(zero))
         self.assertTrue(all("drawing=off" in sets(zero)[w.header(ws)] for ws in groups))
 
-    def test_large_workspace_scrolls_every_icon_within_horizontal_budget(self):
+    def test_large_workspace_keeps_complete_right_click_inventory(self):
         groups = {"1": [(str(i), "App", i + 1) for i in range(50)], "2": []}
-        for budget in (120, 160, 300, 600, 1000):
-            manifest = {}
-            args, _ = w.plan(groups, "1", set(), budget, 1, manifest)
-            self.assertEqual(
-                sum(name.startswith("wsc.app.") for name in sets(args)), 50
-            )
-            panel = manifest["1"]
-            for start in range(len(panel["rows"])):
-                panel["start"] = start
-                self.assertLessEqual(
-                    sum(row[1] for row in w.viewport_rows(panel)) + 56, budget
-                )
-            self.assertFalse(any(arg.startswith("icon=+") for arg in args))
+        args, _ = w.plan(groups, "1", set(), 300, 1)
+        self.assertEqual(sum(n.startswith("wsc.popup.") for n in sets(args)), 50)
 
     def test_brackets_use_explicit_membership_and_fixed_gaps(self):
         groups, _ = snapshot([window()])
@@ -1351,7 +1078,9 @@ class MembershipTests(unittest.TestCase):
         groups, _ = snapshot([window(ws, bundle, "Name ' $x")])
         args, _ = w.plan(groups, ws, {"apple"}, 600)
         for name in sets(args):
-            self.assertRegex(name, r"^(space\.[1-7]|wsc\.[a-z]+\.[a-f0-9]{24})$")
+            self.assertRegex(
+                name, r"^(space\.[1-7]|wsc\.overflow|wsc\.[a-z]+\.[a-f0-9]{24})$"
+            )
         props = sets(args)[w.header(ws)]
         click = next(p.split("=", 1)[1] for p in props if p.startswith("click_script="))
         self.assertIn(shlex.quote(ws), click)
@@ -1445,33 +1174,17 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(order[-5:], ["clock", "date", "battery", "ram", "cpu"])
         self.assertNotIn("unrelated", removals)
 
-    def test_overflow_discloses_every_app(self):
-        groups, _ = snapshot(
-            [
-                window(str(ws), "org.test.App" + str(app), "App " + str(app), app + 1)
-                for ws in range(1, 8)
-                for app in range(20)
-            ]
-        )
-        manifest = {}
-        args, _ = w.plan(groups, "1", {"apple"}, 600, 1, manifest)
+    def test_overflow_discloses_every_workspace_with_safe_click_targets(self):
+        groups = {str(i): [] for i in range(8)}
+        args, _ = w.plan(groups, "7", set(), 600, 1)
         props = sets(args)
-        self.assertEqual(sum(name.startswith("wsc.popup.") for name in props), 140)
-        self.assertEqual(sum(name.startswith("wsc.app.") for name in props), 140)
-        self.assertFalse(any(name.startswith("wsc.more.") for name in props))
-        self.assertFalse(any(prop.startswith("icon=+") for prop in args))
         for ws in groups:
-            self.assertIn("popup.align=left", props[w.header(ws, 1)])
-        panel = manifest["1"]
-        reachable = set()
-        for index in range(len(panel["rows"])):
-            panel["start"] = index
-            shown = w.viewport_rows(panel)
-            self.assertLessEqual(sum(row[1] for row in shown) + 56, 600)
-            reachable.update(name for _, _, names in shown for name in names)
-        self.assertTrue(
-            {name for name in props if name.startswith("wsc.app.")} <= reachable
-        )
+            entry = props[w.item_id("entry", ws, display=1)]
+            self.assertIn(
+                "click_script="
+                + w.dismiss_before(w.command(w.AEROSPACE, "workspace", ws)),
+                entry,
+            )
 
     def test_display_budget_and_fallback(self):
         for left in (20, 300, 650, 900):
@@ -1497,6 +1210,7 @@ class MembershipTests(unittest.TestCase):
             patch.object(w, "geometry", return_value=[DISPLAY]),
             patch.object(w, "save_viewports"),
             patch.object(w, "load_widths", return_value={}),
+            patch.object(w, "load_viewports", return_value={}),
             patch.object(w, "save_widths"),
             patch.object(w, "inventory", side_effect=ValueError),
             patch.object(w, "run") as run,
@@ -1524,6 +1238,7 @@ class MembershipTests(unittest.TestCase):
             patch.object(w, "inventory", return_value=[(DISPLAY, groups, "1")]),
             patch.object(w, "save_viewports"),
             patch.object(w, "load_widths", return_value={}),
+            patch.object(w, "load_viewports", return_value={}),
             patch.object(w, "save_widths"),
             patch.object(w, "inline_budget", return_value=600),
             patch.object(w, "run") as run,
@@ -1537,6 +1252,7 @@ class MembershipTests(unittest.TestCase):
             patch.object(w, "lock", return_value=contextlib.nullcontext()),
             patch.object(w, "query", return_value={"items": ["apple"]}),
             patch.object(w, "load_widths", return_value={}),
+            patch.object(w, "load_viewports", return_value={}),
             patch.object(w, "selection_args", return_value=[]),
             patch.object(w, "geometry", return_value=[DISPLAY]),
             patch.object(w, "inventory", return_value=[(DISPLAY, groups, "1")]),

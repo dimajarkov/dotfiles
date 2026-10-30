@@ -226,7 +226,7 @@ with Path(os.environ['MENU_ACTIONS']).open('a') as output:
                         "on",
                     )
 
-    def test_hosts_subscribe_to_native_exit_routing_without_losing_scroll_dispatch(
+    def test_hosts_subscribe_to_native_exit_routing_without_scroll_navigation(
         self,
     ):
         manifest = {}
@@ -239,7 +239,7 @@ with Path(os.environ['MENU_ACTIONS']).open('a') as output:
         self.assertIn("mouse.exited.global", args)
         script = next(p[7:] for p in props[host] if p.startswith("script="))
         self.assertIn(" event 1", script)
-        self.assertIn("mouse.scrolled", args)
+        self.assertNotIn("mouse.scrolled", args)
         manifest["1"]["screen"] = 1
         with patch.object(w.Path, "home", return_value=self.root):
             w.save_viewports(manifest)
@@ -262,7 +262,7 @@ with Path(os.environ['MENU_ACTIONS']).open('a') as output:
             text=True,
         )
         with patch.object(w.Path, "home", return_value=self.root):
-            self.assertEqual(w.load_viewports()["1"]["start"], 2)
+            self.assertEqual(w.load_viewports()["1"]["start"], 0)
 
 
 class MenuExitTests(unittest.TestCase):

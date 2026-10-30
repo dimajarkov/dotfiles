@@ -22,30 +22,37 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 
 2. (optional) Use an **exploration subagent** to conduct any exploration required by the tickets - relevant codebase files or external documentation. Ensure the exploration subagent can save files - it should save its markdown notes in a directory outside the repo, accessible by all future subagents. This lets **implementer subagents** focus on implementation rather than exploration.
 
-3. Create the integration branch.
+3. Resolve the existing canonical integration branch and checkout for this spec using the repository's checkout owner.
+   Create them only when no owner exists; resume never creates another copy.
    If the issue tracker closes work through PRs, or the user asks for one, open a draft PR after the first merge in step 5 (a branch with no commits ahead of main can't open one), marked as closing the parent spec on merge and linking all child tickets.
    Opening the draft does not require all children to be complete or closed.
    Immediately after creating the draft PR, complete the initial PR review checkpoint below.
 
-4. Use **implementer subagents** to implement each ticket, each in its own worktree on its own branch. Each implementer subagent:
-   - confirms its worktree is based on the integration branch before starting, and resets onto it if not;
+4. Use **implementer subagents** to implement each ticket in its one canonical branch and checkout, resolved by stable ticket identity through the repository's checkout owner before allocation.
+   Pass that exact branch and checkout to every worker, reviewer, and merger for the ticket.
+   Implementation, cold/warm startup, proof, review fixes, retries, reconciliation, rehearsal, and restoration run sequentially there; these phases do not allocate branches or worktrees.
+   Each implementer subagent:
+   - verifies the checkout's identity, ownership, current work and integration base; preserves existing changes and merges needed integration updates rather than resetting retained work;
    - calls the Skill tool with `tdd` to build the ticket;
    - merges the integration branch tip into its own branch before reporting done
 
-5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent**.
+5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent** working in the existing integration checkout.
    Verify the integrated acceptance criteria and resolve relevant review findings, then close that child using the ticket lifecycle below.
    A worker report or successful merge alone is not completion evidence.
 
 6. If this changes the **frontier** of available tickets, kick off more **implementer subagents** to work on the new tickets. This allows for maximum concurrency.
 
-7. Once all tickets are complete, call the Skill tool with `code-review` on the integration branch. Fix all issues raised by the code review in a single **implementer subagent**.
+7. Once all tickets are complete, call the Skill tool with `code-review` on the integration branch.
+   Fix all issues raised by the code review in a single **implementer subagent** in the existing integration checkout.
    Reopen any child whose completion is invalidated, then verify the correction and close it again with updated evidence.
 
 8. If a draft PR exists, after the final code-review fixes, repeat the PR review checkpoint below before marking it ready for review.
    Otherwise, resolve each ticket the way the issue tracker closes work, and report the integration branch.
 
-9. Handle **implementer subagent** worktrees according to repository ownership and retention rules.
-   Closing a ticket does not authorize releasing a retained lease or deleting a worktree.
+9. Complete the repository's guarded return after verified delivery into the recorded integration target or merged PR, preserving runtime data and evidence.
+   No second human completion prompt is required unless the repository has an explicit task-specific hold.
+   Closing a ticket alone is not landing proof; report retained ownership and the exact blocker when the guarded return refuses.
+   Returning reusable capacity is separate from pruning or deleting a checkout, which still requires explicit approval.
 
 ## Ticket lifecycle
 
@@ -75,16 +82,17 @@ Publish the checkpoint in the PR description or review handoff, not only a priva
 
 Label the initial draft checkpoint partial whenever the all-included answer is not yes.
 
-Load the generic model-invoked `plannotator` skill and use its documented PR code-review route for the actual PR URL: call the `plannotator` tool when available; otherwise run `plannotator review <PR_URL> --json`.
-When using the CLI, classify the review outcome only by `decision`, never by exit-code success or message substrings.
+Record code-review findings and their resolution against the reviewed base and head SHAs.
+If either SHA changes, assess the new diff and refresh affected review and acceptance evidence before final readiness.
 
-Handle feedback and publish the Plannotator code-review outcome in the checkpoint against the reviewed base and head SHAs; refresh after feedback fixes as needed to obtain current approval.
-
-The recorded outcome remains historical evidence for its snapshot, and approval may be reused only for the exact reviewed base/head; if either SHA changes, refresh the review before final readiness.
-
-Before final readiness, require verified inclusion and acceptance-criteria completion for every ticket, addressed blocking feedback, and approval of the exact current base/head snapshot.
-
-If review startup fails, is dismissed, returns no decision or feedback, or lacks approval for the current SHAs, leave the PR draft and report the blocker.
+Before final readiness, require verified inclusion and acceptance-criteria completion for every ticket and resolution of blocking code-review findings.
+Keep the PR draft while implementation, required verification or blocking findings remain incomplete.
 
 Before final readiness, reconcile every verified child to closed with completion evidence and keep the parent open until merge.
-Closure status never substitutes for inclusion or acceptance proof, and closed children never substitute for approval of the exact PR snapshot.
+Closure status never substitutes for inclusion, acceptance proof or code review.
+
+## Evidence format
+
+Use tests, API/database receipts, operational readback and direct browser checks suited to each acceptance criterion.
+Video recording, upload and playback are not completion gates for this workflow; record videos only when the user explicitly requests them.
+Continue functional and visual verification where relevant, and report unproven behavior honestly.

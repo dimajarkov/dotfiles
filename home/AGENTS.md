@@ -21,11 +21,12 @@ These are common instructions for Dmitri's agents across all scenarios.
 
 ## Treehouse task lifecycle
 
-- Keep task worktrees durably leased (`get --lease` for new work or `lease` for an existing slot) until Dmitri explicitly declares that specific job finished.
-- A PR handoff, merge, passing CI, idle terminal, or agent exit is not completion approval.
-- In the same message as a PR handoff, name the job and slot and include: "Please tell me when Treehouse job '<job>' (slot <slot>) is finished so I can return its worktree."
-- After completion approval, verify the slot's identity and ownership and preserve uncommitted work and unmerged commits before returning it.
-- Pruning or deleting worktrees requires separate explicit approval; prefer returning finished slots for reuse with their ignored caches intact.
+- Keep one canonical branch and durably leased checkout per logical task, reused by every agent and implementation, proof, review, retry, reconciliation, rehearsal, and recovery phase.
+- Resolve existing task ownership before allocation; different phase names or agent holders do not establish a new task.
+- After verified delivery into the task's recorded integration target or merged PR, return the exact clean, quiet lease through the repository's guarded release path without asking for a second completion approval.
+- A handoff, ticket closure, passing CI, idle terminal, or agent exit alone is not delivery proof; retain unresolved work with an exact blocker and owner.
+- Before returning, verify identity, landing, ownership and zero surviving owned processes; preserve uncommitted files, unmerged commits, runtime data, and evidence.
+- Pruning or deleting worktrees still requires explicit approval; prefer returning finished slots for reuse with their ignored caches intact.
 
 ## Browser tool routing
 

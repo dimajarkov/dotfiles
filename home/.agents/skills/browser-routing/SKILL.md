@@ -25,12 +25,16 @@ This routing check preserves all browser isolation, authentication, privacy, own
 
 ## Computer Use through Codex
 
-When rendered/native interaction is required, use Computer Use through the Codex harness for:
+Use ownership-checked background browser commands for authentication, DOM/CSS/network/console diagnostics, rendered-page screenshots and responsive viewport checks.
+Choose an exact owned endpoint and tab; foreground identity, `document.hasFocus()`, native title challenges and user inactivity are not authorization prerequisites for these operations.
+Keep runtime/lease, process/profile, endpoint-generation, exact-page/document, authenticated subject and provider boundaries intact.
+Background operations must not activate targets, call `Page.bringToFront`, focus a window, switch workspaces or alter the user's desktop.
+Read [background operations and resizing](references/background-and-resize.md) for the supported commands and no-focus proof.
 
-- End-user flows and visual QA.
-- Layout, spacing, clipping, focus, hover, drag, animation, and responsive behavior.
-- Native macOS dialogs, permissions, menus, other applications, and cross-app workflows.
-- Canvas, video, PDF, and anything whose important state exists only in rendered pixels.
+Use Computer Use through the Codex harness for native mouse/keyboard input, actual OS focus/hover/drag behavior, macOS dialogs, permissions, menus and cross-app workflows.
+Verify native foreground routing immediately before native input.
+A background rendered-page PNG proves the captured pixels and measured viewport, not a native input journey or OS cursor behavior.
+Keep foreground native work serialized; independent background operations may continue while another app is foregrounded.
 
 Choose the route from the task, not the system default browser:
 
@@ -74,6 +78,16 @@ Before launch or attachment, use the repository-owned QA/runtime/authentication 
 Keep Herdr placement, worktree leases, local routing, provider guards, and approved mutation scope binding; choosing Chrome does not waive them.
 A repository without a supported isolated route needs prerequisite tooling, not a raw browser launch or an arbitrary CDP endpoint.
 
+### Recover the exact QA workspace, window and tab
+
+For native Chrome QA acquisition/recovery, read [workspace recovery](references/qa-workspace.md) and use `scripts/qa-route.mjs` to save and recover the task binding.
+Attach the repository-owned isolated browser and explicitly bind its intended tab.
+Use `focus` for OS recovery and the `native-prepare` / `native-confirm` title handshake before Computer Use input, passing the title actually observed through Computer Use.
+The helper revalidates process/profile/endpoint and tab-to-window identity, restores the task's named AeroSpace workspace, and prefers an external monitor with a laptop fallback.
+Require a matching native title challenge and fresh URL/rendered state before native input; app-path selection can still bind another Chrome process after OS focus succeeds.
+Keep native Computer Use serialized across tasks and report an acquisition mismatch without touching other browsers.
+Use explicit endpoint and page selection for debugging; missing or ambiguous identity stops recovery instead of choosing the first, last or similarly titled window/tab.
+
 ### Browser lifecycle: preflight, reuse, close
 
 1. **Preflight before launch.** Confirm the required tools and host are actually available, including Codex Computer Use when native interaction is needed.
@@ -106,7 +120,7 @@ Cleanup revalidates process birth, executable, profile, and task ownership befor
 Age, inactivity, an expired allocation, or an exited parent is a reason to investigate, not permission to stop another task's browser.
 Preserve personal/default profiles, unrelated browsers, active QA sessions, retained app data, and worktree leases; never use kill-all or broad process-name matching.
 
-Use Codex Computer Use for end-user visual/native interaction, with the verified private QA window as its target.
+Use Codex Computer Use for native input with the verified private QA window as its target; use exact-owned background capture for rendered-page screenshots.
 Apply repository-specific authentication, interactive proof, capture, and review rules through their owning commands; CDP diagnostics are not a substitute for observing the rendered state.
 Capture only the verified task page through supported tooling, not unrelated tabs, another profile, or the desktop.
 Use fabricated synthetic accounts and the repository's supported authentication boundary; profile isolation is not authorization.
