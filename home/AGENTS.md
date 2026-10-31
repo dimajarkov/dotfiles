@@ -37,11 +37,6 @@ These are common instructions for Dmitri's agents across all scenarios.
 - Chrome evidence proves Chrome behavior, not Zen behavior; separate Zen acceptance is required only when the task explicitly requires it.
   A missing Zen route is still a blocker for Zen-specific work, not permission for silent browser substitution.
 
-## Lavish artifact authoring
-
-Before creating or substantially revising a Lavish HTML artifact, read `~/.agents/skills/lavish/references/artifact-preferences.md` for Dmitri's progressive-disclosure and breadcrumb navigation defaults.
-This applies even when invoking the CLI directly without loading the Lavish skill.
-
 ## Software installation
 
 - Follow repository policy, its declared manager, existing lockfile, and isolated environment; resolve conflicting evidence first.
