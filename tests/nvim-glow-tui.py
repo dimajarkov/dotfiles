@@ -101,6 +101,27 @@ def assert_colored_heading(output, label):
     print(f"PASS: {label} renders the document heading in color")
 
 
+def assert_wheel_scrolling(editor, socket, label):
+    # Trackpads send the same SGR wheel reports as a mouse wheel. Scroll
+    # the reader itself, not Neovim's terminal scrollback or source buffer.
+    # Pace reports across frames: Neovim coalesces simultaneous wheel events.
+    for _ in range(15):
+        editor.send(b"\x1b[<65;20;10M")
+        editor.read(0.05)
+    editor.read(0.5)
+    screen = visible_screen(socket)
+    assert TITLE.decode() not in screen and "Scroll regression line" in screen, (
+        f"{label}: wheel down did not scroll the Glow document:\n{screen}"
+    )
+    for _ in range(30):
+        editor.send(b"\x1b[<64;20;10M")
+        editor.read(0.05)
+    editor.read(0.5)
+    screen = visible_screen(socket)
+    assert TITLE.decode() in screen, f"{label}: wheel up did not restore the heading:\n{screen}"
+    print(f"PASS: trackpad scrolls down and up in {label}")
+
+
 with tempfile.TemporaryDirectory(prefix="nvim-glow-") as directory:
     root = Path(directory).resolve()
     document = root / "reader's color check.md"
@@ -109,7 +130,8 @@ with tempfile.TemporaryDirectory(prefix="nvim-glow-") as directory:
         "# Glow Color Regression\n\n## A styled heading\n\n"
         "A **bold** phrase with [a link](https://example.com).\n\n"
         "| Question | Answer |\n| --- | --- |\n"
-        "| Which theme? | `dark` and colorful |\n"
+        "| Which theme? | `dark` and colorful |\n\n"
+        + "\n\n".join(f"Scroll regression line {number:03d}" for number in range(1, 101))
     )
     settings = root / "settings"
     settings.mkdir()
@@ -167,6 +189,7 @@ with tempfile.TemporaryDirectory(prefix="nvim-glow-") as directory:
         editor.send(b":Glow\r")
         assert_colored_heading(editor.read(2), "Neovim :Glow")
         assert TITLE.decode() in visible_screen(socket), "initial preview is blank"
+        assert_wheel_scrolling(editor, socket, "terminal-input mode")
         # Shrink height as well as width, repeatedly. The former width-only
         # fixture passed even when the actual document disappeared on shrink.
         for columns, rows in ((80, 25), (60, 18), (40, 12), (120, 40), (80, 25)):
@@ -182,6 +205,7 @@ with tempfile.TemporaryDirectory(prefix="nvim-glow-") as directory:
         # Resizing also needs to work after leaving terminal-input mode.
         editor.send(b"\x1c\x0e")  # <C-\><C-n>
         editor.read(0.2)
+        assert_wheel_scrolling(editor, socket, "terminal-normal mode")
         for columns, rows in ((60, 18), (120, 40), (80, 25)):
             editor.resize(columns, rows)
             editor.read(0.7)

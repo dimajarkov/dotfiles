@@ -284,6 +284,13 @@ local function open_with_glow()
 		vim.notify('Could not start Glow', vim.log.levels.ERROR)
 		return
 	end
+	-- Glow does not request mouse input, so Neovim otherwise scrolls the
+	-- terminal view instead of the document. Send the reader's scroll keys.
+	for key, input in pairs({ ScrollWheelDown = 'j', ScrollWheelUp = 'k' }) do
+		vim.keymap.set({ 't', 'n' }, '<' .. key .. '>', function()
+			vim.api.nvim_chan_send(job, input)
+		end, { buffer = preview, desc = 'Scroll Glow document' })
+	end
 	vim.cmd.startinsert()
 end
 
