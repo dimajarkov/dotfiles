@@ -22,7 +22,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const settingsPath = join(root, "home/.pi/agent/settings.json");
 const settings = JSON.parse(readFileSync(settingsPath));
 const priorPin = "116f5a611a879e99c65ddd61d527823e277c4d47";
-const candidatePin = "56ef9441059687651ca35340e7b633317afe8b4f";
+const candidatePin = "9237ccff593181698f3b80dfb3562b1ff1bb3cad";
 const guidancePath = "home/.pi/agent/skills/subagents/SKILL.md";
 const baselineRevision =
   process.env.PI_HERDR_BASE_REVISION ?? "f50353be0e664f374e38f8fed95877cd1001bbe7";
@@ -331,7 +331,21 @@ try {
     0,
     "child completion extension must load alongside installed resources",
   );
-  assert.ok(child.shortcuts.has("alt+j"), "child must retain its tools-widget shortcut");
+  assert.ok(child.shortcuts.has("ctrl+alt+j"), "child must retain its tools-widget shortcut");
+  const herdrKeys = readFileSync(join(root, "home/.config/herdr/config.toml"), "utf8")
+    .split("[keys]")[1]
+    .split("[ui]")[0];
+  const directNavigation = new Set(
+    [...herdrKeys.matchAll(/"([^"\n]+)"/g)]
+      .map((match) => match[1])
+      .filter((key) => key.startsWith("alt+")),
+  );
+  for (const key of child.shortcuts.keys())
+    assert.ok(!directNavigation.has(key), `child shortcut intercepts configured Herdr ${key}`);
+  assert.ok(
+    child.commands.some((command) => command.invocationName === "subagent-tools"),
+    "child has a command toggle independent of terminal modifier encoding",
+  );
   writeFileSync(join(privateRoot, "child.json"), JSON.stringify(child.inventory, null, 2), {
     mode: 0o600,
   });
@@ -354,7 +368,7 @@ try {
     "candidate must not add parent shortcut conflicts",
   );
   const newChildDiagnostics = child.runner.getShortcutDiagnostics();
-  assert.equal(newChildDiagnostics.length, 0, "Alt+J must not collide with native new-line");
+  assert.equal(newChildDiagnostics.length, 0, "Ctrl+Alt+J must not collide with native new-line");
   const toolNames = candidate.inventory.tools.map((tool) => tool.name);
   for (const name of [
     "subagent",

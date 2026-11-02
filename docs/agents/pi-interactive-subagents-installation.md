@@ -6,7 +6,7 @@ That mutable checkout is not the installation source.
 
 ## Provisional nested-delegation candidate
 
-`home/.pi/agent/settings.json` selects published revision `56ef9441059687651ca35340e7b633317afe8b4f` from [package draft PR #3](https://github.com/dimajarkov/pi-interactive-subagents/pull/3).
+`home/.pi/agent/settings.json` selects published revision `9237ccff593181698f3b80dfb3562b1ff1bb3cad` from [package draft PR #3](https://github.com/dimajarkov/pi-interactive-subagents/pull/3).
 The prior selection is `116f5a611a879e99c65ddd61d527823e277c4d47`.
 This candidate prepares [dotfiles #60](https://github.com/dimajarkov/dotfiles/issues/60), part of [spec #54](https://github.com/dimajarkov/dotfiles/issues/54).
 It is provisional: [#59](https://github.com/dimajarkov/dotfiles/issues/59) still lacks native rendered acceptance because Computer Use refuses terminal apps.
@@ -15,7 +15,7 @@ Keep #60 open and the integration PR draft until that gate and affected exact-re
 This is neither release readiness nor authorization to merge, switch Home Manager, reload active Pi or replace a Herdr server.
 
 The package manifest loads the extension once, registering `subagent`, `subagent_interrupt`, `subagents_list`, `subagent_resume` and the existing workflow commands.
-The matching `home/.pi/agent/skills/subagents/SKILL.md` covers recursive and same-role tools, branch-column placement, autonomous waiting, immediate-parent outcomes, explicit denials, Alt+J and receipt-based recovery.
+The matching `home/.pi/agent/skills/subagents/SKILL.md` covers recursive and same-role tools, branch-column placement, autonomous waiting, immediate-parent outcomes, explicit denials, Ctrl+Alt+J and receipt-based recovery.
 `home.nix` retains its existing out-of-store skill mapping.
 Parent `openai-codex/gpt-6.1-sol` with **medium** thinking and all unrelated settings remain unchanged.
 The old custom subagents, ask-user and built-in MCP extensions retain their exclusions.
@@ -45,7 +45,7 @@ Validate the actual intended server's branch capability and a disposable public 
 
 `tests/fixtures/pi-herdr-installation.mjs` uses the **installed Pi 1.4.0** public resource loader, SDK sessions without hooks and normal package resolution.
 Use `/nix/store/22d3lfn7mahhd8hfbxz430fdhp8c5hh6-pi-coding-agent-1.4.0/lib/pi-coding-agent/packages` for native provenance, not the fork's unit SDK 1.1 dependency.
-The fixture compares the installed prior selection with the candidate, checks tools, bundled definitions, filtered skills, workflow prompts, command diagnostics and Alt+J without the former Ctrl+J/new-line collision.
+The fixture compares the installed prior selection with the candidate, checks tools, bundled definitions, filtered skills, workflow prompts, command diagnostics and Ctrl+Alt+J without the former Ctrl+J/new-line collision.
 The parent retains its unrelated tools; role SDK allowlists exclude unrelated browser tools and Claude.
 No active visual host is supplied, so `codex_computer_use` remains unavailable and no visual proof is claimed.
 

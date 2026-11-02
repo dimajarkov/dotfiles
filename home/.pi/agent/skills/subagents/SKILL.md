@@ -82,7 +82,8 @@ Use `caller_ping` when guidance is needed; it notifies the immediate parent and 
 Exit-producing help and `subagent_done` refuse while owned work remains outstanding; continue coordination in the retained conversation.
 Human takeover survives same-session native reload and descendant completion; it keeps that conversation interactive.
 
-The child tools widget expands and collapses with `Alt+J`.
+The child tools widget expands and collapses with `Ctrl+Alt+J` or the `/subagent-tools` command.
+Herdr keeps its configured navigation keys, including `Alt+J` for pane focus; use the command if a terminal consumes modifier keys.
 Parent completion messages expand with `Ctrl+O` to show the full summary and native session reference.
 Herdr keeps the master on the left and its direct children in columns to the right.
 Descendants stack below their immediate parent in the same top-level branch column, with contiguous subtrees in accepted launch order even at deeper levels.

@@ -50,7 +50,7 @@
     "npm:@plannotator/pi-extension",
     "npm:pi-image-view@0.4.0",
     "npm:@narumitw/pi-goal@0.54.8",
-    "git:github.com/dimajarkov/pi-interactive-subagents@56ef9441059687651ca35340e7b633317afe8b4f",
+    "git:github.com/dimajarkov/pi-interactive-subagents@9237ccff593181698f3b80dfb3562b1ff1bb3cad",
     {
       "source": "git:github.com/HazAT/pi-config@34829ad8053667e16b1288f9c1d24d8a300ec077",
       "extensions": [
