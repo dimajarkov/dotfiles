@@ -6,6 +6,7 @@ let
   dotfiles = "${config.home.homeDirectory}/.dotfiles";
   backpassCli = pkgs.callPackage ./nix/packages/backpass-cli.nix {};
   piUpstream = pkgs.callPackage ./nix/packages/pi-coding-agent.nix {};
+  piRules = pkgs.callPackage ./nix/packages/pi-claude-rules.nix {};
   hunkReview = pkgs.callPackage ./nix/packages/hunk.nix {};
   glowReader = pkgs.callPackage ./nix/packages/glow.nix {};
   hunkCommand = if hunkTurnReviewProfile != null then hunkTurnReviewProfile else pkgs.writeShellApplication {
@@ -417,6 +418,9 @@ in {
 
   home.file.".pi/agent/settings.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/settings.json";
+  home.file.".pi/agent/claude-rules.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/claude-rules.json";
+  home.file.".pi/agent/packages/pi-claude-rules".source = piRules;
   home.file.".pi/agent/tsconfig.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/tsconfig.json";
   home.file.".pi/agent/agents/Explore.md".source =

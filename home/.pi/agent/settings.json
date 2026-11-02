@@ -46,6 +46,7 @@
     "npm:@ryan_nookpi/pi-extension-codex-fast-mode@0.2.8",
     "npm:pi-mcp-adapter@2.20.1",
     "npm:pi-web-access@0.33.0",
+    "~/.pi/agent/packages/pi-claude-rules",
     "git:github.com/dimajarkov/pi-packages@93f8e44f26f6d263ba611db32e4085ce8e4e7bf1",
     "npm:@plannotator/pi-extension",
     "npm:pi-image-view@0.4.0",
