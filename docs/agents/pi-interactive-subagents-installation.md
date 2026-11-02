@@ -1,128 +1,86 @@
 # Interactive Pi subagents installation candidate
 
-The implementation repository is `dimajarkov/pi-interactive-subagents`; dotfiles owns its declarative installation and matching delegation skill.
-The canonical development checkout is `~/pi-interactive-subagents`, with ticket worktrees kept separately.
-Production settings select an immutable Git revision, not that mutable checkout.
-This document describes a candidate and its validation procedure, not an active deployment.
+Dotfiles owns the immutable Pi package selection and matching delegation skill.
+The implementation repository is `dimajarkov/pi-interactive-subagents`; its canonical development checkout is `~/pi-interactive-subagents`.
+That mutable checkout is not the installation source.
 
-## Declared resources
+## Provisional nested-delegation candidate
 
-`home/.pi/agent/settings.json` declares the fork at `116f5a611a879e99c65ddd61d527823e277c4d47` through Pi's existing `packages` mechanism.
-The package's own manifest loads its extension once.
-The same settings select only `extensions/todos/index.ts`, `skills/write-todos` and `skills/commit` from `HazAT/pi-config@34829ad8053667e16b1288f9c1d24d8a300ec077`.
-Those are paths relative to that repository's root; a private proof's `config/` destination is not a package resource prefix.
-The package filter excludes its other extensions, prompts and themes and does not install its personal global settings or models.
+`home/.pi/agent/settings.json` selects published revision `56ef9441059687651ca35340e7b633317afe8b4f` from [package draft PR #3](https://github.com/dimajarkov/pi-interactive-subagents/pull/3).
+The prior selection is `116f5a611a879e99c65ddd61d527823e277c4d47`.
+This candidate prepares [dotfiles #60](https://github.com/dimajarkov/dotfiles/issues/60), part of [spec #54](https://github.com/dimajarkov/dotfiles/issues/54).
+It is provisional: [#59](https://github.com/dimajarkov/dotfiles/issues/59) still lacks native rendered acceptance because Computer Use refuses terminal apps.
+Source review, native API/process/transcript checks and isolated installation do not establish rendered grouping, readability or physical keyboard behavior.
+Keep #60 open and the integration PR draft until that gate and affected exact-revision checks are complete.
+This is neither release readiness nor authorization to merge, switch Home Manager, reload active Pi or replace a Herdr server.
 
-`home.nix` maps the matching `home/.pi/agent/skills/subagents` through the existing out-of-store file mechanism.
-Pi settings enable that rewritten skill while retaining the negative exclusions for the previous custom subagents extension, legacy ask-user extension and built-in MCP extension.
-The replacement registers upstream `subagent`, `subagent_interrupt`, `subagent_resume` and `subagents_list` tools and `/subagent`, `/iterate` and `/plan` commands.
-It does not introduce the old headless tool aliases or a custom dashboard.
-Parent `openai-codex/gpt-6.1-sol`, `xhigh`, enabled model filtering and unrelated resource declarations remain unchanged.
+The package manifest loads the extension once, registering `subagent`, `subagent_interrupt`, `subagents_list`, `subagent_resume` and the existing workflow commands.
+The matching `home/.pi/agent/skills/subagents/SKILL.md` covers recursive and same-role tools, branch-column placement, autonomous waiting, immediate-parent outcomes, explicit denials, Alt+J and receipt-based recovery.
+`home.nix` retains its existing out-of-store skill mapping.
+Parent `openai-codex/gpt-6.1-sol` with **medium** thinking and all unrelated settings remain unchanged.
+The old custom subagents, ask-user and built-in MCP extensions retain their exclusions.
 
-## Isolated verification
+`HazAT/pi-config@34829ad8053667e16b1288f9c1d24d8a300ec077` still selects only `extensions/todos/index.ts`, `skills/write-todos` and `skills/commit`, with empty prompts and themes.
+Preserve every unrelated package pin, model filter, resource and software owner.
 
-`tests/fixtures/pi-herdr-installation.mjs` uses the installed Pi 1.1 public resource loader, package-source resolver and extension registration surfaces.
-It imports the actual installed npm extensions along with the candidate, checks registered tools, commands, shortcut diagnostics, selected skills, effective bundled definitions and emitted workflow prompts, then reloads the baseline settings to verify rollback.
-It never calls session-start hooks, launches a model, starts a multiplexer, opens a browser or switches Home Manager.
-The installed npm cache is cloned into the private fixture directory rather than exposed as a writable shared prefix.
-Credentials remain an unchanged pointer to the existing approved file; the proof never copies their contents.
-Native history and project sentinels, original native history contents, active settings and credential hashes are checked across the candidate and rollback.
-Private inventories and diagnostics remain outside this public repository.
+## Required Herdr candidate
 
-Run the fixture from the isolated dotfiles candidate, supplying the existing Nix Pi runtime's packages directory and verified immutable local source checkouts:
+The nested package requires Herdr source `e3a21bb0e8eded3c0b97b13083fc54f4c6ff7c6a`, published in [Herdr draft PR #2](https://github.com/dimajarkov/herdr/pull/2).
+Its tree matches verified `5f5c12172bd14fd23772a588cb3e1eee5f08dc14` and includes prerequisite Ghostty fix `496acfe5978b12f27637c39821ce4145a474cfac`.
+The tested candidate binary SHA-256 is `644119907d433f16ccad9a1ef7a6e631e8e6d1f44d3025fa31c80acc1a053798`.
+
+In addition to managed job/control v1 and cooperative control, the target server must expose `terminal.job.branch_capabilities` and `terminal.job.launch_branch`.
+The branch capability response and successful managed-job receipt retain version 1 shapes; a version string alone cannot prove branch compatibility.
+The package performs capability and identity preflight before allocation, preserving zoom refusal and requiring at least 40 usable columns and 12 usable rows per affected pane.
+Unsupported servers refuse without falling back to legacy splits.
+The existing `Formula/herdr.rb` pin at `c8d5b8f0d1b0ab9c7e98d05b1ed5b9606f87599f` lacks the new branch methods and is deliberately unchanged by this provisional preparation.
+
+After native acceptance and exact-head review, prepare a separately reviewed Homebrew formula revision with the accepted source, archive checksum, build identity and branch schema checks.
+Follow [compatible Herdr installation](herdr-compatible-installation.md) for the existing package owner and guarded maintenance procedure.
+Publish the formula before installation, preserve the old keg/receipt and native state, and restart only explicitly approved named servers.
+Installing a CLI leaves already-running servers unchanged.
+Validate the actual intended server's branch capability and a disposable public Pi launch before considering it compatible.
+
+## Isolated installation, reload and rollback proof
+
+`tests/fixtures/pi-herdr-installation.mjs` uses the **installed Pi 1.4.0** public resource loader, SDK sessions without hooks and normal package resolution.
+Use `/nix/store/22d3lfn7mahhd8hfbxz430fdhp8c5hh6-pi-coding-agent-1.4.0/lib/pi-coding-agent/packages` for native provenance, not the fork's unit SDK 1.1 dependency.
+The fixture compares the installed prior selection with the candidate, checks tools, bundled definitions, filtered skills, workflow prompts, command diagnostics and Alt+J without the former Ctrl+J/new-line collision.
+The parent retains its unrelated tools; role SDK allowlists exclude unrelated browser tools and Claude.
+No active visual host is supplied, so `codex_computer_use` remains unavailable and no visual proof is claimed.
 
 ```sh
-PI_TEST_PACKAGES=<existing-pi-store-path>/lib/pi-coding-agent/packages \
-PI_HERDR_FORK_SOURCE=<verified-fork-checkout> \
-PI_HERDR_DEPENDENCY_SOURCE=<verified-HazAT-pi-config-checkout> \
+PI_TEST_PACKAGES=/nix/store/22d3lfn7mahhd8hfbxz430fdhp8c5hh6-pi-coding-agent-1.4.0/lib/pi-coding-agent/packages \
+PI_HERDR_FORK_SOURCE=/Users/dmitrijarkov/pi-interactive-subagents \
+PI_HERDR_DEPENDENCY_SOURCE="$HOME/.pi/agent/git/github.com/HazAT/pi-config" \
+PI_HERDR_NETWORK_INSTALL=1 \
 node tests/fixtures/pi-herdr-installation.mjs
 ```
 
-Each source checkout must contain the exact declared commit.
-The fixture seeds detached private Git caches at those commits and uses normal Pi package filtering with network disabled; no global install or package-manager migration occurs.
-The resource fixture establishes installed-resource reload and rollback, not model execution or GUI behavior.
-A separate fresh network-install proof on 2026-10-15 ran the existing Pi CLI's `install` command for each published immutable package in a new owner-private agent directory.
-Both commands succeeded, and the resulting Git cache heads matched the exact fork and HazAT commits declared above.
-The reviewed filtered settings and matching subagents skill were applied there before any resource loading.
-That fresh proof created no auth file, copied no credentials, started no model or resource hooks and left active settings unchanged.
-It establishes the declared package-fetch/install path independently of the offline-seeded resource fixture.
-Review the emitted private report for every load error, command conflict and shortcut warning, including pre-existing diagnostics, before rollout.
-A new duplicate tool name or shadowed workflow command must be resolved explicitly, not hidden by registration order.
-The inspected installed resources emit eight pre-existing Infisical skill description-length warnings; the candidate preserves and reports them.
-The child completion extension is also reloaded alongside the installed resources.
-Its upstream `Ctrl+J` widget toggle deliberately overrides Pi's native `tui.input.newLine` shortcut in child sessions; the SDK reports this exact conflict and the fixture retains it.
-The candidate adds no parent shortcut or command conflicts and does not change the parent's keybindings to conceal the child override.
-Existing `browser_*` tools remain registered as unrelated installed resources.
-SDK sessions built without starting hooks verify the scout/reviewer, worker and visual-tester allowlists exclude those tools, while the parent retains its existing tools.
-Without an active visual-host capability, the resource-only visual-tester has read/write and control tools but lacks `codex_computer_use`; this is recorded as unavailable capability, not a successful visual route.
+The default resource pass seeds private detached caches from verified local commits; `PI_HERDR_NETWORK_INSTALL=1` additionally performs fresh public Pi CLI installs into a separate private agent directory.
+It verifies fetched heads before applying the reviewed filtered settings and guidance to the resource loader.
+The CLI installs neither credentials nor native sessions.
+The reload path clones installed npm/Git caches privately, preserving unrelated resources without writing to active caches.
+It uses an empty private auth file, disables model network/refresh and never starts a model, session hooks, mux, browser or Computer Use.
+Credential values are never read; the live credential identity and metadata remain unchanged.
 
-## Deliberate update and rollout
+Resource reload alone does not change an existing Git cache revision.
+The fixture reinstalls the prior source through the public Pi CLI using the verified local source as its private cache origin, then restores the entire prior settings selection, the prior immutable cache head and the exact matching prior skill text from base `f50353be0e664f374e38f8fed95877cd1001bbe7`.
+It compares registered resources after rollback and checks native history hashes, project sentinels, active settings and worktree identities, including missing registered paths.
+Private inventories and evidence remain in the emitted owner-private temporary directory outside this public repository.
+Review all diagnostics, including unchanged baseline warnings; resource checks do not substitute for #59 acceptance.
 
-Fetch upstream in the separate fork, inspect the baseline diff, merge the port's integration branch deliberately and complete the issue acceptance and exact-head review checkpoints.
-Record the accepted full fork SHA in the package declaration and update this document in the same installation change.
-Keep the HazAT planning-resource SHA fixed unless its selected resources are intentionally reviewed and tested too.
-Repeat the isolated reload, conflict check and rollback checks against the final declared SHAs.
-Publish the exact fork revision before asking another machine to fetch it through Pi.
-For a fresh isolated network-install check after the fork SHA is published, use the existing Pi binary with a separate private agent directory:
+## Approved rollout and history-preserving rollback
 
-```sh
-candidate_agent_dir="$(mktemp -d "${TMPDIR:-/tmp}/pi-herdr-network-install.XXXXXX")"
-PI_CODING_AGENT_DIR="$candidate_agent_dir" pi install git:github.com/dimajarkov/pi-interactive-subagents@116f5a611a879e99c65ddd61d527823e277c4d47
-PI_CODING_AGENT_DIR="$candidate_agent_dir" pi install git:github.com/HazAT/pi-config@34829ad8053667e16b1288f9c1d24d8a300ec077
-```
+After all acceptance and review gates pass on the exact published revisions, record the installation commit, prior package pin, matching guidance, intended Herdr server and pre-rollout Home Manager generation.
+Active settings and the skill mapping are out-of-store links: moving this candidate into the dirty primary checkout could activate it before a rebuild.
+Preserve unrelated primary changes and stop reload-capable Pi sessions before any separately approved transfer of the reviewed change.
+Keep that boundary closed until the matching skill mapping and compatible server are available, then apply the reviewed generation through the existing `rebuild.sh` workflow and start fresh Pi deliberately.
+No running conversation is upgraded merely by preparing or publishing this candidate.
 
-These package commands install only into that private agent directory and do not launch a model.
-Before loading resources or starting Pi there, replace the generated unfiltered package entries with the reviewed candidate settings and matching skill mapping.
-In particular, apply the selected HazAT resource filter; merely installing that repository does not activate the reviewed restricted resource set.
-Do not use `pi update` as a substitute for changing the reviewed immutable pin.
-
-The Herdr deployment prerequisite is the managed conditional API implementation at exact source revision `c8d5b8f0d1b0ab9c7e98d05b1ed5b9606f87599f`.
-Its tested candidate binary SHA-256 is `e3b917d4f939162b5ce8473716ea43872f35ff9d8399bdccda4f3f37ad083918`.
-A public `0.9.3` or `0.9.4` version string alone does not establish those APIs; verify the actual managed capability preflight against the intended server.
-The reproducible Homebrew declaration and one-time transition are documented in [compatible Herdr installation](herdr-compatible-installation.md).
-Activating that package and restarting affected servers require separately approved deployment work.
-This installation candidate does not replace the installed Homebrew owner or live Herdr servers.
-
-Before active rollout, ticket #45 must verify all release gates against the final installation revision, including actual requested Astra execution and the approved visual route.
-Source listings, model availability, a capability lease and this resource-only fixture do not independently satisfy those gates.
-The current manual/native evidence and remaining upstream limitations belong to the implementation repository's `docs/herdr-*.md` evidence documents and the linked GitHub tickets.
-
-The active settings are already an out-of-store link, while an older installation may still have the previous skill in a Home Manager store link.
-After explicit rollout approval, stop Pi sessions that could reload these settings before checking the installation change into the live dotfiles checkout.
-Keep that reload boundary closed until the Home Manager generation installs the matching skill mapping; start fresh Pi only afterward.
-Apply the reviewed generation through the repository's existing `darwin-rebuild switch --flake ~/.dotfiles#mac` workflow.
-Never check the candidate into the active checkout merely to inspect it.
-This ticket does not run that switch or authorize a later rollout by itself.
-
-## Rollback without deleting conversations
-
-Record the installation commit or commits and the pre-rollout Home Manager generation before an approved switch.
-Stop Pi reloads, revert only those installation commits in dotfiles with `git revert <installation-commit>` and apply the resulting reviewed configuration through the same existing rebuild workflow.
-If a later installation-pin commit is separate, revert it first, then the installation commit; preserve any unrelated intervening dotfiles changes.
-Verify the package entries and matching skill returned together before starting a fresh Pi session.
-The older custom extension remains excluded after rollback, matching the pre-install baseline.
-
-Rollback changes resource selection, not native session storage.
-Leave `~/.pi/agent/sessions`, credentials, project files, canonical source repositories, ticket worktrees and private evidence in place.
-Retained immutable package caches may stay on disk while their settings entries are absent.
-Do not uninstall a shared package, delete a cache, rewrite history or prune worktrees as part of this rollback.
-
-## Watcher lifecycle correction
-
-The installed package pin above includes instance-owned observer state and cancellation provenance receipts.
-A native Pi session replacement previously left a module-level observer signal aborted, so later launches acknowledged and immediately cancelled before creating child history.
-The fix gives each registration independent watcher, timer and registry state and starts a fresh observer after session shutdown/start.
-Observer shutdown retains its exact child job rather than treating it as an intentional stop request; the launch acknowledgement exposes a private lifecycle receipt path for recovery.
-
-The package's `docs/watcher-lifecycle.md` describes ownership and recovery, and its opt-in `test/integration/herdr-session-boundary.test.ts` verifies one and four parallel real scouts after native session replacements.
-The private native acceptance retained the active global resource selection, installed an immutable Git package through Pi, and verified five real Sol/medium findings, four simultaneously observed panes, result delivery, cleanup and preserved focus.
-The matching delegation skill now requires agents to stop retries after shared immediate infrastructure failures and report delegation blocked instead of substituting local findings.
-Deployment must reload the affected idle Pi conversation without clearing its native history; restarting the compatible Herdr server is unnecessary.
-
-The final pin was also installed into the active global Pi package cache and loaded through `/reload` in the original affected Arena conversation.
-Its existing native session path and complete pre-rollout history prefix remained unchanged.
-That original conversation then received one scout finding and four parallel scout findings, all successful on Sol/medium, with completed child panes closed and unrelated original panes preserved.
-An initially zoomed parent correctly reported `managed_parent_zoomed` and stopped without retry or local fallback; only that parent was explicitly unzoomed for the subsequent acceptance.
-The extension does not bypass this zoom guard.
-Only task-owned reproduction and acceptance workspaces were closed afterward.
-The active primary checkout carries the matching pin and recovery skill as local deployment changes pending this installation PR's merge.
+For rollback, stop new delegation/reloads and revert only the installation commit with `git revert <installation-commit>` in the approved integration target.
+Restore **both** `116f5a611a879e99c65ddd61d527823e277c4d47` and its matching prior guidance, preserving unrelated intervening changes, then apply the reviewed generation.
+Before starting fresh Pi, explicitly run `pi install git:github.com/dimajarkov/pi-interactive-subagents@116f5a611a879e99c65ddd61d527823e277c4d47` in the approved agent directory and verify its cache HEAD; a reload alone is insufficient.
+A separately changed Herdr installation uses its separately recorded Homebrew rollback and approved named-server restart boundary.
+Retain native JSONL histories, policy/execution companions, delegation journals, lifecycle receipts, auth, project files, immutable caches, runtime data and canonical worktrees.
+Rollback restores selection and guidance; it does not delete conversations or infer settlement of unresolved owned jobs.

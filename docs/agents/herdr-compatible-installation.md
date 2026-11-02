@@ -5,6 +5,13 @@ The official v0.9.5 source and the installed Homebrew 0.9.3 binary do not contai
 The implementation lives in the [merged fork PR](https://github.com/dimajarkov/herdr/pull/1).
 Homebrew remains the sole installation owner.
 
+## Provisional nested-delegation prerequisite
+
+The nested Pi candidate in dotfiles #60 additionally requires `terminal.job.branch_capabilities` and `terminal.job.launch_branch`.
+The formula below remains the prior managed implementation and does not satisfy that new contract.
+Exact candidate revisions, binary evidence, the still-open #59 native gate and the separate formula/server deployment procedure are recorded in [Pi installation and rollback](pi-interactive-subagents-installation.md#required-herdr-candidate).
+This document's historical installation acceptance does not accept nested branch layouts.
+
 ## Declaration and maintenance
 
 `configuration.nix` declares the `dimajarkov/dotfiles` tap with this repository's explicit clone URL and selects `dimajarkov/dotfiles/herdr`.

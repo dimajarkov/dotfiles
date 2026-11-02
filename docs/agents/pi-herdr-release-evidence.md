@@ -1,5 +1,25 @@
 # Interactive Pi subagents release evidence
 
+## Spec #54 provisional checkpoint
+
+The following older release evidence predates nested branch-column delegation and does not satisfy #59.
+The provisional package is `56ef9441059687651ca35340e7b633317afe8b4f` in [package draft PR #3](https://github.com/dimajarkov/pi-interactive-subagents/pull/3), with Herdr `e3a21bb0e8eded3c0b97b13083fc54f4c6ff7c6a` in [Herdr draft PR #2](https://github.com/dimajarkov/herdr/pull/2).
+Computer Use refuses terminal apps; required native rendered grouping/readability acceptance remains open in [#59](https://github.com/dimajarkov/dotfiles/issues/59).
+No earlier human observation is reused as acceptance of this candidate.
+See [current installation, prerequisite and rollback](pi-interactive-subagents-installation.md) for the Pi 1.4 resource-only proof and separate rollout gates.
+The current parent thinking setting is medium; historical xhigh and Ctrl+J receipts below describe earlier revisions.
+Private native histories and validation inventories remain outside the repository.
+
+The #60 installation fixture passed on installed Pi 1.4.0 with a fresh public CLI install of both immutable sources into a private agent directory.
+It registered 28 parent tools, 30 child tools, 24 commands and 77 skills; all eight diagnostics were unchanged baseline skill-description warnings.
+Alt+J registered with zero child shortcut conflicts; explicit delegation denials and all four bundled delegation allowlists passed.
+The same run reinstalled the prior pin and restored matching guidance, original bundled definitions and the entire baseline resource inventory.
+Native history, active settings, live guidance, credential identity/metadata, project sentinels and worktree identities were preserved; credential values were not read.
+No model request, model refresh, session-start hook, mux or Computer Use was invoked.
+The 26-test agent-skills suite, fixture syntax, Oxc lint/format and diff checks also passed.
+These checks establish provisional installation behavior only; #59 remains open.
+
+
 This is the aggregate release-candidate record for [spec #36](https://github.com/dimajarkov/dotfiles/issues/36) and [ticket #45](https://github.com/dimajarkov/dotfiles/issues/45), updated on 2026-10-15.
 It records accepted evidence and remaining gates; it does not authorize or establish active deployment.
 
