@@ -1,24 +1,55 @@
 # Interactive Pi subagents release evidence
 
-## Spec #54 provisional checkpoint
+## Spec #54 accepted candidate
 
-The following older release evidence predates nested branch-column delegation and does not satisfy #59.
-The provisional package is `9237ccff593181698f3b80dfb3562b1ff1bb3cad` in [package draft PR #3](https://github.com/dimajarkov/pi-interactive-subagents/pull/3), with Herdr `e3a21bb0e8eded3c0b97b13083fc54f4c6ff7c6a` in [Herdr draft PR #2](https://github.com/dimajarkov/herdr/pull/2).
-Computer Use refuses terminal apps; required native rendered grouping/readability acceptance remains open in [#59](https://github.com/dimajarkov/dotfiles/issues/59).
-No earlier human observation is reused as acceptance of this candidate.
-See [current installation, prerequisite and rollback](pi-interactive-subagents-installation.md) for the Pi 1.4 resource-only proof and separate rollout gates.
-The current parent thinking setting is medium; historical xhigh and Ctrl+J receipts below describe earlier revisions.
-Private native histories and validation inventories remain outside the repository.
+Nested branch-column delegation was accepted on 2026-11-03 after Dmitri passed all six human native observation stages and the original public functional proofs completed successfully.
+[#56](https://github.com/dimajarkov/dotfiles/issues/56) and [#59](https://github.com/dimajarkov/dotfiles/issues/59) are closed with the acceptance record.
+The package is `9237ccff593181698f3b80dfb3562b1ff1bb3cad` in [package PR #3](https://github.com/dimajarkov/pi-interactive-subagents/pull/3).
+The compatible Herdr source is `e3a21bb0e8eded3c0b97b13083fc54f4c6ff7c6a` in [Herdr PR #2](https://github.com/dimajarkov/herdr/pull/2); the tested binary SHA-256 is `644119907d433f16ccad9a1ef7a6e631e8e6d1f44d3025fa31c80acc1a053798`.
+Native execution and installation use Pi 1.4.0; the package's unit SDK dependency is a separate test dependency.
+Both identities were rechecked after the human run.
+The active package selection remains `116f5a611a879e99c65ddd61d527823e277c4d47`; acceptance does not establish deployment.
+
+### Requirement-to-evidence mapping
+
+| Spec #54 stories | Accepted evidence |
+| --- | --- |
+| 1-5, 8-10 | Actual bundled worker-to-worker delegation, role discovery and effective widget tools; public customization tests preserve definition precedence, explicit spawning/tool denials and existing Claude restrictions. The corrected child widget uses Ctrl+Alt+J, with `/subagent-tools` available. |
+| 6-7, 21-23 | Public native interruption/resume, retained conversation/history and role policy, fresh ownership, immediate-parent help/results, takeover across reload, completion/help guards, provider failure and honest unresolved orchestrator-loss outcomes. The final staged nested interruption/resume proof passed with 1 test and 0 failures. |
+| 11-17, 24 | Public autonomous and non-autoexit layout flows and concurrent-client tests establish caller-relative branch ownership, accepted sibling/subtree order, deeper descendants, later C, out-of-order removal and focus preservation. Capacity, zoom, stale/foreign identity and uncertain-transport tests preserve refusal before unsafe allocation. Human inspection confirms readable native geometry and keys. |
+| 18-20 | Real autonomous bundled delegation yields with work outstanding, processes asynchronous immediate-child results and returns reconciled outcomes upward without premature completion or agent polling. |
+| 25-26 | Final staged public layout proof passed with 1 test and 0 failures; exact-owned cleanup verified original roots/quiet shells before stopping the isolated server and confirming its socket disappeared. Native histories and private evidence remain retained. |
+| 27 | The accepted immutable package is selected with matching guidance in [dotfiles PR #61](https://github.com/dimajarkov/dotfiles/pull/61). Fresh public CLI install, registration, reload and explicit prior-pin plus matching-guidance rollback pass on Pi 1.4.0. |
+
+### Human observations and harness boundary
+
+Dmitri recorded a fresh pass for each stage: seven live panes and child widget, deeper A1a, later root C, B2 removal, A2 removal, and resumed original child beneath A with independent B intact.
+These are explicit human rendered/native-key observations, not automated Computer Use screenshots or reused observations from an older release.
+Computer Use still refuses terminal applications.
+The first run in this review exposed a harness focus error after human widget inspection: the next geometry assertion saw the inspected child focused instead of Master.
+The helper now restores the Master inspection baseline before releasing a stage, retaining the original subsequent focus assertions; a fast regression failed before and passed after this helper correction.
+The failed run is preserved and is not accepted; package and Herdr release code were unchanged.
+The fresh corrected run passed every observation and both original functional proofs.
+
+### Installation and existing checks
 
 The #60 installation fixture passed on installed Pi 1.4.0 with a fresh public CLI install of both immutable sources into a private agent directory.
 It registered 28 parent tools, 30 child tools, 24 commands and 77 skills; all eight diagnostics were unchanged baseline skill-description warnings.
 Ctrl+Alt+J registered with zero child shortcut conflicts; explicit delegation denials and all four bundled delegation allowlists passed.
-The same run reinstalled the prior pin and restored matching guidance, original bundled definitions and the entire baseline resource inventory.
+Rollback reinstalls the prior pin and restores matching guidance, original bundled definitions and the entire baseline resource inventory.
 Native history, active settings, live guidance, credential identity/metadata, project sentinels and worktree identities were preserved; credential values were not read.
-No model request, model refresh, session-start hook, mux or Computer Use was invoked.
-The 26-test agent-skills suite, fixture syntax, Oxc lint/format and diff checks also passed.
-These checks establish provisional installation behavior only; #59 remains open.
+Resource verification performs no model request, refresh, session-start hook, mux or Computer Use invocation.
+Recorded package checks pass 270 deterministic tests, TypeScript and Oxc lint/format; recorded dotfiles checks pass the 26-test agent-skills suite and fixture/static checks.
+Herdr's recorded checks pass 3881 application tests and 75 Debug library tests, with 12 and 2 skips respectively, plus release stress and maintenance checks.
+The full 70,000-row Debug stress case and Windows cross lint remain unverified; release stress passes.
+These earlier focused receipts retain their own source boundaries; the final human run adds rendered evidence at the exact current candidate rather than claiming every prior test was rerun.
 
+See [installation, compatible Herdr prerequisite and rollback](pi-interactive-subagents-installation.md) for the separate rollout procedure.
+The current formula lacks branch methods and remains unchanged; the accepted package refuses unsupported servers before allocation.
+The three PRs remain unmerged until separately integrated; no active settings transfer, Home Manager switch or production server restart is recorded.
+Private native histories and validation inventories remain outside this public repository.
+
+## Earlier spec #36 release evidence
 
 This is the aggregate release-candidate record for [spec #36](https://github.com/dimajarkov/dotfiles/issues/36) and [ticket #45](https://github.com/dimajarkov/dotfiles/issues/45), updated on 2026-10-15.
 It records accepted evidence and remaining gates; it does not authorize or establish active deployment.

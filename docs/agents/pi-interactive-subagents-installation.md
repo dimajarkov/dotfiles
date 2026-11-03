@@ -4,15 +4,16 @@ Dotfiles owns the immutable Pi package selection and matching delegation skill.
 The implementation repository is `dimajarkov/pi-interactive-subagents`; its canonical development checkout is `~/pi-interactive-subagents`.
 That mutable checkout is not the installation source.
 
-## Provisional nested-delegation candidate
+## Accepted nested-delegation candidate
 
-`home/.pi/agent/settings.json` selects published revision `9237ccff593181698f3b80dfb3562b1ff1bb3cad` from [package draft PR #3](https://github.com/dimajarkov/pi-interactive-subagents/pull/3).
+`home/.pi/agent/settings.json` selects published revision `9237ccff593181698f3b80dfb3562b1ff1bb3cad` from [package PR #3](https://github.com/dimajarkov/pi-interactive-subagents/pull/3).
 The prior selection is `116f5a611a879e99c65ddd61d527823e277c4d47`.
 This candidate prepares [dotfiles #60](https://github.com/dimajarkov/dotfiles/issues/60), part of [spec #54](https://github.com/dimajarkov/dotfiles/issues/54).
-It is provisional: [#59](https://github.com/dimajarkov/dotfiles/issues/59) still lacks native rendered acceptance because Computer Use refuses terminal apps.
-Source review, native API/process/transcript checks and isolated installation do not establish rendered grouping, readability or physical keyboard behavior.
-Keep #60 open and the integration PR draft until that gate and affected exact-revision checks are complete.
-This is neither release readiness nor authorization to merge, switch Home Manager, reload active Pi or replace a Herdr server.
+Dmitri completed all six human rendered/native-key observation stages on 2026-11-03, and both underlying public layout and interruption/resume proofs passed on these exact package and Herdr revisions.
+[#56](https://github.com/dimajarkov/dotfiles/issues/56) and [#59](https://github.com/dimajarkov/dotfiles/issues/59) are accepted and closed.
+See [the requirement-to-evidence mapping](pi-herdr-release-evidence.md#spec-54-accepted-candidate) for source identities, functional coverage, human observations and known limits.
+The installation is prepared for review and integration; its package selection does not upgrade running native sessions.
+Merge, Home Manager activation, active Pi reload and compatible Herdr formula/server deployment remain separate actions.
 
 The package manifest loads the extension once, registering `subagent`, `subagent_interrupt`, `subagents_list`, `subagent_resume` and the existing workflow commands.
 The matching `home/.pi/agent/skills/subagents/SKILL.md` covers recursive and same-role tools, branch-column placement, autonomous waiting, immediate-parent outcomes, explicit denials, Ctrl+Alt+J and receipt-based recovery.
@@ -25,7 +26,7 @@ Preserve every unrelated package pin, model filter, resource and software owner.
 
 ## Required Herdr candidate
 
-The nested package requires Herdr source `e3a21bb0e8eded3c0b97b13083fc54f4c6ff7c6a`, published in [Herdr draft PR #2](https://github.com/dimajarkov/herdr/pull/2).
+The nested package requires Herdr source `e3a21bb0e8eded3c0b97b13083fc54f4c6ff7c6a`, published in [Herdr PR #2](https://github.com/dimajarkov/herdr/pull/2).
 Its tree matches verified `5f5c12172bd14fd23772a588cb3e1eee5f08dc14` and includes prerequisite Ghostty fix `496acfe5978b12f27637c39821ce4145a474cfac`.
 The tested candidate binary SHA-256 is `644119907d433f16ccad9a1ef7a6e631e8e6d1f44d3025fa31c80acc1a053798`.
 
@@ -33,9 +34,9 @@ In addition to managed job/control v1 and cooperative control, the target server
 The branch capability response and successful managed-job receipt retain version 1 shapes; a version string alone cannot prove branch compatibility.
 The package performs capability and identity preflight before allocation, preserving zoom refusal and requiring at least 40 usable columns and 12 usable rows per affected pane.
 Unsupported servers refuse without falling back to legacy splits.
-The existing `Formula/herdr.rb` pin at `c8d5b8f0d1b0ab9c7e98d05b1ed5b9606f87599f` lacks the new branch methods and is deliberately unchanged by this provisional preparation.
+The existing `Formula/herdr.rb` pin at `c8d5b8f0d1b0ab9c7e98d05b1ed5b9606f87599f` lacks the new branch methods and is unchanged by this installation preparation.
 
-After native acceptance and exact-head review, prepare a separately reviewed Homebrew formula revision with the accepted source, archive checksum, build identity and branch schema checks.
+After exact-head review, prepare a separately reviewed Homebrew formula revision with the accepted source, archive checksum, build identity and branch schema checks.
 Follow [compatible Herdr installation](herdr-compatible-installation.md) for the existing package owner and guarded maintenance procedure.
 Publish the formula before installation, preserve the old keg/receipt and native state, and restart only explicitly approved named servers.
 Installing a CLI leaves already-running servers unchanged.
@@ -68,7 +69,7 @@ Resource reload alone does not change an existing Git cache revision.
 The fixture reinstalls the prior source through the public Pi CLI using the verified local source as its private cache origin, then restores the entire prior settings selection, the prior immutable cache head and the exact matching prior skill text from base `f50353be0e664f374e38f8fed95877cd1001bbe7`.
 It compares registered resources after rollback and checks native history hashes, project sentinels, active settings and worktree identities, including missing registered paths.
 Private inventories and evidence remain in the emitted owner-private temporary directory outside this public repository.
-Review all diagnostics, including unchanged baseline warnings; resource checks do not substitute for #59 acceptance.
+Review all diagnostics, including unchanged baseline warnings; resource checks supplement the separately accepted #59 native observations.
 
 ## Approved rollout and history-preserving rollback
 
