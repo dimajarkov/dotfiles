@@ -27,7 +27,8 @@ Preserve the original error, native session paths and lifecycle receipt paths, t
 Do not replace requested delegated findings with local investigation unless the user approves that change of workflow.
 Use `subagent_interrupt` with the exact running `id` or `name` to interrupt a turn while keeping its Pi session available.
 Use `subagent_resume` with the delivered native `sessionPath` and optional follow-up `message` to continue an existing conversation.
-Its `autoExit` option defaults to true; false keeps the resumed child interactive.
+Resume restores the original effective policy and autonomous/interactive default; an explicit `autoExit` overrides that execution's default.
+It retains the native conversation with a fresh execution and verified Herdr job in the original branch column.
 
 ## Context and definitions
 
@@ -42,7 +43,9 @@ Inspect `subagents_list` for the effective definition before assuming a project 
 The public `fork: true` argument forces the full-context fork; other context defaults come from definition `session-mode` frontmatter.
 Agent frontmatter also controls `thinking`, `auto-exit`, `interactive`, `spawning`, `deny-tools`, `cwd` and system prompt mode.
 `interactive: true` suppresses autonomous stall/recovery notifications; it does not itself override an `auto-exit: true` definition.
-Nested delegation follows the effective definition's spawning and denied-tool controls.
+Bundled workers, scouts, reviewers, visual testers and planners can use all four Pi delegation tools, including same-role delegation.
+Explicit `spawning: false` and individual `deny-tools` restrictions still narrow the effective tools, and Claude remains denied.
+The tools widget reflects registered, active capabilities after those restrictions.
 
 ## Commands and workflows
 
@@ -63,7 +66,7 @@ Finish an interactive planner explicitly so its result returns to the parent.
 | visual-tester | `openai-codex/gpt-6.1-sol` | medium |
 
 These five roles run Pi children, including the planner.
-This is the interactive extension's specific routing exception; the parent's `openai-codex/gpt-6.1-sol` and `xhigh` defaults and unrelated Codex routing stay unchanged.
+This is the interactive extension's specific routing exception; the parent's `openai-codex/gpt-6.1-sol` and `medium` defaults and unrelated Codex routing stay unchanged.
 Keep the exact requested model when unavailable and report the blocker.
 
 ## Native interaction and completion
@@ -71,15 +74,33 @@ Keep the exact requested model when unavailable and report the blocker.
 Navigate to a child using ordinary Herdr pane navigation.
 Typing a later human prompt disables that child's autonomous auto-exit for the conversation.
 An interrupted turn leaves the child open, and takeover remains in effect on later turns.
-An untouched `auto-exit: true` child closes after autonomous completion and returns its summary.
+An untouched `auto-exit: true` child yields while owned children or unprocessed outcomes remain outstanding.
+Results wake their immediate parent, which reconciles them before reporting upward.
+Autonomous completion closes the child only after its owned work is settled and its outcomes have been processed successfully.
 For an interactive child, send the final assistant summary, then invoke `subagent_done` to close and return it explicitly.
-Use `caller_ping` when guidance is needed; it notifies the parent and preserves the native session for `subagent_resume` with an answer.
+Use `caller_ping` when guidance is needed; it notifies the immediate parent and preserves the native session for `subagent_resume` with an answer.
+Exit-producing help and `subagent_done` refuse while owned work remains outstanding; continue coordination in the retained conversation.
+Human takeover survives same-session native reload and descendant completion; it keeps that conversation interactive.
 
-The child tools widget expands and collapses with `Ctrl+J`.
+The child tools widget expands and collapses with `Ctrl+Alt+J` or the `/subagent-tools` command.
+Herdr keeps its configured navigation keys, including `Alt+J` for pane focus; use the command if a terminal consumes modifier keys.
 Parent completion messages expand with `Ctrl+O` to show the full summary and native session reference.
+Herdr keeps the master on the left and its direct children in columns to the right.
+Descendants stack below their immediate parent in the same top-level branch column, with contiguous subtrees in accepted launch order even at deeper levels.
 Herdr operations target the actual calling pane and owned children, preserving unrelated panes and focus.
+The server must support `terminal.job.branch_capabilities` and `terminal.job.launch_branch`; the prior managed API alone is insufficient.
+Every affected pane needs at least 40 usable columns and 12 usable rows; capacity refusal allocates no fallback tab or invisible process.
 A zoomed parent must be unzoomed before delegation; a refused or incomplete visible launch is reported rather than replaced by headless execution.
 Automatic selection uses Herdr's injected caller context; `PI_SUBAGENT_MUX=herdr` explicitly selects Herdr and fails when its prerequisites are absent.
+
+## Recovery
+
+Keep native history, `<session>.subagent-policy.json`, execution companions, delegation journals and private launch/lifecycle receipts together.
+Resume requires the original immediate parent's native identity and saved effective policy; current denials can narrow it further.
+Missing, foreign or legacy policy refuses before allocation rather than adopting another branch's conversation.
+An uncertain dispatch, lost observer or unresolved descendant retains its ownership hold and recovery evidence.
+Inspect original managed job identities against the intended server before recovery; a disappeared pane or read diagnostic does not prove settlement.
+Stop automatic retries after ambiguous dispatch, preserve evidence and report the blocker; never close a guessed occupant or delete claims to force progress.
 
 ## Visual work
 
