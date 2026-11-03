@@ -17,12 +17,12 @@ This document's historical installation acceptance does not accept nested branch
 `configuration.nix` declares the `dimajarkov/dotfiles` tap with this repository's explicit clone URL and selects `dimajarkov/dotfiles/herdr`.
 Homebrew requires trust at the tap level for this custom clone URL; the declaration trusts this owned repository and disables unsupported individual-formula trust.
 `flake.nix` pins the Nix-owned Homebrew runtime to 7.0.9 so current dependency install steps are supported.
-`Formula/herdr.rb` pins full source commit `c8d5b8f0d1b0ab9c7e98d05b1ed5b9606f87599f` and archive SHA-256 `593fe63aa223f7a64e92cfda6f6fec99cf7c60e5c045d6095a436446db9ddc9e`.
-Its package version is `0.9.4_1`; its binary identifies itself as `0.9.4-pi.c8d5b8f0`.
+`Formula/herdr.rb` pins full source commit `e3a21bb0e8eded3c0b97b13083fc54f4c6ff7c6a` and archive SHA-256 `340f061b464148561256b76f97c1bf1306d0350e35bb4ebc16cf88157d4e161e`.
+Its package version is `0.9.4_2`; its binary identifies itself as `0.9.4-pi.e3a21bb0`.
 The source is fixed while Homebrew build dependencies remain managed by Homebrew.
 Cargo uses the source's lockfile, and Zig 0.16 matches the vendored terminal library.
 Installation builds from source and needs network access to fetch the locked Cargo and Zig dependencies.
-The formula test checks the build identity and three required methods in the bundled schema without starting a server.
+The formula test checks the build identity and six required methods in the bundled schema without starting a server.
 Run it through `nix run .#herdr-package-test`: this executes the installed formula's real test block with an isolated Nix minitest dependency.
 The ordinary Homebrew developer test command tries to install gems into its read-only Nix store, so the runner disables that gem installation and explicitly supplies the test dependency.
 
@@ -31,6 +31,22 @@ A normal Homebrew update can update this tap, but the Herdr source changes only 
 Review upstream changes in the separate Herdr repository, preserve the managed API contract, test the resulting build, then update the full commit, archive checksum, build identity and formula version or revision together.
 Return to homebrew-core only after its actual server capabilities satisfy the same contract.
 Herdr's self-updater detects Homebrew installations and delegates updates to Homebrew.
+
+## Nested branch-column upgrade
+
+The revision-2 formula adds the accepted branch-column source from [Herdr PR #2](https://github.com/dimajarkov/herdr/pull/2).
+It retains Homebrew ownership and checks managed launch/control, both branch methods and live handoff in the bundled schema.
+For an existing installation from this tap, publish the formula first, retain the old keg/receipt, then upgrade only the qualified formula with automatic cleanup disabled.
+Do not repeat the historical core-to-tap uninstall procedure below for an already-owned tap installation.
+Validate the new executable and its actual formula test before changing a running server.
+Installing the executable leaves existing servers unchanged.
+
+A compatible server exposes `server.live_handoff` with an explicit replacement executable, expected version and protocol.
+Test the exact old-to-new transition on a disposable named session first and compare pane/terminal identities and child process PIDs.
+For the authorized target, retain an ownership snapshot and verify the same identities and processes after handoff, plus the actual branch capability response.
+Handoff preserves PTYs/processes and durable session state; in-flight requests, waits and subscriptions are transient and clients must reconnect.
+Never fall back automatically to stopping the target if handoff fails or its outcome is uncertain.
+Preserve the original runtime and recovery evidence instead.
 
 ## One-time transition and activation
 

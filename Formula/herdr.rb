@@ -1,11 +1,11 @@
 class Herdr < Formula
   desc "Terminal workspace for coding agents, with managed Pi job APIs"
   homepage "https://github.com/dimajarkov/herdr"
-  url "https://github.com/dimajarkov/herdr/archive/c8d5b8f0d1b0ab9c7e98d05b1ed5b9606f87599f.tar.gz"
+  url "https://github.com/dimajarkov/herdr/archive/e3a21bb0e8eded3c0b97b13083fc54f4c6ff7c6a.tar.gz"
   version "0.9.4"
-  sha256 "593fe63aa223f7a64e92cfda6f6fec99cf7c60e5c045d6095a436446db9ddc9e"
+  sha256 "340f061b464148561256b76f97c1bf1306d0350e35bb4ebc16cf88157d4e161e"
   license "Apache-2.0"
-  revision 1
+  revision 2
 
   depends_on "rust" => :build
   depends_on "zig@0.16" => :build
@@ -23,19 +23,19 @@ class Herdr < Formula
       system "zig", "build", "--fetch=all"
     end
     ENV["HERDR_BUILD_CHANNEL"] = "pi"
-    ENV["HERDR_BUILD_ID"] = "c8d5b8f0"
-    ENV["HERDR_BUILD_COMMIT"] = "c8d5b8f0d1b0ab9c7e98d05b1ed5b9606f87599f"
+    ENV["HERDR_BUILD_ID"] = "e3a21bb0"
+    ENV["HERDR_BUILD_COMMIT"] = "e3a21bb0e8eded3c0b97b13083fc54f4c6ff7c6a"
     system "cargo", "install", "--offline", *std_cargo_args
     generate_completions_from_executable(bin/"herdr", "completion")
   end
 
   test do
-    assert_match "0.9.4-pi.c8d5b8f0", shell_output("#{bin}/herdr --version")
+    assert_match "0.9.4-pi.e3a21bb0", shell_output("#{bin}/herdr --version")
     schema = JSON.parse(shell_output("#{bin}/herdr api schema --json"))
     methods = schema.fetch("schemas").fetch("request").fetch("oneOf").map do |request|
       request.fetch("properties").fetch("method").fetch("const")
     end
-    %w[terminal.job.capabilities terminal.job.launch agent.control.prompt].each do |method|
+    %w[terminal.job.capabilities terminal.job.launch agent.control.prompt terminal.job.branch_capabilities terminal.job.launch_branch server.live_handoff].each do |method|
       assert_includes methods, method
     end
   end

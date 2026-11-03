@@ -47,7 +47,7 @@ The full 70,000-row Debug stress case and Windows cross lint remain unverified; 
 These earlier focused receipts retain their own source boundaries; the final human run adds rendered evidence at the exact current candidate rather than claiming every prior test was rerun.
 
 See [installation, compatible Herdr prerequisite and rollback](pi-interactive-subagents-installation.md) for the separate rollout procedure.
-The current formula lacks branch methods and remains unchanged; the accepted package refuses unsupported servers before allocation.
+The revision-2 formula selects the accepted Herdr branch source; the accepted package still refuses unsupported running servers before allocation.
 The three PRs remain unmerged until separately integrated; no active settings transfer, Home Manager switch or production server restart is recorded.
 Private native histories and validation inventories remain outside this public repository.
 

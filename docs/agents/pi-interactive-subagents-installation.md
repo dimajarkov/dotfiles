@@ -34,9 +34,9 @@ In addition to managed job/control v1 and cooperative control, the target server
 The branch capability response and successful managed-job receipt retain version 1 shapes; a version string alone cannot prove branch compatibility.
 The package performs capability and identity preflight before allocation, preserving zoom refusal and requiring at least 40 usable columns and 12 usable rows per affected pane.
 Unsupported servers refuse without falling back to legacy splits.
-The existing `Formula/herdr.rb` pin at `c8d5b8f0d1b0ab9c7e98d05b1ed5b9606f87599f` lacks the new branch methods and is unchanged by this installation preparation.
+`Formula/herdr.rb` revision 2 selects the accepted source and checks both branch methods; installed executables and already-running servers must still be verified independently.
 
-After exact-head review, prepare a separately reviewed Homebrew formula revision with the accepted source, archive checksum, build identity and branch schema checks.
+The formula records the accepted source, archive checksum, build identity and branch schema checks.
 Follow [compatible Herdr installation](herdr-compatible-installation.md) for the existing package owner and guarded maintenance procedure.
 Publish the formula before installation, preserve the old keg/receipt and native state, and restart only explicitly approved named servers.
 Installing a CLI leaves already-running servers unchanged.
