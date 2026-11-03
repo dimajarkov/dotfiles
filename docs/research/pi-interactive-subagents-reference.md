@@ -272,7 +272,7 @@ Our upgrade should preserve a run-specific terminal outcome even when no summary
 
 The README's extension inventory says one child-only tool, but the child entry point registers both `caller_ping` and `subagent_done`. [U-readme-tools][U-child-tools]
 The bundled planner allows nested scouting by default, while scout, worker, and reviewer definitions set `spawning: false` and auto-exit. [U-planner-agent][U-scout-agent][U-worker-agent][U-reviewer-agent]
-Those bundled Anthropic defaults are upstream choices, not suitable inherited defaults for our Codex-only Pi routing. [U-planner-agent][U-scout-agent][C-policy]
+Those bundled Anthropic defaults are upstream choices, not suitable inherited defaults for our Codex-only Pi routing. [U-planner-agent][U-scout-agent]
 
 ### Resume fidelity
 
@@ -299,7 +299,7 @@ Human slash commands remain registered independently of the tool deny checks. [U
 **Implemented compatibility path:** `cli: claude` launches Claude Code with `--dangerously-skip-permissions`, optional plugin, optional model/prompt, and optional Claude session resume. [U-claude-launch]
 Its stop hook counts string-valued user messages, writes a completion sentinel only when the count is one, and writes the transcript path for copying. [U-claude-hook]
 This path does not translate the agent's Pi deny set or tools allowlist into native Claude restrictions. [U-claude-launch]
-It should not be adopted for this upgrade because our current policy keeps Claude compatibility-only and this research requests native Pi children. [C-policy]
+It should not be adopted for this upgrade because this research requests native Pi children.
 No Claude harness, plugin, script, or adapter was used to perform this research.
 
 ## Tests and limitations of the evidence
@@ -329,7 +329,7 @@ Neither package manifest proves compatibility with the installed target runtime,
 | Area | Current local implementation | Upgrade implication |
 | --- | --- | --- |
 | Pi execution | In-process SDK session with normal resource loading, explicit model resolution, excluded tools, and extensions bound in print mode. [C-pi-resources][C-pi-create] | Replace the execution adapter in Herdr with one native interactive Pi host, preserving those policies. [C-interface][C-pi-create] |
-| Other harnesses | Codex uses a scoped stdio app-server; Claude retains an SDK compatibility path. [C-codex][C-claude] | Keep the seam and avoid adding the reference's Claude plugin or silently broadening this Pi feature. [C-interface][C-policy] |
+| Other harnesses | Codex uses a scoped stdio app-server; Claude retains an SDK compatibility path. [C-codex][C-claude] | Keep the seam and avoid adding the reference's Claude plugin or silently broadening this Pi feature. [C-interface] |
 | Master API | `subagent_spawn`, wait, cancel, check, and list; `/subagents` opens the dashboard. [C-tools][C-wait][C-other-tools][C-dashboard] | Preserve coordinated tools and consumption behavior even though upstream uses a smaller fire-and-forget API. [C-wait][U-delivery] |
 | Human interaction | Overlay transcript plus input to steer or continue; leaving the child overlay returns to the dashboard. [C-takeover][C-takeover-input] | Native pane visits need a separate navigation/lifetime contract. [C-takeover][H-decisions] |
 | Activity fidelity | Typed message/thinking deltas, finalized messages, tool lifecycle/previews, queued messages, usage, metadata, and terminal outcomes. [C-events][C-pi-events] | Keep and extend the normalized stream instead of replacing it with one coarse snapshot. [C-events][U-activity-schema] |
@@ -338,7 +338,7 @@ Neither package manifest proves compatibility with the installed target runtime,
 | Results | Idle-deferred follow-up delivery; explicit waits can consume pending automatic results. [C-delivery][C-wait] | Keep this coordination policy unless the user separately chooses upstream's immediate steering. [C-delivery][U-delivery] |
 | Parent lifetime | Shutdown disposes the runtime and closes child scopes. [C-shutdown][C-manager-dispose] | Surviving reload/exit needs independent host ownership and reattachment, as a new feature. [C-interface][H-decisions] |
 | Trust and defaults | Same-cwd trust inherits the parent decision; alternate cwd checks the persisted trust store; Pi inherits model/thinking explicitly. [C-trust][C-tools][C-pi-model] | Native interactivity must retain these checks, not inherit upstream's implicit CLI configuration behavior. [C-trust][U-cwd] |
-| Child restrictions | Pi excludes orchestration tools, workflow, and `ask_user`; Codex explicitly uses never-approval/full-access settings. [C-pi-exclusions][C-codex-permissions] | Revalidate and enforce native child restrictions on every launch and resume. [C-pi-exclusions][C-policy] |
+| Child restrictions | Pi excludes orchestration tools, workflow, and `ask_user`; Codex explicitly uses never-approval/full-access settings. [C-pi-exclusions][C-codex-permissions] | Revalidate and enforce native child restrictions on every launch and resume. [C-pi-exclusions] |
 | User-only aside | `/btw` uses non-model-visible origin, and results are appended as entries without waking the parent model. [C-btw][C-delivery] | Keep transcript archives and automatic closures compatible with that privacy boundary. [C-btw][C-delivery] |
 
 Our normalized run events have no stable run ID, and `turns` counts finalized assistant messages rather than independently identified management runs. [C-events][C-manager-fold]
@@ -422,7 +422,7 @@ Resolve and persist the parent's model and thinking defaults, explicit overrides
 Use the same resolved policy when reopening or resuming instead of reconstructing it from current shell defaults. [U-resume-env][C-pi-exclusions]
 Enforce no nested delegation and no forbidden question tools at the native child's actual registration/execution boundary, including after reload and model/tool changes. [C-pi-exclusions][U-registration-deny]
 Show effective capabilities in `/subagents`, but treat the display as evidence of policy rather than the enforcement mechanism. [U-child-widget][U-registration-deny]
-Keep current Codex permission settings and Claude compatibility scope unchanged by this Pi feature. [C-policy][C-codex-permissions]
+Keep current Codex permission settings and Claude compatibility scope unchanged by this Pi feature. [C-codex-permissions]
 Any later Codex-native pane work needs its own adapter proof and externally started-turn handling. [C-codex-filter][H-proof]
 
 ## Useful inspirations and quirks not to copy
@@ -499,7 +499,7 @@ Automatic closure and retained granular master history are already explicit in t
 | Retention fidelity and duration | Full native finalized history plus structured activity/receipts, paged previews, and separately accessible large payloads. [C-transcript][C-manager-limits] | Preview-only retention would not recover complete tool detail after closure. [C-transcript] |
 | Parent notification policy | Preserve idle follow-up delivery and wait consumption, per run, with `/btw` excluded. [C-delivery][C-wait][C-btw] | Immediate upstream steering changes active-parent behavior. [U-delivery] |
 | Navigation keys and client scope | Carry forward direct Escape return, Ctrl+] native Escape, editor support, and single-client scope subject to proof. [H-decisions] | A different return shortcut avoids overriding native Escape but changes the historical navigation decision. [H-decisions] |
-| Fork/context and agent presets | Fresh children inherit explicit live model/policy; context copying is opt-in and branch-aware. [C-pi-model][U-session-seed] | Upstream role presets, nested planners, and Anthropic defaults broaden scope and conflict with current routing. [U-planner-agent][C-policy] |
+| Fork/context and agent presets | Fresh children inherit explicit live model/policy; context copying is opt-in and branch-aware. [C-pi-model][U-session-seed] | Upstream role presets, nested planners, and Anthropic defaults broaden scope and conflict with current routing. [U-planner-agent] |
 | Native session switching | Permit only switches/branches that the bridge can validate and adopt into the same managed association. [U-child-tools][U-activity-transitions] | Disabling those commands while managed provides a narrower native interface but avoids ambiguous history ownership. [U-child-tools] |
 | Harness scope | Deliver native Pi first behind the existing shared seam. [C-interface][C-pi-create] | Native Codex is a separate scope decision and requires handling externally started turns. [C-codex-filter][H-proof] |
 | Running admission while disconnected | Keep the global four-running-child limit, including native human continuations. [C-manager-limits][C-manager-capacity][C-manager-restart][H-decisions] | Allowing unsupervised starts weakens the existing admission contract. [C-manager-capacity][C-manager-restart] |
@@ -654,7 +654,6 @@ All local source and historical-document links below pin the public revision who
 [C-codex-permissions]: https://github.com/dimajarkov/dotfiles/blob/bce6ddefc2118fc183064dd3d5cfd3dcd142d581/home/.pi/agent/extensions/subagents/src/backends/codex.ts#L884-L898
 [C-claude]: https://github.com/dimajarkov/dotfiles/blob/bce6ddefc2118fc183064dd3d5cfd3dcd142d581/home/.pi/agent/extensions/subagents/src/backends/claude.ts#L324-L352
 [C-package]: https://github.com/dimajarkov/dotfiles/blob/bce6ddefc2118fc183064dd3d5cfd3dcd142d581/home/.pi/agent/extensions/subagents/package.json#L1-L25
-[C-policy]: https://github.com/dimajarkov/dotfiles/blob/bce6ddefc2118fc183064dd3d5cfd3dcd142d581/docs/agent-capability-policy.md#L3-L15
 [H-scope]: https://github.com/dimajarkov/dotfiles/blob/bce6ddefc2118fc183064dd3d5cfd3dcd142d581/docs/research/pi-subagents-herdr-panes.md#L3-L10
 [H-decisions]: https://github.com/dimajarkov/dotfiles/blob/bce6ddefc2118fc183064dd3d5cfd3dcd142d581/docs/research/pi-subagents-herdr-panes.md#L12-L45
 [H-old-gaps]: https://github.com/dimajarkov/dotfiles/blob/bce6ddefc2118fc183064dd3d5cfd3dcd142d581/docs/research/pi-subagents-herdr-panes.md#L108-L115

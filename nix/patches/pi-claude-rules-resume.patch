@@ -1,0 +1,31 @@
+diff --git a/src/index.ts b/src/index.ts
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -61,6 +61,16 @@ function ownEntries(ctx: ExtensionContext): LooseEntry[] {
+ 	return found;
+ }
+ 
++function containsRuleBody(messages: readonly { content?: unknown }[], body: string): boolean {
++	return messages.some(({ content }) => {
++		if (typeof content === "string") return content.includes(body);
++		if (!Array.isArray(content)) return false;
++		return content.some(
++			(part) => part?.type === "text" && typeof part.text === "string" && part.text.includes(body),
++		);
++	});
++}
++
+ function injectedFromSession(ctx: ExtensionContext, rules: readonly Rule[] = []): Set<string> {
+ 	const ids = new Set<string>();
+ 	const manager = ctx.sessionManager as ExtensionContext["sessionManager"] & {
+@@ -84,8 +94,8 @@ function injectedFromSession(ctx: ExtensionContext, rules: readonly Rule[] = []): S
+ 					ids.add(details.ruleId);
+ 			}
+ 			// toolResult activation stores the body in a tool-result message.
+-			const text = JSON.stringify(projected.messages);
+-			for (const rule of rules) if (text.includes(rule.body)) ids.add(rule.id);
++			for (const rule of rules)
++				if (containsRuleBody(projected.messages, rule.body)) ids.add(rule.id);
+ 		}
+ 		return ids;
+ 	}

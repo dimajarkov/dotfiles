@@ -37,6 +37,7 @@
         bun2nix = inputs.hunk-upstream.inputs.bun2nix.packages.${system}.default;
       };
       piCodingAgent = pkgs.callPackage ./nix/packages/pi-coding-agent.nix {};
+      piRules = pkgs.callPackage ./nix/packages/pi-claude-rules.nix {};
       treehouseOwned = pkgs.callPackage ./nix/packages/treehouse-owned.nix {
         source = inputs.treehouse-owned;
       };
@@ -74,6 +75,7 @@
         hunk-turn-review-assets = hunkTurnReviewAssets;
         hunk-turn-review = hunkTurnReviewProfile;
         pi-coding-agent = piCodingAgent;
+        pi-claude-rules = piRules;
         treehouse-owned = treehouseOwned;
       };
       apps.${system} = {
@@ -94,6 +96,22 @@
         };
       };
       checks.${system} = {
+        pi-rules = pkgs.runCommand "pi-rules-lifecycle-check" {
+          nativeBuildInputs = [ pkgs.nodejs_22 pkgs.oxlint pkgs.oxfmt ];
+        } ''
+          export PI_TEST_PACKAGES=${piCodingAgent}/lib/pi-coding-agent/packages
+          export PI_RULES_PACKAGE_DIR=${piRules}
+          export PI_OFFLINE=1
+          mkdir -p tests/fixtures home/.pi/agent
+          cp ${./tests/fixtures/pi-rules-installation.mjs} tests/fixtures/pi-rules-installation.mjs
+          cp ${./tests/fixtures/pi-rules-resources.mjs} tests/fixtures/pi-rules-resources.mjs
+          cp ${./home/.pi/agent/claude-rules.json} home/.pi/agent/claude-rules.json
+          oxlint tests/fixtures/pi-rules-*.mjs
+          oxfmt --check tests/fixtures/pi-rules-*.mjs
+          node --check tests/fixtures/pi-rules-resources.mjs
+          node tests/fixtures/pi-rules-installation.mjs
+          touch "$out"
+        '';
         treehouse-owned = treehouseOwned;
         treehouse-owned-installation = pkgs.runCommand "treehouse-owned-installation-check" {} ''
           export TREEHOUSE_INSTALLER=${treehouseOwned}/share/treehouse-owned/install.py

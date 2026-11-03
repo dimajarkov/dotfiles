@@ -1,0 +1,15 @@
+{
+  "directories": [
+    ".agents/rules",
+    "~/.agents/rules"
+  ],
+  "ruleLoading": "hybrid",
+  "tools": [
+    "read",
+    "write",
+    "edit"
+  ],
+  "bashActivation": false,
+  "startupSummary": "compact",
+  "enabled": true
+}
