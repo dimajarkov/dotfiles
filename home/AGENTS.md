@@ -19,31 +19,6 @@ These are common instructions for Dmitri's agents across all scenarios.
 - Apply that same high standard to engineering excellence: lint failures, test failures, and test flakiness.
   If you see one, even if it is not caused by what you are working on right now, still get it fixed.
 
-## Treehouse task lifecycle
-
-- Keep one canonical branch and durably leased checkout per logical task, reused by every agent and implementation, proof, review, retry, reconciliation, rehearsal, and recovery phase.
-- Resolve existing task ownership before allocation; different phase names or agent holders do not establish a new task.
-- After verified delivery into the task's recorded integration target or merged PR, return the exact clean, quiet lease through the repository's guarded release path without asking for a second completion approval.
-- A handoff, ticket closure, passing CI, idle terminal, or agent exit alone is not delivery proof; retain unresolved work with an exact blocker and owner.
-- Before returning, verify identity, landing, ownership and zero surviving owned processes; preserve uncommitted files, unmerged commits, runtime data, and evidence.
-- Pruning or deleting worktrees still requires explicit approval; prefer returning finished slots for reuse with their ignored caches intact.
-
-## Browser tool routing
-
-- Use Computer Use through the Codex harness for end-user testing, visual QA, native macOS or cross-app workflows, and pixel-only surfaces such as canvas, video, and PDFs.
-- Keep Zen at `/Applications/Zen.app` for personal browsing, native workflows, and requested Zen compatibility checks; use its existing `development` space for localhost work in Zen.
-  Approved application QA may use repository-managed Chrome with a fresh disposable task-owned profile and synthetic accounts, without personal profiles, Google sign-in, sync, or extensions.
-  Read `~/.agents/skills/browser-routing/SKILL.md` before browser control or launch; it owns route selection and isolation checks.
-- Chrome evidence proves Chrome behavior, not Zen behavior; separate Zen acceptance is required only when the task explicitly requires it.
-  A missing Zen route is still a blocker for Zen-specific work, not permission for silent browser substitution.
-
-## Software installation
-
-- Follow repository policy, its declared manager, existing lockfile, and isolated environment; resolve conflicting evidence first.
-- Default to Bun only for confirmed new personal JavaScript/TypeScript projects.
-- Prefer project-local tools or one-off execution; avoid duplicate global installs and incidental manager migrations.
-- Use project-local Oxc (`oxlint` and `oxfmt`) as the sole linting and formatting toolchain in new or user-owned JavaScript and TypeScript projects.
-
 ## Container runtime policy
 
 - Keep OrbStack and local Docker on the verified OWC Envoy Ultra store, as explicitly requested on 2026-10-19.
@@ -57,7 +32,3 @@ These are common instructions for Dmitri's agents across all scenarios.
 When you are working on something that would benefit from being informed by Dmitri's viewpoints, read `~/OPINIONS.md` to understand what Dmitri believes.
 Treat it as living context, not a source of objective facts or a replacement for current evidence.
 Preserve uncertainty and flag meaningful tension or opinion drift instead of silently forcing alignment.
-
-## Settled Pi Policies
-
-Read `~/.dotfiles/docs/agent-capability-policy.md` for approved Pi routing, data handling, and tool capability boundaries.

@@ -66,7 +66,7 @@ It uses an empty private auth file, disables model network/refresh and never sta
 Credential values are never read; the live credential identity and metadata remain unchanged.
 
 Resource reload alone does not change an existing Git cache revision.
-The fixture reinstalls the prior source through the public Pi CLI using the verified local source as its private cache origin, then restores the entire prior settings selection, the prior immutable cache head and the exact matching prior skill text from base `f50353be0e664f374e38f8fed95877cd1001bbe7`.
+The fixture reinstalls the prior source through the public Pi CLI using the verified local source as its private cache origin, then restores the entire prior settings selection, the prior immutable cache head and the exact matching prior skill text from base `9ad19b70d44e68760c0632ce74d3df9b7aa85a0b`.
 It compares registered resources after rollback and checks native history hashes, project sentinels, active settings and worktree identities, including missing registered paths.
 Private inventories and evidence remain in the emitted owner-private temporary directory outside this public repository.
 Review all diagnostics, including unchanged baseline warnings; resource checks supplement the separately accepted #59 native observations.

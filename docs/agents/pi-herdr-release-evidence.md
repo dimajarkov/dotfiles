@@ -34,7 +34,9 @@ The fresh corrected run passed every observation and both original functional pr
 ### Installation and existing checks
 
 The #60 installation fixture passed on installed Pi 1.4.0 with a fresh public CLI install of both immutable sources into a private agent directory.
-It registered 28 parent tools, 30 child tools, 24 commands and 77 skills; all eight diagnostics were unchanged baseline skill-description warnings.
+The final rerun uses current master baseline `9ad19b70d44e68760c0632ce74d3df9b7aa85a0b` and preserves its unrelated local rules package, settings and guidance.
+The older fixture first refused the changed baseline; current master was merged into the isolated integration branch, the recorded baseline was updated, and fresh install/reload/rollback passed without altering the active configuration.
+It registered 28 parent tools, 30 child tools, 26 parent commands, 27 child commands and 77 skills; all eight diagnostics were unchanged baseline skill-description warnings.
 Ctrl+Alt+J registered with zero child shortcut conflicts; explicit delegation denials and all four bundled delegation allowlists passed.
 Rollback reinstalls the prior pin and restores matching guidance, original bundled definitions and the entire baseline resource inventory.
 Native history, active settings, live guidance, credential identity/metadata, project sentinels and worktree identities were preserved; credential values were not read.

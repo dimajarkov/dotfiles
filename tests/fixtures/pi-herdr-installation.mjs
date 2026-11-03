@@ -25,7 +25,7 @@ const priorPin = "116f5a611a879e99c65ddd61d527823e277c4d47";
 const candidatePin = "9237ccff593181698f3b80dfb3562b1ff1bb3cad";
 const guidancePath = "home/.pi/agent/skills/subagents/SKILL.md";
 const baselineRevision =
-  process.env.PI_HERDR_BASE_REVISION ?? "f50353be0e664f374e38f8fed95877cd1001bbe7";
+  process.env.PI_HERDR_BASE_REVISION ?? "9ad19b70d44e68760c0632ce74d3df9b7aa85a0b";
 const priorGuidance = execFileSync(
   "git",
   ["-C", root, "show", `${baselineRevision}:${guidancePath}`],

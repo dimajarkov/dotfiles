@@ -329,4 +329,3 @@ Approval trace: Q36 and the preceding functional decisions.
 - [Current installed Pi/Codex/Herdr capability assessment](../research/pi-herdr-interactive-current-capabilities.md).
 - [Return shortcut and configuration evidence](../research/pi-herdr-return-shortcut.md).
 - [Historical feasibility work](../research/pi-subagents-herdr-panes.md).
-- [Settled agent capability policy](../agent-capability-policy.md).

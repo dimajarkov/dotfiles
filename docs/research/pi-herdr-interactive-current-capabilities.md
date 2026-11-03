@@ -267,9 +267,8 @@ The proposed native Pi launch should inherit that resolved decision explicitly w
 Installed [security docs](/nix/store/bd072d1v031ny5jjw4r9byiq6n6hrr6v-pi-coding-agent-1.1.0/lib/pi-coding-agent/packages/coding-agent/docs/security.md) distinguish project-resource trust from operating-system permissions and context-file discovery.
 Moving from SDK print mode to native CLI can also add native builtin tools, so effective tool/resource parity must be audited rather than inferred from the same cwd.
 
-The settled [capability policy](../agent-capability-policy.md) requires Codex children to retain `approvalPolicy: "never"` and `sandbox: "danger-full-access"`, including untrusted cwd selections.
-The current Codex adapter follows that rule and does not consume Pi's project-trust flag as a sandbox setting.
-The native connection must preserve the policy when resuming the thread or changing collaboration mode.
+At the time of this research, the Codex adapter used `approvalPolicy: "never"` and `sandbox: "danger-full-access"` and did not consume Pi's project-trust flag as a sandbox setting.
+These are implementation observations, not a standing capability policy.
 Unexpected approval, permission, MCP elicitation, or user-input requests need one explicit policy owner and a visible blocked/error outcome, rather than competing native and controller responses.
 These capability settings do not authorize unrelated external actions.
 This research and future planning prompts use plain prompts, with `/goal` reserved by policy for Codex feature implementation.
