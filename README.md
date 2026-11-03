@@ -187,6 +187,11 @@ WezTerm independently follows system appearance with Catppuccin Mocha and Latte.
 
 Read a saved Markdown buffer with `:Glow` or `<leader>mp` (Space, M, P).
 The preview runs Glow's interactive reader in a real terminal, using Glow's configured colors and width; scroll with the trackpad, mouse wheel, or `j`/`k`, and press `q` to return to the document and its original cursor position.
+Inside Herdr, click a local file reference in the preview to open a new pane on the right, leaving the original preview open.
+Markdown files open in Neovim with `:Glow`; other files open in the editor, honoring `:line` suffixes.
+This supports plain paths, code-styled paths (including spaces and wrapped paths), and inline Markdown links to local files.
+Relative paths resolve from the source document's directory, then its Git root, then Neovim's working directory; missing files and web URLs do not create panes.
+The embedded reader disables Glow's legacy high-performance viewport to avoid blank or duplicated content when opening short files.
 Restart Neovim after changing its configuration; no rebuild is needed for these symlinked files.
 Glow 2.1.2 carries a local content-caching backport in `nix/patches/glow-resize.patch` to prevent blank previews when shrinking the terminal.
 Run `./rebuild.sh` to activate Glow package changes, then close any existing preview and reopen it with `:Glow`.
@@ -197,6 +202,8 @@ After launching Neovim once to install the plugins, run the Neovim regression te
 nvim --headless -u NONE -l tests/nvim-appearance.lua
 python3 tests/nvim-appearance-tui.py # macOS: full TUI against the real system appearance
 python3 tests/nvim-glow-tui.py # trackpad scrolling, visible content/colors after resizes, and returning to the source buffer
+nvim --headless -u NONE -l tests/nvim-glow-references.lua # reference resolution and safe Herdr commands
+python3 tests/nvim-glow-herdr.py # real clicks through an isolated Herdr TUI, right-hand panes, and automatic Glow
 ```
 
 The Lua tests exercise both palettes, live changes, failure recovery, reload safety, and non-macOS behavior without changing the system appearance.

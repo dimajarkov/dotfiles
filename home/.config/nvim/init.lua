@@ -269,7 +269,9 @@ local function open_with_glow()
 	local job = vim.fn.jobstart({ 'glow', '--tui', path }, {
 		term = true,
 		-- Glow 2.x treats even --pager=false as a request for an external pager.
-		env = { GLOW_PAGER = 'false' },
+		-- Glow's legacy high-performance viewport uses scroll-region writes
+		-- that can leave short documents blank in an embedded terminal.
+		env = { GLOW_PAGER = 'false', GLOW_HIGH_PERFORMANCE_PAGER = 'false' },
 		on_exit = function(_, code)
 			vim.schedule(function()
 				close_preview()
@@ -291,6 +293,7 @@ local function open_with_glow()
 			vim.api.nvim_chan_send(job, input)
 		end, { buffer = preview, desc = 'Scroll Glow document' })
 	end
+	require('glow-references').attach(preview, source)
 	vim.cmd.startinsert()
 end
 
