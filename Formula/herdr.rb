@@ -18,6 +18,8 @@ class Herdr < Formula
   deny_network_access! :test
 
   def install
+    ENV.prepend_path "PATH", Formula["rust"].opt_bin
+    ENV.prepend_path "PATH", Formula["zig@0.16"].opt_bin
     system "cargo", "fetch", "--locked"
     cd "vendor/libghostty-vt" do
       system "zig", "build", "--fetch=all"
