@@ -38,12 +38,17 @@ The revision-2 formula adds the accepted branch-column source from [Herdr PR #2]
 It retains Homebrew ownership and checks managed launch/control, both branch methods and live handoff in the bundled schema.
 For an existing installation from this tap, publish the formula first, retain the old keg/receipt, then upgrade only the qualified formula with automatic cleanup disabled.
 Do not repeat the historical core-to-tap uninstall procedure below for an already-owned tap installation.
+The formula explicitly resolves the declared Rust and Zig opt-bin paths.
+A Herdr-only build can reuse already-installed build dependencies with `brew install --formula --build-from-source --ignore-dependencies dimajarkov/dotfiles/herdr`, with automatic updates, cleanup and dependent checks disabled for that command.
+Homebrew labels this a developer option; verify both declared build tools and the resulting installed-formula test rather than assuming missing dependencies are available.
 Validate the new executable and its actual formula test before changing a running server.
 Installing the executable leaves existing servers unchanged.
 
 A compatible server exposes `server.live_handoff` with an explicit replacement executable, expected version and protocol.
-Test the exact old-to-new transition on a disposable named session first and compare pane/terminal identities and child process PIDs.
-For the authorized target, retain an ownership snapshot and verify the same identities and processes after handoff, plus the actual branch capability response.
+Test the exact old-to-new transition on a disposable named session first and compare pane identities, layout, focus and shell/foreground process PIDs.
+Terminal IDs are regenerated across server replacement; do not treat old terminal conditions as transferable authority.
+A server with managed-job runtimes refuses handoff with `managed_handoff_unsupported`; settle or explicitly retire the owning resources first, without bypassing this guard.
+For the authorized target, retain a snapshot and verify preserved pane identities, native sessions and processes after handoff, plus the actual branch capability response.
 Handoff preserves PTYs/processes and durable session state; in-flight requests, waits and subscriptions are transient and clients must reconnect.
 Never fall back automatically to stopping the target if handoff fails or its outcome is uncertain.
 Preserve the original runtime and recovery evidence instead.
@@ -116,6 +121,25 @@ In an approved maintenance window, uninstall the qualified fork formula and rest
 Core Herdr will not satisfy this Pi adapter until it includes the required APIs.
 Remove the custom tap only after no installed package uses it.
 Leave the canonical Pi and Herdr repositories, their histories, native session storage and credentials intact.
+
+## Nested-runtime installation receipt, 2026-11-03
+
+The Homebrew source build installed `dimajarkov/dotfiles/herdr` revision `0.9.4_2`, reporting `0.9.4-pi.e3a21bb0` from the normal Homebrew executable path.
+All 16 assertions in the actual installed formula test pass through `nix run .#herdr-package-test`.
+The prior `0.9.4_1` keg remains installed; its executable and receipt were also verified against a private rollback archive.
+The attempted broad dependency upgrade was cancelled before installation; the successful limited build retained the existing Rust, Zig and shared dependency versions.
+The first limited attempt exposed the missing build-tool PATH, corrected by explicitly resolving the declared dependency opt-bin paths in the formula.
+
+A disposable old-to-new live handoff preserved pane IDs, layout, focus, original shell PID and an actively running synthetic child PID.
+Terminal IDs regenerated, as expected for a new server generation.
+The actual bundled public Pi layout proof then passed on the installed release build in 85.1 seconds, including deeper descendants, later C, reversed removals, result delivery and unrelated-resource preservation.
+Live branch capabilities were verified on that same test server.
+Only exact-owned test servers were stopped after quiet-shell checks; private native histories and receipts remain retained.
+
+The authorized `arena` handoff attempt was refused with `managed_handoff_unsupported` while managed children remained.
+The guard prevented changing the running server; at this checkpoint arena still reported `0.9.4-pi.c8d5b8f0` and the active Pi selection/cache remained at the prior `116f5a6` pin.
+The executable installation is complete; arena activation and existing-conversation reload remain pending settlement or explicitly approved retirement of those resources.
+Do not bypass the guard or infer that installing the new CLI upgraded an existing server.
 
 ## Installation acceptance, 2026-10-15
 
