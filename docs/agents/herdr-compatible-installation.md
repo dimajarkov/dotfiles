@@ -122,6 +122,30 @@ Core Herdr will not satisfy this Pi adapter until it includes the required APIs.
 Remove the custom tap only after no installed package uses it.
 Leave the canonical Pi and Herdr repositories, their histories, native session storage and credentials intact.
 
+## Arena activation, 2026-11-04
+
+After the user resumed rollout, the recent managed child had finished; the remaining older idle worker showed an aborted command and an empty editor.
+Its native history was retained and the idle runtime exited through `/quit`, removing the managed resource that blocked handoff.
+No Arena implementation work was declared complete or changed as part of retiring that runtime.
+
+The named `arena` handoff to Homebrew `0.9.4_2` succeeded and now reports `0.9.4-pi.e3a21bb0`, protocol 22.
+All 21 remaining original panes, every original shell PID, 14 native session identities and focus were verified across the handoff.
+Terminal IDs regenerated with the new server generation; stale terminal conditions were not reused.
+The live branch-capability endpoint responds with managed ownership/control v1.
+
+The clean primary dotfiles checkout was fast-forwarded to the reviewed merged changes, activating existing out-of-store settings and matching skill links.
+No Home Manager mapping, flake or system configuration changed, so no broad rebuild or Homebrew cleanup was needed.
+The normal Pi CLI explicitly installed package `9237ccff593181698f3b80dfb3562b1ff1bb3cad`; the active settings selection and installed Git cache HEAD both match that exact revision.
+Reload was submitted only to the 14 idle native Pi conversations after checking empty editors and no outstanding child work.
+Thirteen reload acknowledgements were observed; the remaining acknowledgement was obscured by the conversation's internal transcript scroll position and is not claimed as independently observed.
+All native conversation identities were retained.
+
+A fresh ordinary interactive Pi parent in arena used the normal active global resources, without a private package/settings override.
+It launched a bundled worker that launched another bundled worker; both immediate-parent result messages recorded exit code zero and the top-level parent wrote the expected success marker after reconciliation.
+The task-owned smoke workspace was retired only after its children had closed and its original parent returned to a quiet shell.
+Original user panes and native histories remain retained, alongside the old Homebrew keg and verified rollback archive.
+The runtime and global package activation are complete; the scrolled-view reload acknowledgement remains the stated observation limit.
+
 ## Nested-runtime installation receipt, 2026-11-03
 
 The Homebrew source build installed `dimajarkov/dotfiles/herdr` revision `0.9.4_2`, reporting `0.9.4-pi.e3a21bb0` from the normal Homebrew executable path.
