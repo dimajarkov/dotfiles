@@ -1,4 +1,16 @@
-# Compatible Herdr installation
+# Herdr installation history
+
+## Current selection: original upstream
+
+The configuration now selects homebrew-core `herdr`, not `dimajarkov/dotfiles/herdr`.
+The custom `dimajarkov/pi-interactive-subagents` package and its Pi delegation-skill link are intentionally unconfigured.
+The retained project and former fork are historical sources, not active Pi integrations.
+Pi's Nix package and unrelated extensions remain unchanged by this migration.
+The former formula and tap remain available as rollback sources, not the selected installation.
+Installing a replacement executable does not itself replace any running server.
+The sections below document the former fork and its historical acceptance, not the current desired installation.
+
+## Former compatible fork
 
 Pi interactive subagents require Herdr's managed job ownership and cooperative native Pi control APIs.
 The official v0.9.5 source and the installed Homebrew 0.9.3 binary do not contain these APIs.

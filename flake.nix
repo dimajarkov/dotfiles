@@ -62,7 +62,7 @@
             $LOAD_PATH.unshift(ARGV.shift)
             require "formulary"
             require "formula_assertions"
-            formula = Formulary.factory("dimajarkov/dotfiles/herdr")
+            formula = Formulary.factory("homebrew/core/herdr")
             formula.extend(Homebrew::Assertions)
             formula.run_test
             puts "Installed formula assertions passed: #{formula.assertions}"
@@ -209,6 +209,12 @@
           ${pkgs.python3}/bin/python3 ${./nix/tests/hunk-turn-review-codex-launch.py}
           touch "$out"
         '';
+      };
+
+      homeConfigurations.ci-runner = home-manager.lib.homeManagerConfiguration {
+        inherit pkgs;
+        extraSpecialArgs = { user = "ci-runner"; };
+        modules = [ ./nix/modules/herdr-worker.nix ];
       };
 
       darwinConfigurations."mac" = nix-darwin.lib.darwinSystem {

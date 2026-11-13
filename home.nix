@@ -31,6 +31,7 @@ in {
   home.stateVersion = "24.11";
 
   home.packages = with pkgs; [
+    (pkgs.callPackage ./nix/packages/codex.nix {})
     backpassCli
     btop
     codebook
@@ -433,8 +434,6 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/models.json";
   home.file.".pi/agent/mcp.json".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/mcp.json";
-  home.file.".pi/agent/skills/subagents".source =
-    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/skills/subagents";
   home.file.".pi/agent/skills/web-debug".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.pi/agent/skills/web-debug";
   home.file.".pi/agent/themes/catppuccin-latte.json".source =
@@ -578,6 +577,12 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/browser-routing";
   home.file.".codex/AGENTS.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.codex/AGENTS.md";
+  # Codex discovers symlinked roles but refuses them at spawn time.
+  home.activation.installCodexAgents = config.lib.dag.entryAfter [ "linkGeneration" ] ''
+    run ${pkgs.python3}/bin/python3 ${./scripts/install-codex-agents.py} \
+      --source "${dotfiles}/home/.codex/agents" \
+      --destination "${config.home.homeDirectory}/.codex/agents"
+  '';
   # Codex scans ~/.codex/skills; bridge Pi-only roots here without copying skills.
   home.file.".codex/skills/pi-user".source =
     config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/.pi/agent/skills";

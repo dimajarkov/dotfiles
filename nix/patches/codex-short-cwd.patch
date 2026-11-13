@@ -1,0 +1,81 @@
+--- a/tui/src/status/helpers.rs
++++ b/tui/src/status/helpers.rs
+@@ -145,6 +145,17 @@
+     format!("{formatted}{suffix}")
+ }
+ 
++/// Display only the parent and current folder in the status line.
++pub(crate) fn format_short_directory(directory: &Path) -> String {
++    let Some(child) = directory.file_name() else {
++        return directory.display().to_string();
++    };
++    match directory.parent().and_then(Path::file_name) {
++        Some(parent) => Path::new(parent).join(child).display().to_string(),
++        None => child.to_string_lossy().into_owned(),
++    }
++}
++
+ pub(crate) fn format_directory_display(directory: &Path, max_width: Option<usize>) -> String {
+     let formatted = if let Some(rel) = relativize_to_home(directory) {
+         if rel.as_os_str().is_empty() {
+@@ -178,6 +189,32 @@
+         time
+     } else {
+         format!("{time} on {}", dt.format("%-d %b"))
++    }
++}
++
++#[cfg(test)]
++mod short_directory_tests {
++    use super::format_short_directory;
++    use pretty_assertions::assert_eq;
++    use std::path::Path;
++
++    #[test]
++    fn keeps_only_the_last_two_folders() {
++        for (path, expected) in [
++            ("/Users/dmitrijarkov/dev/tools/codex", "tools/codex"),
++            ("/Users/dmitrijarkov", "Users/dmitrijarkov"),
++            ("/tmp", "tmp"),
++            ("/", "/"),
++            ("/some parent/child folder/", "some parent/child folder"),
++            ("/a/папка/проект", "папка/проект"),
++        ] {
++            assert_eq!(format_short_directory(Path::new(path)), expected);
++        }
++    }
++
++    #[test]
++    fn short_directory_snapshot() {
++        insta::assert_snapshot!(format_short_directory(Path::new("/Users/dmitrijarkov/dev/tools/codex")), @"tools/codex");
+     }
+ }
+ 
+--- a/tui/src/status/mod.rs
++++ b/tui/src/status/mod.rs
+@@ -24,6 +24,7 @@
+ pub(crate) use helpers::compose_agents_summary;
+ pub(crate) use helpers::format_directory_display;
+ pub(crate) use helpers::format_reset_timestamp;
++pub(crate) use helpers::format_short_directory;
+ pub(crate) use helpers::format_tokens_compact;
+ pub(crate) use helpers::plan_type_display_name;
+ pub(crate) use rate_limits::RateLimitSnapshotDisplay;
+--- a/tui/src/chatwidget/status_surfaces.rs
++++ b/tui/src/chatwidget/status_surfaces.rs
+@@ -735,12 +735,9 @@
+             StatusLineItem::Provider => self
+                 .thread_id
+                 .map(|_| format!("provider: {}", self.config.model_provider_id)),
+-            StatusLineItem::CurrentDir => {
+-                Some(format_directory_display(
+-                    self.status_line_cwd(),
+-                    /*max_width*/ None,
+-                ))
+-            }
++            StatusLineItem::CurrentDir => Some(crate::status::format_short_directory(
++                self.status_line_cwd(),
++            )),
+             StatusLineItem::ProjectRoot => self.status_line_project_root_name(),
+             StatusLineItem::Hostname => os_host_name(),
+             StatusLineItem::GitBranch => self.status_line_branch.clone(),

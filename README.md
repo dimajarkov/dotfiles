@@ -80,6 +80,10 @@ Edit the config files in place, then apply:
 That's it.
 No separate build-and-copy step.
 
+For the `ci-runner` account reached through Herdr's saved Yuri machine, use the
+[worker account profile](docs/herdr-worker.md) instead of the desktop system rebuild.
+It reuses the development configuration without changing Yuri's desktop or Homebrew packages.
+
 ## Make it yours
 
 This repo is mine.
@@ -109,10 +113,10 @@ That means every time you switch, Homebrew removes any package or cask on your m
 If you already have Homebrew stuff installed that isn't in that list, the first switch will uninstall it.
 Read through `brews` and `casks` before you run `bootstrap.sh` or `rebuild.sh` for the first time, and add anything you want to keep.
 
-**About `herdr`:** Homebrew installs the pinned `dimajarkov/dotfiles/herdr` formula from this repository.
-The reviewed fork supplies the managed job and native Pi control APIs required by interactive subagents.
-See [compatible Herdr installation](docs/agents/herdr-compatible-installation.md) for the one-time transition from homebrew-core, verification and rollback.
-If you do not use it, remove its formula and tap declarations in your copy.
+**About `herdr`:** Homebrew installs the original upstream `herdr` formula from homebrew-core.
+The custom Pi interactive-subagents package is disabled because upstream Herdr lacks its required managed job and cooperative Pi control APIs.
+Pi itself remains Nix-managed and works without that package.
+See [Herdr installation history](docs/agents/herdr-compatible-installation.md) for the former fork and rollback context.
 
 **Heads-up:**
 

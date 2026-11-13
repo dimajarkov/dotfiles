@@ -50,11 +50,7 @@
       "gh"
       "mosh"
       "rjyo/moshi/moshi-hook"
-      {
-        name = "dimajarkov/dotfiles/herdr";
-        # Custom-remote taps require trust at the tap level.
-        trusted = false;
-      }
+      "herdr"
     ];
     casks = [
       "nikitabobko/tap/aerospace"

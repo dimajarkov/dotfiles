@@ -2,16 +2,16 @@
 
 pkgs.buildNpmPackage rec {
   pname = "pi-coding-agent";
-  version = "1.4.0";
+  version = "1.5.2";
 
   src = pkgs.fetchFromGitHub {
     owner = "earendil-works";
     repo = "pi";
-    rev = "4a080252f06caf63a525d7873c5d94d3c23887e0";
-    hash = "sha256-N9NOpiiZTbOMDMV+CxvJAgtLjJJ1/8NJBGS0cFHkhsc=";
+    rev = "v${version}";
+    hash = "sha256-0dKtABQqfvCLF0WOydu5rpycMqC+N8Pc9Ex4BWKElyw=";
   };
 
-  npmDepsHash = "sha256-aBzVz78IxZQlzPYC72Ufa2YFtkow6nZR24YBYZrv9W0=";
+  npmDepsHash = "sha256-uHehffbEB2uU9U9uSpfWojzxvQyqeicbh/esCwk4neQ=";
 
   # Native admission and per-request provenance must match the deployed adapters.
   patches = [
@@ -22,7 +22,7 @@ pkgs.buildNpmPackage rec {
   postPatch = let
     modelData = pkgs.fetchurl {
       url = "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-${version}.tgz";
-      hash = "sha256-tA4rqLtvwzKQj4uW6DfcLR/ftF65zTgvWu0RFGKYHjw=";
+      hash = "sha256-1XFe+oNMI7/fEKBCtJ307hacyZAAvxbXmY+rLVM7Rfg=";
     };
   in ''
     mkdir -p packages/ai/src/providers/data
@@ -38,7 +38,7 @@ pkgs.buildNpmPackage rec {
     runHook preInstall
     npm prune --omit=dev --ignore-scripts --offline
     mkdir -p "$out/lib/pi-coding-agent" "$out/bin"
-    cp -a package.json node_modules packages "$out/lib/pi-coding-agent/"
+    cp -a package.json node_modules packages apps "$out/lib/pi-coding-agent/"
     makeWrapper ${nodejs}/bin/node "$out/bin/pi" \
       --add-flags "$out/lib/pi-coding-agent/packages/coding-agent/dist/cli.js" \
       --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ripgrep pkgs.fd ]}

@@ -1,6 +1,15 @@
-# Interactive Pi subagents installation candidate
+# Interactive Pi subagents installation history
 
-Dotfiles owns the immutable Pi package selection and matching delegation skill.
+## Current status: disabled
+
+Interactive Pi subagents are intentionally unconfigured.
+Pi settings do not select the package, and Home Manager does not link its delegation skill into Pi's discovery directory.
+The older local subagents extension remains excluded in Pi settings.
+Herdr uses the upstream package selection and has no interactive-subagents integration configured.
+The project, package cache, skill source and historical evidence remain available without being activated.
+Existing Pi conversations need a fresh session to discard previously loaded tools and guidance.
+
+The remainder of this document records the former installation and rollback procedure, not the current desired configuration.
 The implementation repository is `dimajarkov/pi-interactive-subagents`; its canonical development checkout is `~/pi-interactive-subagents`.
 That mutable checkout is not the installation source.
 
