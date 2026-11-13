@@ -12,46 +12,58 @@ The goal is the entire spec implemented on a single **integration branch**, with
 
 The tickets are not a list of steps. They are a **task graph** with blocking relationships between them. This means there is always a **frontier** of tickets which are ready to be grabbed.
 
-Communication to and from subagents should be sparse. Communicate primarily through **context pointers**: to the spec, tickets, research notes, and previous commits. Don't duplicate information already available via pointers.
+## Execution lane
 
-**Implementer subagents** should be run in the background where possible for maximum concurrency.
+Use one accountable implementation lane in the current harness unless the user explicitly requests delegation.
+In Codex, execute directly using Codex tools; Pi interactive subagents, terminal panes and completion notifications are not prerequisites.
+Preserve existing worker sessions, checkouts, datasets and evidence when resuming work from another harness.
+Verify whether an existing execution still owns the write lane before editing; a completed report and an unresolved execution are different states.
+
+Optional independent review supplements delivery of a coherent execution path.
+Read its actual result before deciding it remains pending; track findings to resolution rather than repeatedly launching reviews of small internal checkpoints.
+If delegation is explicitly requested, pass context pointers, exact ownership, scope and a completion condition using tools supported by the current harness.
+A missing delegation tool or pane capacity does not block authorized direct execution.
 
 ## Steps
 
-1. Read the spec and tickets to understand the task graph.
+1. Read the spec and tickets to understand the task graph and select the requested dependency-ready ticket.
+   Complete its actual user journey before expanding into downstream source work unless the user requests a scheduling exception.
 
-2. (optional) Use an **exploration subagent** to conduct any exploration required by the tickets - relevant codebase files or external documentation. Ensure the exploration subagent can save files - it should save its markdown notes in a directory outside the repo, accessible by all future subagents. This lets **implementer subagents** focus on implementation rather than exploration.
-
-3. Resolve the existing canonical integration branch and checkout for this spec using the repository's checkout owner.
+2. Resolve the existing canonical integration branch and checkout using the repository's checkout owner.
    Create them only when no owner exists; resume never creates another copy.
-   If the issue tracker closes work through PRs, or the user asks for one, open a draft PR after the first merge in step 5 (a branch with no commits ahead of main can't open one), marked as closing the parent spec on merge and linking all child tickets.
-   Opening the draft does not require all children to be complete or closed.
-   Immediately after creating the draft PR, complete the initial PR review checkpoint below.
+   Verify branch, lease, holder, base, head, dirty work, published state and runtime ownership before acting.
 
-4. Use **implementer subagents** to implement each ticket in its one canonical branch and checkout, resolved by stable ticket identity through the repository's checkout owner before allocation.
-   Pass that exact branch and checkout to every worker, reviewer, and merger for the ticket.
-   Implementation, cold/warm startup, proof, review fixes, retries, reconciliation, rehearsal, and restoration run sequentially there; these phases do not allocate branches or worktrees.
-   Each implementer subagent:
-   - verifies the checkout's identity, ownership, current work and integration base; preserves existing changes and merges needed integration updates rather than resetting retained work;
-   - calls the Skill tool with `tdd` to build the ticket;
-   - merges the integration branch tip into its own branch before reporting done
+3. Resolve the selected ticket's canonical branch and checkout by stable ticket identity.
+   Reuse that checkout for implementation, proof, review fixes, retries and recovery.
+   Preserve existing work and merge required integration updates rather than resetting retained history.
+   Reproduce the reported failure through the ordinary user-facing command before fixing it.
+   Use the repository's testing owners and exercise real launcher, environment, process and persistence boundaries where acceptance requires them.
+   External-effect doubles do not establish actual runtime or browser completion.
 
-5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent** working in the existing integration checkout.
-   Verify the integrated acceptance criteria and resolve relevant review findings, then close that child using the ticket lifecycle below.
-   A worker report or successful merge alone is not completion evidence.
+4. Review the coherent changed execution path, resolve blocking findings and run relevant checks.
+   Merge the integration tip into the ticket branch before integration through the repository's guarded lifecycle.
+   Integrate into the existing integration checkout, verify the composed result and publish authorized reviewed work promptly for CI feedback.
+   Ordinary authorized source/test publication requires no invented per-commit approval gate.
+   Explicit task-specific holds and independent operational approvals remain binding.
+   If a PR is required and none exists, open a draft after the first integration commit and run the initial PR review checkpoint below.
 
-6. If this changes the **frontier** of available tickets, kick off more **implementer subagents** to work on the new tickets. This allows for maximum concurrency.
+5. Verify the selected ticket's acceptance criteria against the actual integrated source and runtime, then apply the ticket lifecycle below.
+   A worker report, green CI, merge, HTTP response or redirect alone does not establish completion.
+   Record remaining blockers and unverified claims without silently narrowing scope.
 
-7. Once all tickets are complete, call the Skill tool with `code-review` on the integration branch.
-   Fix all issues raised by the code review in a single **implementer subagent** in the existing integration checkout.
-   Reopen any child whose completion is invalidated, then verify the correction and close it again with updated evidence.
+6. Refresh the frontier after completing a ticket.
+   Continue only within the requested scope; a scheduling exception does not waive dependencies or acceptance.
+   For interrupted execution, inspect current process and ownership state before continuing the same lane.
+   Preserve uncertain claims and unresolved evidence instead of launching a competing writer or clearing ownership markers.
 
-8. If a draft PR exists, after the final code-review fixes, repeat the PR review checkpoint below before marking it ready for review.
-   Otherwise, resolve each ticket the way the issue tracker closes work, and report the integration branch.
+7. Once all requested implementation is complete, review the combined diff from the recorded base and resolve blocking findings in the existing canonical checkouts.
+   Reopen any child whose completion is invalidated and verify its correction before closing again.
+   If a draft PR exists, repeat the PR review checkpoint before marking it ready for review.
+   Otherwise, resolve tickets using the tracker's delivery criteria and report the integration branch.
 
-9. Complete the repository's guarded return after verified delivery into the recorded integration target or merged PR, preserving runtime data and evidence.
+8. Complete the repository's guarded return after verified delivery into the recorded integration target or merged PR, preserving runtime data and evidence.
    No second human completion prompt is required unless the repository has an explicit task-specific hold.
-   Closing a ticket alone is not landing proof; report retained ownership and the exact blocker when the guarded return refuses.
+   Closing a ticket alone is not landing proof; report retained ownership and the exact blocker when guarded return refuses.
    Returning reusable capacity is separate from pruning or deleting a checkout, which still requires explicit approval.
 
 ## Ticket lifecycle
