@@ -19,15 +19,19 @@ See [tests.md](tests.md) for examples and [mocking.md](mocking.md) for mocking g
 
 A **seam** is the public boundary you test at: the interface where you observe behavior without reaching inside. Tests live at seams, never against internals.
 
-**Test only at pre-agreed seams.** Before writing any test, write down the seams under test and confirm them with the user. No test is written at an unconfirmed seam. You can't test everything, so agreeing the seams up front is how testing effort lands on the critical paths and complex logic instead of every edge case.
-
-Ask: "What's the public interface, and which seams should we test?"
+**Use agreed seams.** Identify the public operation and acceptance behavior before writing the first test.
+An approved spec, ticket or existing owner contract can establish these seams; ordinary regression cases within them need no repeated approval.
+Ask the user when the seam is unspecified or changing it would alter the agreed interface, scope or acceptance criteria.
+Test-seam agreement does not authorize database, provider or other external-state operations.
 
 When the shape of that interface is itself in question (how deep the module is, where the seam belongs, what the interface should expose), call the Skill tool with "codebase-design" for the vocabulary. It is the shared source of the module, interface, depth, seam, adapter, leverage and locality terms, and it is a reference to consult, not a session to run.
 
 ## Anti-patterns
 
-- **Implementation-coupled**: mocks internal collaborators, tests private methods, or verifies through a side channel (querying the database instead of using the interface). The tell: the test breaks when you refactor but behavior hasn't changed.
+- **Implementation-coupled**: replaces the behavior under test with mocks or asserts private structure without a caller-visible obligation.
+  Exercise the public operation first; use independent database, Storage or provider readback when durability or external effects are part of the acceptance contract.
+  Resource-call counts can enforce an explicit performance budget, rather than prescribe an incidental call order.
+  See [tests.md](tests.md) for the distinction between implementation coupling and effect evidence.
 - **Tautological**: the assertion recomputes the expected value the way the code does (`expect(add(a, b)).toBe(a + b)`, a snapshot derived by hand the same way, a constant asserted equal to itself), so it passes by construction and can never disagree with the code. Expected values must come from an independent source of truth: a known-good literal, a worked example, the spec.
 - **Horizontal slicing**: writing all tests first, then all implementation. Bulk tests verify _imagined_ behavior: you test the _shape_ of things rather than user-facing behavior, the tests go insensitive to real changes, and you commit to test structure before understanding the implementation. Work in **vertical slices** instead: one test → one implementation → repeat, each test a **tracer bullet** that responds to what the last cycle taught you.
 

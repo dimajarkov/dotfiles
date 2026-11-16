@@ -7,11 +7,10 @@ Mock at **system boundaries** only:
 - Time/randomness
 - File system (sometimes)
 
-Don't mock:
-
-- Your own classes/modules
-- Internal collaborators
-- Anything you control
+Keep domain behavior and the composed path under test real.
+Avoid mocking internal collaborators merely to assert their wiring.
+An owned process, database or provider adapter can still be a system boundary; ownership alone does not decide whether to double it.
+State what the double replaces and what remains unproved, and use real integration evidence when the acceptance contract requires actual effects.
 
 ## Designing for Mockability
 

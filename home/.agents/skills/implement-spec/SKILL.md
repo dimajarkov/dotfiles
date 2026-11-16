@@ -10,7 +10,9 @@ The issue tracker should have been provided to you. If not, tell the user to run
 
 The goal is the entire spec implemented on a single **integration branch**, with each verified child ticket closed with completion evidence and the parent spec kept open until the PR is merged.
 
-The tickets are not a list of steps. They are a **task graph** with blocking relationships between them. This means there is always a **frontier** of tickets which are ready to be grabbed.
+The tickets form a **task graph** with blocking relationships, not a list of steps.
+The **frontier** contains dependency-ready tickets; it can be empty when prerequisites are unresolved.
+Resolve the demonstrated critical-path blocker rather than starting blocked work merely to keep agents busy.
 
 ## Execution lane
 
@@ -24,6 +26,19 @@ Read its actual result before deciding it remains pending; track findings to res
 If delegation is explicitly requested, pass context pointers, exact ownership, scope and a completion condition using tools supported by the current harness.
 A missing delegation tool or pane capacity does not block authorized direct execution.
 
+## Critical path and stalls
+
+Keep the selected ticket's next unverified acceptance behavior as the delivery target.
+When it stalls, find the first failing boundary and classify it as an implementation defect, missing prerequisite, operational authorization, slow execution or coordination failure.
+For slow commands, inspect current phase and liveness, then measure phase duration and expensive-operation counts before choosing a performance fix.
+New child processes or an occupied agent are evidence of activity, not forward progress.
+For coordination failures, read the actual result and current ownership before waiting, resuming or replacing a worker.
+
+Fix a new defect in this lane when it prevents required acceptance, invalidates delivered behavior, or violates a safety obligation of the changed path.
+Record independent nonblocking improvements separately; an unknown impact needs investigation, not automatic deferral or an expanding refactor.
+Continue authorized source work without inventing approval gates, while preserving genuine external-state and task-specific holds.
+Report the last verified capability, current blocker and next concrete check rather than an unsupported completion percentage.
+
 ## Steps
 
 1. Read the spec and tickets to understand the task graph and select the requested dependency-ready ticket.
@@ -36,7 +51,8 @@ A missing delegation tool or pane capacity does not block authorized direct exec
 3. Resolve the selected ticket's canonical branch and checkout by stable ticket identity.
    Reuse that checkout for implementation, proof, review fixes, retries and recovery.
    Preserve existing work and merge required integration updates rather than resetting retained history.
-   Reproduce the reported failure through the ordinary user-facing command before fixing it.
+   Attempt the authorized user-facing acceptance path early enough to expose actual environment prerequisites before building fixtures around assumed readiness.
+   Reproduce the reported failure through that path before fixing it; distinguish blocked reproduction from an observed implementation failure.
    Use the repository's testing owners and exercise real launcher, environment, process and persistence boundaries where acceptance requires them.
    External-effect doubles do not establish actual runtime or browser completion.
 
@@ -95,7 +111,10 @@ Publish the checkpoint in the PR description or review handoff, not only a priva
 Label the initial draft checkpoint partial whenever the all-included answer is not yes.
 
 Record code-review findings and their resolution against the reviewed base and head SHAs.
-If either SHA changes, assess the new diff and refresh affected review and acceptance evidence before final readiness.
+If either SHA changes, map the new diff to the reviewed execution paths and acceptance assertions before final readiness.
+Rerun checks whose assumptions or behavior changed; explain when an integrated end-to-end replay is necessary.
+Retain unaffected results with their original producing head, recording the basis for carrying them forward rather than relabeling them as a new run.
+Uncertain impact requires investigation or relevant reruns, not an automatic full replay or an unsupported claim of unchanged behavior.
 
 Before final readiness, require verified inclusion and acceptance-criteria completion for every ticket and resolution of blocking code-review findings.
 Keep the PR draft while implementation, required verification or blocking findings remain incomplete.
