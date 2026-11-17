@@ -1,0 +1,40 @@
+# Match WezTerm's appearance while keeping Ghostty's native shortcuts.
+theme = light:Catppuccin Latte,dark:Catppuccin Mocha
+window-theme = system
+font-family = Hack Nerd Font Mono
+font-size = 14
+background-opacity = 0.98
+macos-titlebar-style = hidden
+
+macos-option-as-alt = true
+keybind = option+backspace=text:\x1b\x7f
+
+# Use Option+number for tab navigation instead of Command+number.
+keybind = option+1=goto_tab:1
+keybind = option+digit_1=goto_tab:1
+keybind = option+2=goto_tab:2
+keybind = option+digit_2=goto_tab:2
+keybind = option+3=goto_tab:3
+keybind = option+digit_3=goto_tab:3
+keybind = option+4=goto_tab:4
+keybind = option+digit_4=goto_tab:4
+keybind = option+5=goto_tab:5
+keybind = option+digit_5=goto_tab:5
+
+keybind = command+1=unbind
+keybind = command+digit_1=unbind
+keybind = command+2=unbind
+keybind = command+digit_2=unbind
+keybind = command+3=unbind
+keybind = command+digit_3=unbind
+keybind = command+4=unbind
+keybind = command+digit_4=unbind
+keybind = command+5=unbind
+keybind = command+digit_5=unbind
+
+# Send terminal image paste without replacing normal Cmd+V text paste.
+keybind = command+shift+v=text:\x16
+
+# Forward modified paging to pane applications, as in WezTerm.
+keybind = shift+page_up=csi:5;2~
+keybind = shift+page_down=csi:6;2~

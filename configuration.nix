@@ -57,8 +57,8 @@
       "amethyst"
       "claude-code"
       "ghostty"
+      "handy"
       "hammerspoon"
-      "opensuperwhisper"
       "tailscale-app"
       "wezterm"
     ];

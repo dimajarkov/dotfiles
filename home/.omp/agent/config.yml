@@ -1,0 +1,24 @@
+modelRoles:
+  default: openai-codex/gpt-6.1-sol
+modelRoleStorage: global
+defaultThinkingLevel: medium
+enabledModels:
+  - openai-codex/*
+hideThinkingBlock: true
+steeringMode: all
+followUpMode: all
+startup:
+  quiet: true
+  checkUpdate: false
+  changelogMode: hidden
+update:
+  auto: false
+skills:
+  enableAgentsUser: true
+  enableAgentsProject: true
+theme:
+  dark: titanium
+  light: light
+setupVersion: 3
+display:
+  hideToolActivity: true

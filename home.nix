@@ -6,6 +6,7 @@ let
   dotfiles = "${config.home.homeDirectory}/.dotfiles";
   backpassCli = pkgs.callPackage ./nix/packages/backpass-cli.nix {};
   piUpstream = pkgs.callPackage ./nix/packages/pi-coding-agent.nix {};
+  ohMyPi = pkgs.callPackage ./nix/packages/oh-my-pi.nix {};
   piRules = pkgs.callPackage ./nix/packages/pi-claude-rules.nix {};
   hunkReview = pkgs.callPackage ./nix/packages/hunk.nix {};
   glowReader = pkgs.callPackage ./nix/packages/glow.nix {};
@@ -402,6 +403,12 @@ in {
   '';
 
   home.file.".local/bin/pi".source = piUpstream + "/bin/pi";
+  home.file.".local/bin/omp".source = ohMyPi + "/bin/omp";
+  # OMP preserves writable config symlinks, including its runtime settings edits.
+  home.file.".omp/agent/config.yml".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.omp/agent/config.yml";
+  home.file.".omp/agent/AGENTS.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/AGENTS.md";
   home.file.".local/bin/owc-container-ready".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/owc-container-ready";
   home.file.".local/bin/docker".source =
@@ -543,6 +550,8 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/lazygit/config.yml";
   home.file.".config/wezterm".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/wezterm";
+  home.file."Library/Application Support/com.mitchellh.ghostty/config.ghostty".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/ghostty/config.ghostty";
   home.file.".config/nvim".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.config/nvim";
   home.file.".config/herdr".source =

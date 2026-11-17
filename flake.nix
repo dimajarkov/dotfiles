@@ -75,6 +75,7 @@
         hunk-turn-review-assets = hunkTurnReviewAssets;
         hunk-turn-review = hunkTurnReviewProfile;
         pi-coding-agent = piCodingAgent;
+        oh-my-pi = pkgs.callPackage ./nix/packages/oh-my-pi.nix {};
         pi-claude-rules = piRules;
         treehouse-owned = treehouseOwned;
       };
@@ -96,6 +97,18 @@
         };
       };
       checks.${system} = {
+        oh-my-pi = pkgs.runCommand "oh-my-pi-installation-check" {
+          nativeBuildInputs = [ pkgs.python3 pkgs.ruff ];
+          OMP_BINARY = "${self.packages.${system}.oh-my-pi}/bin/omp";
+        } ''
+          mkdir -p tests home/.omp/agent
+          cp ${./tests/oh-my-pi.py} tests/oh-my-pi.py
+          cp ${./home/.omp/agent/config.yml} home/.omp/agent/config.yml
+          python3 tests/oh-my-pi.py
+          ruff check tests/oh-my-pi.py
+          ruff format --check tests/oh-my-pi.py
+          touch "$out"
+        '';
         pi-rules = pkgs.runCommand "pi-rules-lifecycle-check" {
           nativeBuildInputs = [ pkgs.nodejs_22 pkgs.oxlint pkgs.oxfmt ];
         } ''

@@ -20,7 +20,7 @@ Running the switch builds:
 - Nix user packages (ripgrep, fd, fzf, jq, lazygit, Neovim, Hack Nerd Font)
 - Shell (zsh, aliases, starship prompt)
 - Editor (Neovim follows macOS appearance: GitHub Dark Default and GitHub Light Default)
-- Terminal (WezTerm follows system appearance: Catppuccin Mocha dark, Latte light)
+- Terminals (WezTerm and Ghostty follow system appearance: Catppuccin Mocha dark, Latte light)
 - [SketchyBar](docs/sketchybar.md) (Catppuccin status bar with AeroSpace workspaces, active app, volume, battery, and clock)
 - Agent configs (Claude, Codex, opencode all share one AGENTS.md)
 
@@ -84,6 +84,27 @@ For the `ci-runner` account reached through Herdr's saved Yuri machine, use the
 [worker account profile](docs/herdr-worker.md) instead of the desktop system rebuild.
 It reuses the development configuration without changing Yuri's desktop or Homebrew packages.
 
+### Ghostty trial
+
+Ghostty and WezTerm are both declared Homebrew casks; keep WezTerm installed while trying Ghostty.
+Launch Ghostty from Applications or with `open -a Ghostty`.
+Its config lives in `home/.config/ghostty/config.ghostty`, linked by Home Manager to `~/Library/Application Support/com.mitchellh.ghostty/config.ghostty`.
+It uses Hack Nerd Font Mono at 14 points, Catppuccin light/dark themes, 98% background opacity, and a hidden title bar.
+Option-1 through Option-5 switch tabs; Cmd-Shift-V sends terminal image paste, while Cmd-V remains normal text paste.
+Shift-PageUp and Shift-PageDown are forwarded to terminal applications.
+Use Cmd-Shift-P for Ghostty's command palette; WezTerm's custom theme picker and cycling shortcuts are not ported.
+Global app-switching shortcuts are unchanged during the trial.
+
+[Rex](https://www.superlogical.com/updates/public-testing-beginning) is a separate terminal/multiplexer, not a Ghostty plugin.
+As checked on 2026-11-17, its macOS beta requires an invitation through Superlogical's mailing list.
+Rex is not installed or declared here until an official download is available.
+
+### Voice dictation
+
+[Handy](https://github.com/cjpais/Handy) is installed through the Homebrew `handy` cask declared in `configuration.nix`.
+After applying the config, launch Handy, grant Microphone and Accessibility permissions, download a transcription model, and configure your recording shortcut.
+Speech transcription runs locally.
+
 ## Make it yours
 
 This repo is mine.
@@ -116,6 +137,7 @@ Read through `brews` and `casks` before you run `bootstrap.sh` or `rebuild.sh` f
 **About `herdr`:** Homebrew installs the original upstream `herdr` formula from homebrew-core.
 The custom Pi interactive-subagents package is disabled because upstream Herdr lacks its required managed job and cooperative Pi control APIs.
 Pi itself remains Nix-managed and works without that package.
+[Oh My Pi](docs/oh-my-pi.md) is also Nix-managed as `omp`, with its own configuration and credentials plus the shared agent instructions and skills.
 See [Herdr installation history](docs/agents/herdr-compatible-installation.md) for the former fork and rollback context.
 
 **Heads-up:**
@@ -142,7 +164,7 @@ Native Codex hook approval and direct human confirmation of terminal appearance 
 - `home.nix` - user-level config: shell, packages, prompt, and the symlinks described below.
 - `rebuild.sh` - re-applies the config after the first switch.
   Run this every time you make a change.
-- `home/` - the actual config files that get symlinked into place (Hammerspoon, Neovim, WezTerm, herdr, Claude settings, the shared `AGENTS.md`).
+- `home/` - the actual config files that get symlinked into place (Hammerspoon, Neovim, WezTerm, Ghostty, herdr, Claude settings, the shared `AGENTS.md`).
 
 ## How the symlinks work
 
@@ -187,7 +209,7 @@ Neovim uses GitHub Dark Default in macOS dark mode and GitHub Light Default in l
 It reads the macOS appearance at startup, on focus, and every two seconds while open, without blocking editing or requiring a terminal theme notification.
 A manual colorscheme selection (`<leader>fc`) lasts until the system appearance changes.
 On non-macOS hosts, Neovim selects the palette using its `background` option, including terminal-driven changes.
-WezTerm independently follows system appearance with Catppuccin Mocha and Latte.
+WezTerm and Ghostty independently follow system appearance with Catppuccin Mocha and Latte.
 
 Read a saved Markdown buffer with `:Glow` or `<leader>mp` (Space, M, P).
 The preview runs Glow's interactive reader in a real terminal, using Glow's configured colors and width; scroll with the trackpad, mouse wheel, or `j`/`k`, and press `q` to return to the document and its original cursor position.
