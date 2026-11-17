@@ -20,7 +20,9 @@ stdenvNoCC.mkDerivation {
     mkdir -p "$out"
     cp -R vendor/aarch64-apple-darwin/. "$out/"
     chmod u+w "$out/bin/codex"
-    cp ${shortCwdCodex}/bin/codex "$out/bin/codex"
+    # Copy the executable, not nixpkgs' launcher, so package discovery finds
+    # codex-package.json and native helpers in this complete package.
+    cp ${shortCwdCodex}/bin/.codex-wrapped "$out/bin/codex"
     runHook postInstall
   '';
 

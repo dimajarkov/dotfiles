@@ -79,7 +79,7 @@ No custom helpers are compiled.
 - `show_in_fullscreen=off` hides the bar in native fullscreen.
 - `topmost=window` deliberately uses the floating-window level below the native menu's level, so the on-demand native menu takes precedence when revealed.
   Do not change this to `topmost=on` (status-window level), or `off` (which moves a top bar below a visible menu).
-- AeroSpace retains its existing `start-at-login = false` setting.
+- AeroSpace starts at login with `start-at-login = true`.
   SketchyBar starts independently at login and recovers its highlights when AeroSpace becomes available.
 
 Workspace popup hosts subscribe to both native `mouse.exited` and `mouse.exited.global` events through the same item dispatcher as `mouse.scrolled`, preserving horizontal and vertical scrolling.
@@ -95,7 +95,7 @@ Actual pointer crossing, native popup dismissal latency and selection focus beha
 Workspace labels live in `~/.local/state/sketchybar/workspace-labels/workspace-labels.json`, outside the repository and disposable controller caches.
 The versioned owner-private state uses a 0700 directory, 0600 files, atomic replacement, locking and stale-edit detection.
 Symlinks and unsafe permissions are rejected rather than followed or silently repaired.
-Labels survive bar reloads, watcher restarts, AeroSpace reloads/restarts and login without changing AeroSpace's deliberate manual-start policy.
+Labels survive bar reloads, watcher restarts, AeroSpace reloads or restarts, and login.
 Unreadable or corrupt state is preserved and falls back to canonical labels; an edit attempt shows a generic actionable error rather than logging private labels.
 The separate naming helper holds no renderer/apply lock while waiting for input, admits one naming operation at a time and requests structural reconciliation only after a successful change.
 No AeroSpace rename, move or workspace-switch command is used by the naming helper.

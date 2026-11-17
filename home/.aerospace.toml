@@ -2,7 +2,7 @@
 # App switching stays in Hammerspoon: Cmd-1 WezTerm, Cmd-3 Zen, Cmd-4 Codex.
 # AeroSpace owns Option shortcuts globally; use Herdr's prefix shortcuts for its panes.
 config-version = 2
-start-at-login = false
+start-at-login = true
 auto-reload-config = true
 # A missing/stopped bar must never prevent workspace switching.
 exec-on-workspace-change = ['/bin/sh', '-c', 'export PATH="$HOME/.nix-profile/bin:/etc/profiles/per-user/$USER/bin:/run/current-system/sw/bin:$PATH"; command -v sketchybar >/dev/null && sketchybar --trigger aerospace_workspace_change FOCUSED_WORKSPACE="$AEROSPACE_FOCUSED_WORKSPACE" || true']
