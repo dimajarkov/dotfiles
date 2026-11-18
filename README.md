@@ -99,6 +99,17 @@ Global app-switching shortcuts are unchanged during the trial.
 As checked on 2026-11-17, its macOS beta requires an invitation through Superlogical's mailing list.
 Rex is not installed or declared here until an official download is available.
 
+### LazyGit diffs
+
+`home/.config/lazygit/config.yml` is live-linked into LazyGit's macOS config directory.
+Restart LazyGit after editing it; no rebuild is needed.
+Diffs use Delta with Catppuccin Mocha syntax colors, subtle added/removed backgrounds, word-level emphasis, and explicit `+`/`-` markers.
+Unified diffs omit the line-number gutter so long lines can wrap across the full pane without running underneath a separator.
+The sidebar uses a quarter of the width and expands the focused panel vertically.
+Delta receives the actual diff-pane width and uses four-space tabs.
+Press `+` to enlarge the focused panel and `_` to shrink it again.
+Line staging keeps LazyGit's native diff view.
+
 ### Voice dictation
 
 [Handy](https://github.com/cjpais/Handy) is installed through the Homebrew `handy` cask declared in `configuration.nix`.

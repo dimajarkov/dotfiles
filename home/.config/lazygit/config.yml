@@ -1,3 +1,14 @@
+gui:
+  sidePanelWidth: 0.25
+  expandFocusedSidePanel: true
 git:
   pagers:
-    - pager: delta --dark --paging=never --line-numbers
+    - pager: >-
+        delta --dark --paging=never --width={{columnWidth}}
+        --syntax-theme="Catppuccin Mocha" --tabs=4
+        --keep-plus-minus-markers
+        --file-style="bold #89b4fa" --file-decoration-style=none
+        --hunk-header-style="line-number #9399b2"
+        --hunk-header-decoration-style=none
+        --minus-style="normal #37252c" --minus-emph-style="bold normal #653340"
+        --plus-style="syntax #203329" --plus-emph-style="bold syntax #34543c"
