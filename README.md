@@ -140,6 +140,13 @@ Pi itself remains Nix-managed and works without that package.
 [Oh My Pi](docs/oh-my-pi.md) is also Nix-managed as `omp`, with its own configuration and credentials plus the shared agent instructions and skills.
 See [Herdr installation history](docs/agents/herdr-compatible-installation.md) for the former fork and rollback context.
 
+**Herdr mobile:** The phone app uses `herdr-core`, not the separate Herdr TUI server installed by Homebrew.
+The signed upstream macOS installer owns `~/.local/bin/herdr-core` and its `hc` alias, backed by `~/.local/share/herdr-core/active/Herdr Core.app`.
+This is intentionally upstream-managed rather than Nix-managed to preserve the signed app bundle and its macOS privacy identity.
+To install, download and inspect `https://releases.herdr.dev/core/install.sh`, then run the saved script with `/bin/sh`; update with `hc update`.
+Use `hc server status` to inspect the runtime and `hc run --bg <program>` to start a terminal accessible from the phone over SSH.
+Existing Herdr TUI sessions do not appear in core, and installing core does not migrate or stop them.
+
 **Heads-up:**
 
 - `home/AGENTS.md` is my personal agent policy, and `home.nix` installs it for Claude, Codex, and opencode.

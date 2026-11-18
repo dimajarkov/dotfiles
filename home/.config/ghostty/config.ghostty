@@ -1,3 +1,12 @@
+# A terminal launched from a Herdr pane must not inherit that pane's identity.
+env = HERDR_ENV=
+env = HERDR_BIN_PATH=
+env = HERDR_PANE_ID=
+env = HERDR_SESSION=
+env = HERDR_SOCKET_PATH=
+env = HERDR_TAB_ID=
+env = HERDR_WORKSPACE_ID=
+
 # Match WezTerm's appearance while keeping Ghostty's native shortcuts.
 theme = light:Catppuccin Latte,dark:Catppuccin Mocha
 window-theme = system

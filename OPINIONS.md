@@ -53,6 +53,13 @@
 
 ## Change and decisions
 
+- The best way to solve a problem is often through elimination: remove an unnecessary requirement, component, dependency, commitment, or activity rather than build a better-managed version of unnecessary complexity.
+- Before systematizing work or proposing automation, always consider whether removing or cleaning up something in the system would make the problem disappear, and explain that option first.
+- Follow the ordering of [Elon Musk's five-step algorithm](https://www.youtube.com/watch?v=t705r8ICkRw&t=810s): question the requirements, delete unnecessary parts or processes, simplify and optimize what remains, accelerate cycle time, and automate last.
+- Questioning requirements and eliminating unnecessary work deserve the most emphasis; do not optimize or automate something that should not exist.
+- This principle applies broadly to workflows, tools, code, and commitments, not just engineering.
+- Always consider elimination, but do not force deletion when complexity serves a real purpose or impose a numerical deletion target.
+- This is a decision-making principle, not authorization to delete data or safeguards.
 - Small pilots and real usage should inform permanent workflow and synchronization choices.
 - Durable decisions should record their rationale and the evidence that would cause them to be reconsidered.
 - When new evidence changes a view, revise the current owner and preserve the meaningful history without allowing contradictory truth to accumulate forever.

@@ -8,9 +8,23 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
 
 ## Steps
 
-1. Call the Skill tool with `writing-for-agents` for the writing style guide.
+1. Read the `writing-for-agents` skill using the host's available skill or file-reading tool.
 
-2. Read the primary sources for the session the user specifies. This may mean searching through session logs on this machine. If the user doesn't specify a session, default to the current one.
+2. Resolve and inspect the session evidence before drawing conclusions.
+   Default to the current session unless the user specifies another; the session may come from omp, Pi, Claude Code, or Codex, regardless of which agent runs the retrospective.
+   Prefer an exact session ID or file path exposed by the runtime or supplied by the user.
+   Otherwise, match project directory, timestamps, and conversation content; recency alone is insufficient.
+   Use these default discovery roots, accounting for runtime/configuration overrides:
+   - omp: `~/.omp/agent/sessions/`; consult `omp://session.md` for storage and record formats when available.
+   - Pi: `~/.pi/agent/sessions/`.
+   - Claude Code: `~/.claude/projects/`.
+   - Codex: `~/.codex/sessions/` and `~/.codex/archived_sessions/`.
+   Inspect the actual record schema and read the relevant user/assistant messages, tool-call arguments, tool results, and errors.
+   Follow referenced output artifacts and child/subagent transcripts where relevant to a finding.
+   Treat history/index files as discovery aids, not substitutes for session transcripts.
+   Read persisted evidence even when tool activity was hidden or collapsed in the UI.
+   Before presenting findings, identify the session files inspected and disclose unavailable, truncated, or ambiguous evidence.
+   If the transcript cannot be located, use the available conversation and state the evidence gap explicitly.
 
 3. Look for candidates for improvement in these categories.
 
