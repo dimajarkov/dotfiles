@@ -1,5 +1,6 @@
 modelRoles:
   default: openai-codex/gpt-6.1-sol:medium
+  smol: openai-codex/gpt-6-luna
 modelRoleStorage: global
 defaultThinkingLevel: medium
 task:
