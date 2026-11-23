@@ -41,6 +41,7 @@
       treehouseOwned = pkgs.callPackage ./nix/packages/treehouse-owned.nix {
         source = inputs.treehouse-owned;
       };
+      arenaCiRunner = pkgs.callPackage ./nix/packages/arena-ci-runner.nix {};
       hunkTurnReviewProfile = import ./nix/modules/hunk-turn-review-profile.nix {
         inherit pkgs hunkReviewHost hunkReviewHostTypes hunkTurnReviewAssets piCodingAgent bashDarwin bashDarwinInteractive;
       };
@@ -78,8 +79,14 @@
         oh-my-pi = pkgs.callPackage ./nix/packages/oh-my-pi.nix {};
         pi-claude-rules = piRules;
         treehouse-owned = treehouseOwned;
+        arena-ci-runner = arenaCiRunner;
       };
       apps.${system} = {
+        arena-ci-install = {
+          type = "app";
+          program = "${arenaCiRunner}/bin/arena-ci-install";
+          meta.description = "Explicit guarded Arena runner startup installation and rollback";
+        };
         treehouse-owned-install = {
           type = "app";
           program = "${treehouseOwned}/bin/treehouse-owned-install";
@@ -97,6 +104,12 @@
         };
       };
       checks.${system} = {
+        arena-ci-startup = pkgs.runCommand "arena-ci-startup-check" {} ''
+          export ARENA_CI_ASSETS=${arenaCiRunner}/share/arena-ci
+          export ARENA_CI_BOOTSTRAP_TEMPLATE=${./nix/runtime/arena-ci-bootstrap.sh}
+          ${pkgs.python3}/bin/python3 ${./nix/tests/arena-ci-startup.py}
+          touch "$out"
+        '';
         oh-my-pi = pkgs.runCommand "oh-my-pi-installation-check" {
           nativeBuildInputs = [ pkgs.python3 pkgs.ruff ];
           OMP_BINARY = "${self.packages.${system}.oh-my-pi}/bin/omp";
