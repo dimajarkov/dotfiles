@@ -75,7 +75,9 @@ class Operations:
         # Conservative across the whole account, including orphaned workers.
         output = self.command(["/bin/ps", "-axo", "uid=,pid=,ppid=,comm="]).decode()
         rows = [line.split(None, 3) for line in output.splitlines() if line.strip()]
-        require(rows and all(len(row) == 4 and all(x.isdigit() for x in row[:3]) for row in rows),
+        # macOS reports the nobody account as signed UID -2.
+        require(rows and all(len(row) == 4 and re.fullmatch(r"-?[0-9]+", row[0])
+                             and all(x.isdigit() for x in row[1:3]) for row in rows),
                 "cannot establish worker process ownership")
         for uid, _pid, _ppid, command in rows:
             if "Runner.Worker" in command:

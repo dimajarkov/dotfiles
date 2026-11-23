@@ -225,6 +225,17 @@ class ReadinessTests(unittest.TestCase):
                     with self.assertRaises(runtime.Refusal):
                         runtime.load_config(path)
 
+    def test_idle_inspection_refuses_malformed_ownership_and_live_workers(self):
+        operations = install.Operations()
+        for row in ("unknown 42 1 /bin/sh", "502 -42 1 /bin/sh",
+                    "502 42 unknown /bin/sh", "502 42 1"):
+            with patch.object(operations, "command", return_value=(row + "\n").encode()):
+                with self.assertRaisesRegex(runtime.Refusal, "process ownership"):
+                    operations.idle({"uid": 502})
+        with patch.object(operations, "command", return_value=b"-2 40 1 /system/helper\n502 42 1 /runner/Runner.Worker\n"):
+            with self.assertRaisesRegex(runtime.Refusal, "active Runner.Worker"):
+                operations.idle({"uid": 502})
+
 
 class FixtureOperations(install.Operations):
     def __init__(self, runner):
@@ -237,7 +248,7 @@ class FixtureOperations(install.Operations):
     def command(self, args):
         self.calls.append(args)
         if args[0] == "/bin/ps":
-            return (f"{os.getuid()} 42 1 /bin/sh\n" +
+            return ("-2 40 1 /system/helper\n" + f"{os.getuid()} 42 1 /bin/sh\n" +
                     (f"{os.getuid()} 43 42 /runner/Runner.Worker\n" if self.workers else "")).encode()
         if args[:2] == ["/bin/launchctl", "print"]:
             return ("program = /unknown\nuid = 999\n" if self.unknown else
