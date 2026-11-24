@@ -94,6 +94,7 @@ command = "annotate.terminal"
 description = "review this pane's recent output"
 
 [ui]
+tab_bar_position = "bottom"
 agent_panel_sort = "spaces"
 show_agent_labels_on_pane_borders = true
 

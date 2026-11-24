@@ -197,7 +197,7 @@ require('which-key').setup({
 	preset = 'modern',
 	spec = {
 		{ '<leader>c', group = 'clipboard' },
-		{ '<leader>d', group = 'debug / diagnostics' },
+		{ '<leader>d', group = 'debug / diagnostics / diff' },
 		{ '<leader>f', group = 'find' },
 		{ '<leader>g', group = 'git' },
 		{ '<leader>r', group = 'review' },
@@ -227,6 +227,7 @@ require('kanagawa').setup({
 -- Keep GitHub Dark Default in dark mode and GitHub Light Default in light mode.
 require("rose-pine").setup()
 require('system-appearance').setup()
+require('tabline').setup()
 
 -- Markdown
 local function open_with_glow()
@@ -521,7 +522,7 @@ vim.keymap.set('n', '<leader>dc', dap.continue, { desc = 'Debug continue' })
 vim.keymap.set('n', '<leader>dq', dap.terminate, { desc = 'Debug terminate' })
 vim.keymap.set('n', '<leader>dr', dap.repl.open, { desc = 'Debug open REPL' })
 vim.keymap.set('n', '<leader>dl', dap.run_last, { desc = 'Debug run last' })
-vim.keymap.set({ 'n', 'v' }, '<leader>dh', require('dap.ui.widgets').hover, { desc = 'Debug hover' })
+vim.keymap.set({ 'n', 'v' }, '<leader>dk', require('dap.ui.widgets').hover, { desc = 'Debug hover' })
 vim.keymap.set('n', '<Down>', dap.step_over, { desc = 'Debug step over' })
 vim.keymap.set('n', '<Right>', dap.step_into, { desc = 'Debug step into' })
 vim.keymap.set('n', '<Left>', dap.step_out, { desc = 'Debug step out' })
@@ -605,11 +606,25 @@ vim.keymap.set('v', '<leader>gl', function()
 	git_line_history(vim.fn.line('v'), vim.fn.line('.'))
 end, { desc = 'Git line history' })
 
--- Codediff (vscode like diffs :))
-require("codediff").setup({})
-vim.keymap.set('n', '<leader>ru', '<cmd>CodeDiff<cr>', { desc = 'Code diff not staged' })
-vim.keymap.set('n', '<leader>rm', '<cmd>CodeDiff main<cr>', { desc = 'Code diff main' })
-vim.keymap.set('n', '<leader>rh', '<cmd>CodeDiff HEAD~1<cr>', { desc = 'Code diff previous commit' })
+-- CodeDiff review
+require('codediff').setup({
+	explorer = {
+		width = 50,
+		view_mode = 'tree',
+		auto_open_on_cursor = true,
+		line_stats = { enabled = true },
+	},
+	diff = {
+		compact = true,
+		compact_context_lines = 8,
+		compact_sync_folds = true,
+	},
+})
+vim.keymap.set('n', '<leader>dv', '<cmd>CodeDiff<cr>', { desc = 'Toggle CodeDiff review' })
+vim.keymap.set('n', '<leader>dh', '<cmd>CodeDiff history %<cr>', { desc = 'CodeDiff file history' })
+vim.keymap.set('n', '<leader>dH', '<cmd>CodeDiff history<cr>', { desc = 'CodeDiff repository history' })
+vim.keymap.set('n', '<leader>rm', '<cmd>CodeDiff main<cr>', { desc = 'Compare working tree to main' })
+vim.keymap.set('n', '<leader>rh', '<cmd>CodeDiff HEAD~1<cr>', { desc = 'Compare working tree to HEAD~1' })
 
 -- Compatibility shortcuts from the previous local setup.
 vim.keymap.set('n', '<leader>o', open_oil, { desc = 'Open file browser' })

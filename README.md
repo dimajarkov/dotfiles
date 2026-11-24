@@ -247,6 +247,17 @@ A manual colorscheme selection (`<leader>fc`) lasts until the system appearance 
 On non-macOS hosts, Neovim selects the palette using its `background` option, including terminal-driven changes.
 WezTerm and Ghostty independently follow system appearance with Catppuccin Mocha and Latte.
 
+Herdr's desktop tab row is at the bottom, with the session name at the right.
+Inside Neovim, `:tabedit <file>` opens a tab page, and `gt` / `gT` switch between them.
+The top tabline appears with two or more Neovim tab pages and labels each page with its focused buffer.
+The tab styling follows the editor's light or dark palette without changing the Herdr prefix.
+
+Use `Space d v` to toggle the CodeDiff review, `Space d h` for file history, and `Space d H` for repository history.
+The review opens a tree with line counts and previews files as you move, while the diff folds unchanged regions with eight lines of context.
+Use `gc` inside the diff to toggle compact mode.
+`Space r m` and `Space r h` still compare the working tree to `main` and `HEAD~1`, and debug hover is now `Space d k`.
+After pulling a changed CodeDiff pin on an existing installation, run `:lua vim.pack.update({ 'codediff.nvim' }, { target = 'lockfile' })`, confirm the update, then restart Neovim.
+
 Read a saved Markdown buffer with `:Glow` or `<leader>mp` (Space, M, P).
 The preview runs Glow's interactive reader in a real terminal, using Glow's configured colors and width; scroll with the trackpad, mouse wheel, or `j`/`k`, and press `q` to return to the document and its original cursor position.
 Inside Herdr, click a local file reference in the preview to open a new pane on the right, leaving the original preview open.

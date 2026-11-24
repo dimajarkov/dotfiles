@@ -42,17 +42,9 @@ The general file browser is instead `oil.nvim`, which `sf` opens as a centered f
 `incline.nvim` is the separate plugin that adds a filename and icon tag in the top-right corner of each window, with `[+]` for unsaved edits and smart hiding on the cursor line ([author's window labels section](https://www.devas.life/effective-neovim-setup-for-agentic-coding-towards-2027/#25-window-labels), [Incline setup](https://github.com/craftzdog/dotfiles/blob/86edf45783045c56cdc74bf0a83f2fffcb7be828/dot_config/nvim/lua/craftzdog/plugins/ui.lua#L139-L156)).
 The Neovim row showing editor mode, Git branch, file path, and cursor location is the separate global `lualine.nvim` statusline, not the custom tabline ([author's statusline section](https://www.devas.life/effective-neovim-setup-for-agentic-coding-towards-2027/#24-statusline), [lualine setup](https://github.com/craftzdog/dotfiles/blob/86edf45783045c56cdc74bf0a83f2fffcb7be828/dot_config/nvim/lua/craftzdog/plugins/ui.lua#L58-L137)).
 
-## Recreate the layout without copying the setup
+## Local adaptation
 
-Add `tab_bar_position = "bottom"` to the existing `[ui]` table in [this repo's Herdr config](../../home/.config/herdr/config.toml).
-Optionally add `hide_tab_bar_when_single_tab = true` and set `sidebar_start_collapsed = true` for new sessions without a [saved sidebar preference](https://github.com/herdrdev/herdr/blob/v0.9.5/src/client/shell/state.rs#L996-L1012).
-The repo already uses the compact collapsed mode, and `Tab` then `b` toggles the sidebar in the running UI.
-Use `Tab` then `c` (or `Alt+c`) to create another Herdr tab under the current bindings.
-Use Herdr's [Reload config action](https://herdr.dev/tui/docs/configuration/#reload-config) to reload the client and server settings.
-The installed Herdr 0.9.5 accepts these UI settings in a temporary config, as verified with `herdr config check`.
-
-Inside the Herdr tab running Neovim, open a second tab page with `:tabedit <file>` and navigate with `gt` and `gT`.
-Stock Neovim uses `showtabline=1`, which shows the row at two or more tab pages; a clean headless invocation confirmed the default and listed two distinct pages created with `-p`.
-Port the custom Lua renderer and its Solarized Osaka highlight setup only if you want the exact trapezoid styling.
-Keep the local Herdr prefix in mind before copying Takuya's bare `Tab` mapping, since Herdr uses it as the prefix here while Takuya uses `Ctrl+t`.
-This repo already has CodeDiff and maps `Space r u` to `:CodeDiff` in its [Neovim config](../../home/.config/nvim/init.lua#L609-L612).
+This repo uses Herdr's bottom row without changing its existing sidebar and prefix settings.
+The Neovim tabline borrows Takuya's shapes and labeling but adapts the colors to the current theme.
+It retains native `gt` and `gT` rather than intercepting `Tab`, which this repo uses as the Herdr prefix.
+See the [current configuration notes](../../README.md#notes) for the CodeDiff mappings and update instructions.
