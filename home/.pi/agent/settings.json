@@ -1,8 +1,11 @@
 {
   "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/config/settings.schema.json",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-6.1-sol",
+  "defaultModel": "gpt-6.2-astra",
   "defaultThinkingLevel": "medium",
+  "defaultTools": [
+    "+codemode"
+  ],
   "enabledModels": [
     "openai-codex/*"
   ],
@@ -76,7 +79,7 @@
     "openai-codex/gpt-6.1-sol"
   ],
   "fullscreenScrollbar": "auto",
-  "lastChangelogVersion": "1.5.2",
+  "lastChangelogVersion": "1.6.0",
   "treeFilterMode": "default",
   "extensionChangelogVersions": {
     "{\"source\":\"npm:pi-mcp-adapter@2.20.1\",\"scope\":\"user\"}": "2.20.1",

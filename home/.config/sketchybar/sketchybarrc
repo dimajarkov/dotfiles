@@ -32,6 +32,11 @@ sketchybar --add event aerospace_workspace_change \
   --set apple icon= icon.font="SF Pro:Bold:17.0" icon.color="$MAUVE" \
   icon.width=24 label.drawing=off click_script="/usr/bin/open -a 'System Settings'"
 
+sketchybar --add item vorssaint left \
+  --set vorssaint icon=V icon.font="SF Pro:Bold:15.0" \
+  icon.width=24 icon.align=center label.drawing=off \
+  click_script="/usr/bin/open -b com.vorssaint.utils"
+
 # Separate event items keep native focus callbacks independent of a running full
 # reconciliation. Both lanes share only the short apply lock, not inventory work.
 sketchybar --add item workspace_selection left \

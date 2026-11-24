@@ -17,7 +17,9 @@ Opening a repository trusts its project configuration, extensions, hooks, and MC
 - `home/.omp/agent/config.yml` is linked to `~/.omp/agent/config.yml`.
 - `home/AGENTS.md` is linked to the native `~/.omp/agent/AGENTS.md` instruction file.
 - OMP discovers the shared `~/.agents/skills` directory through its enabled Agents user provider.
-- The default model is `openai-codex/gpt-6.1-sol`, matching the existing Pi configuration, with medium thinking, hidden thinking blocks, and all-message steering/follow-up queues.
+- OMP defaults to `openai-codex/gpt-6.2-sol` for the main session and task-agent overrides; Pi separately defaults to `openai-codex/gpt-6.2-astra`.
+  Both keep medium thinking, hidden thinking blocks, and all-message steering/follow-up queues.
+  OMP's lightweight `smol` role remains `openai-codex/gpt-6-luna`.
 - The built-in `titanium` and `light` themes follow the terminal's detected appearance.
 - Startup update checks and automatic binary updates are disabled because Nix owns the executable.
 

@@ -2,16 +2,16 @@
 
 pkgs.buildNpmPackage rec {
   pname = "pi-coding-agent";
-  version = "1.5.2";
+  version = "1.6.0";
 
   src = pkgs.fetchFromGitHub {
     owner = "earendil-works";
     repo = "pi";
     rev = "v${version}";
-    hash = "sha256-0dKtABQqfvCLF0WOydu5rpycMqC+N8Pc9Ex4BWKElyw=";
+    hash = "sha256-UVQnOMYikjxi7JREcxPZh/Uamy0l4rBvhawHR/MZZgo=";
   };
 
-  npmDepsHash = "sha256-uHehffbEB2uU9U9uSpfWojzxvQyqeicbh/esCwk4neQ=";
+  npmDepsHash = "sha256-V7fRy44X50tqfFewWQ/k5UjvUt+AoMOZkTw/v0bib6o=";
 
   # Native admission and per-request provenance must match the deployed adapters.
   patches = [
@@ -22,7 +22,7 @@ pkgs.buildNpmPackage rec {
   postPatch = let
     modelData = pkgs.fetchurl {
       url = "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-${version}.tgz";
-      hash = "sha256-1XFe+oNMI7/fEKBCtJ307hacyZAAvxbXmY+rLVM7Rfg=";
+      hash = "sha256-1oMS7FdLyVnLf+4m2k9IdtBnrtm7vnbodjWeYNIpR0c=";
     };
   in ''
     mkdir -p packages/ai/src/providers/data

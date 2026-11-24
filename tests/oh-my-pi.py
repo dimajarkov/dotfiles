@@ -46,13 +46,28 @@ class OhMyPiTests(unittest.TestCase):
         ).stdout
 
     def test_binary_starts(self):
-        self.assertEqual(self.run_omp("--version").strip(), "omp/18.22.0")
+        self.assertEqual(self.run_omp("--version").strip(), "omp/19.1.1")
         self.assertIn("USAGE", self.run_omp("--help"))
 
     def test_declared_settings_are_effective(self):
         settings = json.loads(self.run_omp("config", "list", "--json"))
         expected = {
-            "modelRoles": {"default": "openai-codex/gpt-6.1-sol"},
+            "modelRoles": {
+                "default": "openai-codex/gpt-6.2-sol:medium",
+                "smol": "openai-codex/gpt-6-luna",
+            },
+            "task.agentModelOverrides": {
+                role: "openai-codex/gpt-6.2-sol:medium"
+                for role in (
+                    "task",
+                    "scout",
+                    "sonic",
+                    "reviewer",
+                    "security-reviewer",
+                    "browser_debugger",
+                    "verifier",
+                )
+            },
             "modelRoleStorage": "global",
             "defaultThinkingLevel": "medium",
             "enabledModels": ["openai-codex/*"],

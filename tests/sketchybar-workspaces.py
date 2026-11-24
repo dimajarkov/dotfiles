@@ -910,7 +910,7 @@ class MultiDisplayTests(unittest.TestCase):
 
     def test_unique_ids_per_panel_overflow_and_hotplug_cleanup(self):
         groups = {"same": [("org.test.App", "Test", 1)], "empty": []}
-        external = dict(DISPLAY, arrangement=7, screen=1, left=100)
+        external = dict(DISPLAY, arrangement=7, screen=1, left=132)
         states = [(DISPLAY, groups, "same"), (external, groups, "empty")]
         first, images = w.plan_all(states, {"apple"})
         props = sets(first)
@@ -1162,9 +1162,10 @@ class MembershipTests(unittest.TestCase):
         )
         order = args[args.index("--reorder") + 1 :]
         self.assertEqual(
-            order[:5],
+            order[:6],
             [
                 "apple",
+                "vorssaint",
                 "space.1",
                 w.item_id("gap", "1"),
                 "space.2",
@@ -1189,7 +1190,7 @@ class MembershipTests(unittest.TestCase):
     def test_display_budget_and_fallback(self):
         for left in (20, 300, 650, 900):
             self.assertEqual(
-                w.inline_budget({**DISPLAY, "left": left}), max(0, left - 48)
+                w.inline_budget({**DISPLAY, "left": left}), max(0, left - 80)
             )
 
     def test_unavailable_preserves_membership_then_recovers(self):

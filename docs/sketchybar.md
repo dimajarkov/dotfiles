@@ -15,7 +15,8 @@ It uses the Nix-pinned SketchyBar app font for monochrome logos, with the existi
 No custom helpers are compiled.
 
 - A 32-point horizontal bar occupies the native top strip on every connected display with validated native geometry, with zero margin, offset or outer rounding. External-only clamshell mode is supported.
-- Left: System Settings button, then compact square-cornered workspace groups and recognizable monochrome application logos in the bar's muted light text color.
+- Left: System Settings button, a monochrome `V` launcher for Vorssaint, then compact square-cornered workspace groups and recognizable monochrome application logos in the bar's muted light text color.
+  The Vorssaint button repeats on every bar and opens the installed app by bundle ID (`com.vorssaint.utils`); its width is reserved outside the workspace budget.
   Each shortcut number has its own small filled, outlined badge beside the workspace name, and workspaces sort in shortcut order.
   Numeric-only workspaces show just the badge, without repeating their name.
   All bar components, workspace outlines, badges, date/time backgrounds and popups have sharp corners.

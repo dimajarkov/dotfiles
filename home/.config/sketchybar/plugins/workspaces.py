@@ -216,8 +216,8 @@ def membership(spaces, windows, focused):
 
 def inline_budget(display):
     # Both halves remain independent: duplicated status controls occupy the right.
-    # Reserve the center split even on unnotched panels, retaining a safe gutter.
-    return max(0, int(display["left"]) - 48)
+    # Reserve both 32pt launchers, bar padding and a center safety gutter.
+    return max(0, int(display["left"]) - 80)
 
 
 def workspace_badge(workspace):
@@ -398,7 +398,7 @@ def plan(
     overflow = (
         PREFIX + "overflow" + (".d" + str(display) if display is not None else "")
     )
-    args, desired, order, icons = [], set(), ["apple"], {}
+    args, desired, order, icons = [], set(), ["apple", "vorssaint"], {}
     popup_order = []
     aliases = aliases or {}
     counts = {ws: len(apps) for ws, apps in groups.items()}
@@ -781,7 +781,7 @@ def plan(
 
 def plan_all(states, existing, viewports=None, aliases=None, widths=None):
     """Merge independent panel plans into one atomic update and global ordering."""
-    args, icons, order = [], {}, ["apple"]
+    args, icons, order = [], {}, ["apple", "vorssaint"]
     displays = {d["arrangement"] for d, _, _ in states}
     for display, groups, visible in states:
         local, app_icons = plan(

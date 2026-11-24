@@ -1,17 +1,17 @@
 modelRoles:
-  default: openai-codex/gpt-6.1-sol:medium
+  default: openai-codex/gpt-6.2-sol:medium
   smol: openai-codex/gpt-6-luna
 modelRoleStorage: global
 defaultThinkingLevel: medium
 task:
   agentModelOverrides:
-    task: openai-codex/gpt-6.1-sol:medium
-    scout: openai-codex/gpt-6.1-sol:medium
-    sonic: openai-codex/gpt-6.1-sol:medium
-    reviewer: openai-codex/gpt-6.1-sol:medium
-    security-reviewer: openai-codex/gpt-6.1-sol:medium
-    browser_debugger: openai-codex/gpt-6.1-sol:medium
-    verifier: openai-codex/gpt-6.1-sol:medium
+    task: openai-codex/gpt-6.2-sol:medium
+    scout: openai-codex/gpt-6.2-sol:medium
+    sonic: openai-codex/gpt-6.2-sol:medium
+    reviewer: openai-codex/gpt-6.2-sol:medium
+    security-reviewer: openai-codex/gpt-6.2-sol:medium
+    browser_debugger: openai-codex/gpt-6.2-sol:medium
+    verifier: openai-codex/gpt-6.2-sol:medium
 enabledModels:
   - openai-codex/*
 hideThinkingBlock: true

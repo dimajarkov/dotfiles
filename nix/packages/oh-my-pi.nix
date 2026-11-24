@@ -2,13 +2,13 @@
 
 stdenvNoCC.mkDerivation rec {
   pname = "oh-my-pi";
-  version = "18.22.0";
+  version = "19.1.1";
 
   # Official standalone Apple Silicon build, pinned to its immutable build ID.
   # SHA-256 is published by the upstream build service's release API.
   src = fetchurl {
-    url = "https://build.stencil.so/d/omp/20261116-215456-3e8cff3/omp-darwin-arm64";
-    hash = "sha256-0YURPWProjkl5dcKtmGkJLgnwGyY+Odmw79K1i3a/5o=";
+    url = "https://build.stencil.so/d/omp/20261123-053756-31ffee5/omp-darwin-arm64";
+    hash = "sha256-1aMySs2YN1oBaYobDAGL5Iyu0pVsiqkEStE3/kO8BAA=";
   };
 
   dontUnpack = true;

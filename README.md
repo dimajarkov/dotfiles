@@ -84,6 +84,16 @@ For the `ci-runner` account reached through Herdr's saved Yuri machine, use the
 [worker account profile](docs/herdr-worker.md) instead of the desktop system rebuild.
 It reuses the development configuration without changing Yuri's desktop or Homebrew packages.
 
+### Local video playback
+
+IINA is declared in `configuration.nix` as a Homebrew cask.
+Use Homebrew for IINA updates; keep QuickTime Player and TV installed for their other features.
+The desktop user's local video defaults are IINA for MP4, M4V, MOV, MKV, WebM, AVI, MPG/MPEG, FLV, WMV, OGV, 3GP/3G2, MTS/M2TS and VOB.
+Audio-file associations and browser/streaming defaults are unchanged.
+File associations are macOS per-user settings, not applied by the Nix rebuild.
+On a fresh Mac, select a file of each video type in Finder, open Get Info, choose IINA under Open with, and click Change All.
+Avoid IINA's blanket all-media association option if audio defaults should stay unchanged.
+
 ### Ghostty trial
 
 Ghostty and WezTerm are both declared Homebrew casks; keep WezTerm installed while trying Ghostty.
@@ -115,6 +125,14 @@ Line staging keeps LazyGit's native diff view.
 [Handy](https://github.com/cjpais/Handy) is installed through the Homebrew `handy` cask declared in `configuration.nix`.
 After applying the config, launch Handy, grant Microphone and Accessibility permissions, download a transcription model, and configure your recording shortcut.
 Speech transcription runs locally.
+
+### Vorssaint
+
+[Vorssaint](https://github.com/vorssaint/vorssaint-utils) is installed through the Homebrew `vorssaint` cask declared in `configuration.nix`.
+Configure Screen Capture, Volume Mixer, Keep Awake, and Dynamic Island with AI Agents in the app, with launch at login enabled.
+Keep Window Layout and unrelated features disabled to preserve the existing window-management setup.
+Agent monitoring supports the app's documented integrations, not Oh My Pi or Herdr-wide tracking.
+Feature selections and macOS screen/audio permissions are configured locally, not managed by Nix.
 
 ## Make it yours
 

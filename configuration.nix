@@ -59,7 +59,9 @@
       "ghostty"
       "handy"
       "hammerspoon"
+      "iina"
       "tailscale-app"
+      "vorssaint"
       "wezterm"
     ];
   };
