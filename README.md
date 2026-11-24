@@ -111,6 +111,9 @@ Rex is not installed or declared here until an official download is available.
 
 ### LazyGit diffs
 
+In Neovim, `Space g g` opens LazyGit in its own tab, using the current working directory.
+Press `q` in LazyGit to exit, or press `Ctrl+\` then `Ctrl+n` to leave terminal mode and use `gt` / `gT` to switch tabs.
+
 `home/.config/lazygit/config.yml` is live-linked into LazyGit's macOS config directory.
 Restart LazyGit after editing it; no rebuild is needed.
 Diffs use Delta with Catppuccin Mocha syntax colors, subtle added/removed backgrounds, word-level emphasis, and explicit `+`/`-` markers.
