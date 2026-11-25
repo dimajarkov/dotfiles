@@ -77,6 +77,7 @@
         hunk-turn-review = hunkTurnReviewProfile;
         pi-coding-agent = piCodingAgent;
         oh-my-pi = pkgs.callPackage ./nix/packages/oh-my-pi.nix {};
+        plannotator-tui = pkgs.callPackage ./nix/packages/plannotator-tui.nix {};
         pi-claude-rules = piRules;
         treehouse-owned = treehouseOwned;
         arena-ci-runner = arenaCiRunner;

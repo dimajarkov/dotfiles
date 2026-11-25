@@ -109,6 +109,18 @@ Global app-switching shortcuts are unchanged during the trial.
 As checked on 2026-11-17, its macOS beta requires an invitation through Superlogical's mailing list.
 Rex is not installed or declared here until an official download is available.
 
+#### Plannotator in Rex
+
+Install the Rex-compatible `plannotator-tui` package with `nix profile add .#plannotator-tui` from this repository.
+It is separate from the browser-based `plannotator` CLI.
+From a Rex terminal, run `plannotator-tui rex install` and add `require("plannotator.annotate").setup{}` to `~/.config/rex/init.lua`.
+To match the Herdr shortcuts for reviewing output and replies, add `rex.bind("tab>t", "annotate_terminal")` and `rex.bind("tab>shift+o", "annotate_last")` after setup.
+Run `rex config reload`; rerun the module installer after upgrading `plannotator-tui`.
+
+In the review, select text, press `c`, and press `Enter` to save the comment.
+Press `E` to send saved comments to the named agent.
+Rex reviews a snapshot of recent terminal output, not a selection in the live terminal.
+
 ### LazyGit diffs
 
 In Neovim, `Space g g` opens LazyGit in its own tab, using the current working directory.
