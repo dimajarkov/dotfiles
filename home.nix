@@ -574,6 +574,8 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/one-bin";
   home.file.".pi/agent/skills/no-mistakes".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/no-mistakes";
+  home.file.".pi/agent/skills/rex-review".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/rex-review";
   home.file.".local/bin/chrome-devtools-axi".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.local/bin/chrome-devtools-axi";
   home.file.".local/bin/one-bin".source =
@@ -584,6 +586,8 @@ in {
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/AGENTS.md";
   home.file.".claude/skills/browser-routing".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/browser-routing";
+  home.file.".claude/skills/rex-review".source =
+    config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.agents/skills/rex-review";
   home.file.".codex/AGENTS.md".source =
     config.lib.file.mkOutOfStoreSymlink "${dotfiles}/home/.codex/AGENTS.md";
   # Codex discovers symlinked roles but refuses them at spawn time.

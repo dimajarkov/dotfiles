@@ -113,6 +113,12 @@ Rex is not installed or declared here until an official download is available.
 
 Install the Rex-compatible `plannotator-tui` package with `nix profile add .#plannotator-tui` from this repository.
 It is separate from the browser-based `plannotator` CLI.
+
+From a coding agent running inside Rex, invoke **Rex Review** to open the current worktree's uncommitted changes in a Plannotator TUI pane immediately to the right.
+Use `/skill:rex-review` in OMP or Pi, `/rex-review` in Claude Code, or `$rex-review` in Codex.
+Pass a base or commit to review committed work, or ask to review the latest assistant reply instead of the diff.
+The skill uses the native Rex launcher and does not require the optional keybindings below.
+
 From a Rex terminal, run `plannotator-tui rex install` and add `require("plannotator.annotate").setup{}` to `~/.config/rex/init.lua`.
 To match the Herdr shortcuts for reviewing output and replies, add `rex.bind("tab>t", "annotate_terminal")` and `rex.bind("tab>shift+o", "annotate_last")` after setup.
 Run `rex config reload`; rerun the module installer after upgrading `plannotator-tui`.
