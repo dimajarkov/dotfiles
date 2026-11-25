@@ -596,7 +596,10 @@ local function git_line_history(start_line, end_line)
 	vim.bo.modified = false
 end
 
-vim.keymap.set('n', '<leader>gg', '<cmd>tabnew | terminal lazygit<cr>', { desc = 'Open LazyGit in a tab' })
+vim.keymap.set('n', '<leader>gg', function()
+	vim.cmd('tabnew | terminal lazygit')
+	vim.cmd.startinsert()
+end, { desc = 'Open LazyGit in a tab' })
 vim.keymap.set('n', '<leader>gb', function() vim.ui.open(vim.fn.systemlist('git remote get-url origin')[1]) end,
 	{ desc = 'Open git remote' })
 vim.keymap.set('n', '<leader>gl', function()

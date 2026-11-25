@@ -112,6 +112,7 @@ Rex is not installed or declared here until an official download is available.
 ### LazyGit diffs
 
 In Neovim, `Space g g` opens LazyGit in its own tab, using the current working directory.
+LazyGit accepts input immediately; use `1` through `5` to focus its panels.
 Press `q` in LazyGit to exit, or press `Ctrl+\` then `Ctrl+n` to leave terminal mode and use `gt` / `gT` to switch tabs.
 
 `home/.config/lazygit/config.yml` is live-linked into LazyGit's macOS config directory.
